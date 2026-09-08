@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from .auth import require_roles
 from .db import get_db
-from .models import FolioItem, Guest, Payment, Reservation, ReservationRoom, Room, User
+from .models import Folio, FolioItem, Guest, Payment, Reservation, ReservationRoom, Room, User
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 MONEY = Decimal("0.01")
@@ -63,7 +63,7 @@ def report_summary(
         booked_room_nights += nights * room_count
         if reservation.status == "checked_in":
             occupied_room_nights += nights * room_count
-            checked_in_guests += 1 if reservation.check_in < period_end_exclusive and reservation.check_out > period_start else 0
+            checked_in_guests += 1
         if reservation.check_in >= period_start and reservation.check_in < period_end_exclusive:
             if reservation.status in ("reserved", "checked_in"):
                 arrivals += 1
@@ -78,7 +78,7 @@ def report_summary(
 
     revenue_row = db.execute(
         select(
-            func.coalesce(func.sum(FolioItem.quantity * FolioItem.unit_price - FolioItem.discount), 0),
+            func.coalesce(func.sum(FolioItem.quantity * FolioItem.unit_price), 0),
             func.coalesce(func.sum(FolioItem.discount), 0),
         ).where(
             FolioItem.created_at >= period_start,
@@ -87,6 +87,7 @@ def report_summary(
     ).first()
     gross_revenue = money(revenue_row[0] or 0)
     discounts = money(revenue_row[1] or 0)
+    net_revenue = money(max(Decimal("0.00"), gross_revenue - discounts))
 
     payment_total = money(
         db.scalar(
@@ -107,19 +108,28 @@ def report_summary(
         )
     ]
 
-    outstanding = Decimal("0.00")
-    for folio_total, folio_paid in db.execute(
-        select(
-            func.coalesce(func.sum(FolioItem.quantity * FolioItem.unit_price - FolioItem.discount), 0),
-            func.coalesce(func.sum(Payment.amount), 0),
+    item_totals = {
+        folio_id: (Decimal(gross or 0), Decimal(discount or 0))
+        for folio_id, gross, discount in db.execute(
+            select(
+                FolioItem.folio_id,
+                func.coalesce(func.sum(FolioItem.quantity * FolioItem.unit_price), 0),
+                func.coalesce(func.sum(FolioItem.discount), 0),
+            ).group_by(FolioItem.folio_id)
         )
-        .select_from(FolioItem)
-        .outerjoin(Payment, Payment.folio_id == FolioItem.folio_id)
-        .group_by(FolioItem.folio_id)
-    ):
-        outstanding += max(Decimal("0.00"), Decimal(folio_total or 0) - Decimal(folio_paid or 0))
+    }
+    payment_totals = {
+        folio_id: Decimal(amount or 0)
+        for folio_id, amount in db.execute(
+            select(Payment.folio_id, func.coalesce(func.sum(Payment.amount), 0)).group_by(Payment.folio_id)
+        )
+    }
+    outstanding = Decimal("0.00")
+    for folio_id in db.scalars(select(Folio.id)):
+        gross, discount = item_totals.get(folio_id, (Decimal("0.00"), Decimal("0.00")))
+        paid = payment_totals.get(folio_id, Decimal("0.00"))
+        outstanding += max(Decimal("0.00"), gross - discount - paid)
 
-    top_guests = []
     guest_rows = db.execute(
         select(Guest.full_name, func.count(Reservation.id))
         .join(Reservation, Reservation.guest_id == Guest.id)
@@ -150,7 +160,7 @@ def report_summary(
         "revenue": {
             "gross": float(gross_revenue),
             "discounts": float(discounts),
-            "net": float(money(gross_revenue - discounts)),
+            "net": float(net_revenue),
             "payments_received": float(payment_total),
             "outstanding_balance": float(money(outstanding)),
         },
