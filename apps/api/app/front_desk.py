@@ -58,7 +58,7 @@ def available_for_walk_in(db: Session, room_id: int, business_date: date) -> boo
     room = db.get(Room, room_id)
     if not room or room.status in ("dirty", "out_of_order", "occupied", "reserved"):
         return False
-    conflict = db.scalar(select(ReservationRoom.id).join(Reservation, Reservation.id == ReservationRoom.reservation_id).where(ReservationRoom.room_id == room_id, Reservation.status.in_(("reserved", "checked_in")), Reservation.check_in <= business_date, Reservation.check_out > business_date).limit(1))
+    conflict = db.scalar(select(ReservationRoom.reservation_id).join(Reservation, Reservation.id == ReservationRoom.reservation_id).where(ReservationRoom.room_id == room_id, Reservation.status.in_(("reserved", "checked_in")), Reservation.check_in <= business_date, Reservation.check_out > business_date).limit(1))
     return conflict is None
 
 @router.get("/front-desk/search")

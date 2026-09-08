@@ -19,6 +19,7 @@ export default function CheckoutView({ folioId, guestName, reservationId, onComp
     await api(`/api/folios/${folioId}/room-charges`, { method: 'POST' });
     setFolio(await api<Folio>(`/api/folios/${folioId}`));
   }
+
   useEffect(() => { void load().catch(e => setMessage(e instanceof Error ? e.message : 'Unable to load folio')); }, [folioId]);
 
   async function settle(e: React.FormEvent) {
@@ -38,8 +39,9 @@ export default function CheckoutView({ folioId, guestName, reservationId, onComp
     if (!window.confirm(`Complete checkout for ${guestName}?`)) return;
     setBusy(true); setMessage('');
     try {
-      await api(`/api/folios/${folio.id}/close`, { method: 'POST' });
-      await api(`/api/reservations/${reservationId}/check-out`, { method: 'POST' });
+      // Atomic checkout owns the final state transition: validates zero balance,
+      // closes the folio, completes stays, dirties occupied rooms, audits, commits.
+      await api(`/api/reservations/${reservationId}/checkout`, { method: 'POST' });
       setMessage('Checkout completed.');
       await printFolio();
       await onComplete();
