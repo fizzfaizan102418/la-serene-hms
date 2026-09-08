@@ -25,8 +25,6 @@ from .schemas import (
 Base.metadata.create_all(bind=engine)
 app = FastAPI(title="La Serene HMS API", version="0.9.1")
 app.include_router(billing_router)
-app.include_router(housekeeping_router)
-app.include_router(pms_core_router)
 app.include_router(reservation_workflows_router)
 app.include_router(phase_a_workflows_router)
 
