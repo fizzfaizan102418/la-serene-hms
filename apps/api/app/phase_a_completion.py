@@ -7,13 +7,13 @@ from secrets import token_hex
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import ForeignKey, String, Text, UniqueConstraint, select
+from sqlalchemy import ForeignKey, Text, UniqueConstraint, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from .auth import require_roles
 from .db import Base, get_db
-from .ledger import post_deposit_received, post_transaction
-from .models import AuditLog, DepositTransaction, Folio, FolioItem, Guest, Payment, Reservation, ReservationRoom, Room, User
+from .ledger import post_transaction
+from .models import AuditLog, DepositTransaction, Folio, FolioItem, Guest, Payment, Reservation, Room, User
 from .pms_core import Stay
 from .stay_lifecycle import StayFolioWindow
 
@@ -95,7 +95,8 @@ def deposit_balance(db: Session, stay_id: int) -> Decimal:
         select(DepositTransaction).where(DepositTransaction.stay_id == stay_id).order_by(DepositTransaction.created_at, DepositTransaction.id)
     ).all()
     positive = {"received", "adjusted", "transfer_in"}
-    return money(sum((item.amount if item.transaction_type in positive else -item.amount for item in transactions), Decimal("0.00")))
+    negative = {"applied", "refunded", "transfer_out"}
+    return money(sum((item.amount if item.transaction_type in positive else -item.amount if item.transaction_type in negative else Decimal("0.00") for item in transactions), Decimal("0.00")))
 
 
 def deposit_reference() -> str:
@@ -146,9 +147,7 @@ def change_stay_occupant_guest(stay_id: int, occupant_id: int, payload: Occupant
         raise HTTPException(status_code=400, detail="Guest does not exist")
     if occupant.guest_id == payload.guest_id:
         raise HTTPException(status_code=400, detail="Occupant already uses this guest")
-    duplicate = db.scalar(
-        select(StayOccupant.id).where(StayOccupant.stay_id == stay.id, StayOccupant.guest_id == payload.guest_id, StayOccupant.id != occupant.id)
-    )
+    duplicate = db.scalar(select(StayOccupant.id).where(StayOccupant.stay_id == stay.id, StayOccupant.guest_id == payload.guest_id, StayOccupant.id != occupant.id))
     if duplicate:
         raise HTTPException(status_code=409, detail="Guest is already an occupant of this room stay")
     old_guest_id = occupant.guest_id
@@ -230,9 +229,6 @@ def apply_deposit(stay_id: int, payload: DepositApplyCreate, db: Session = Depen
     available = deposit_balance(db, stay.id)
     if amount > available:
         raise HTTPException(status_code=409, detail=f"Application exceeds deposit balance of {available}")
-    existing_paid = db.scalar(select(FolioItem.id).where(FolioItem.folio_id == folio.id, FolioItem.description.like("Deposit application #%"), FolioItem.stay_id == stay.id))
-    if existing_paid:
-        pass
     tx = DepositTransaction(stay_id=stay.id, folio_id=folio.id, transaction_type="applied", amount=amount, payment_method="deposit", reference=deposit_reference(), notes=payload.reason, created_by=user.id)
     db.add(tx)
     db.flush()
@@ -308,11 +304,5 @@ def route_folio_item(item_id: int, payload: FolioItemRouteCreate, db: Session = 
 @router.get("/stays/{stay_id}/folio-routing")
 def list_folio_routing(stay_id: int, db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception", "housekeeping"))):
     stay = stay_or_404(db, stay_id)
-    rows = db.execute(
-        select(FolioItemRouting, FolioItem, StayFolioWindow)
-        .join(FolioItem, FolioItem.id == FolioItemRouting.folio_item_id)
-        .join(StayFolioWindow, StayFolioWindow.id == FolioItemRouting.window_id)
-        .where(StayFolioWindow.stay_id == stay.id)
-        .order_by(FolioItemRouting.id)
-    ).all()
+    rows = db.execute(select(FolioItemRouting, FolioItem, StayFolioWindow).join(FolioItem, FolioItem.id == FolioItemRouting.folio_item_id).join(StayFolioWindow, StayFolioWindow.id == FolioItemRouting.window_id).where(StayFolioWindow.stay_id == stay.id).order_by(FolioItemRouting.id)).all()
     return [{"routing_id": route.id, "folio_item_id": item.id, "description": item.description, "category": item.category, "amount": money(Decimal(item.quantity) * Decimal(item.unit_price) - Decimal(item.discount)), "window_id": window.id, "window_name": window.name, "notes": route.notes} for route, item, window in rows]
