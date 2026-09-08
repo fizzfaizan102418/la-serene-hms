@@ -47,7 +47,7 @@ def audit(db: Session, user_id: int, action: str, entity_type: str, entity_id: i
 
 
 @router.get("/billing", response_model=list[BillingSummaryResponse])
-def list_billing(db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception"))):
+def list_billing(db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception", "housekeeping"))):
     rows = db.execute(select(Folio, Reservation, Guest.full_name).join(Reservation, Reservation.id == Folio.reservation_id).join(Guest, Guest.id == Reservation.guest_id).order_by(Folio.id.desc())).all()
     result = []
     for folio, reservation, guest_name in rows:
@@ -57,14 +57,14 @@ def list_billing(db: Session = Depends(get_db), _: User = Depends(require_roles(
 
 
 @router.get("/folios/{folio_id}", response_model=FolioResponse)
-def get_folio(folio_id: int, db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception"))):
+def get_folio(folio_id: int, db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception", "housekeeping"))):
     folio = db.get(Folio, folio_id)
     if not folio: raise HTTPException(status_code=404, detail="Folio not found")
     return build_folio_response(db, folio)
 
 
 @router.get("/reservations/{reservation_id}/folio", response_model=FolioResponse)
-def reservation_folio(reservation_id: int, db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception"))):
+def reservation_folio(reservation_id: int, db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception", "housekeeping"))):
     if not db.get(Reservation, reservation_id): raise HTTPException(status_code=404, detail="Reservation not found")
     folio = db.scalar(select(Folio).where(Folio.reservation_id == reservation_id))
     if not folio: raise HTTPException(status_code=404, detail="Folio not found")
@@ -72,7 +72,7 @@ def reservation_folio(reservation_id: int, db: Session = Depends(get_db), _: Use
 
 
 @router.get("/folios/{folio_id}/receipt")
-def get_receipt(folio_id: int, db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception"))):
+def get_receipt(folio_id: int, db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception", "housekeeping"))):
     folio = db.get(Folio, folio_id)
     if not folio: raise HTTPException(status_code=404, detail="Folio not found")
     reservation = db.get(Reservation, folio.reservation_id)
@@ -89,27 +89,9 @@ def get_receipt(folio_id: int, db: Session = Depends(get_db), _: User = Depends(
         "guest": {"full_name": guest.full_name, "phone": guest.phone, "email": guest.email, "address": guest.address},
         "stay": {"check_in": reservation.check_in, "check_out": reservation.check_out, "nights": (reservation.check_out - reservation.check_in).days},
         "rooms": [{"id": room.id, "number": room.number, "room_type_id": room.room_type_id} for room in rooms if room],
-        "items": [
-            {
-                "id": item.id,
-                "description": item.description,
-                "category": item.category,
-                "quantity": float(item.quantity),
-                "unit_price": float(item.unit_price),
-                "discount": float(item.discount),
-                "line_total": float(item.line_total),
-            }
-            for item in summary.items
-        ],
-        "payments": [
-            {"id": payment.id, "amount": float(payment.amount), "method": payment.method, "reference": payment.reference}
-            for payment in summary.payments
-        ],
-        "subtotal": float(summary.subtotal),
-        "discounts": float(summary.discounts),
-        "total": float(summary.total),
-        "paid": float(summary.paid),
-        "balance": float(summary.balance),
+        "items": [{"id": item.id, "description": item.description, "category": item.category, "quantity": float(item.quantity), "unit_price": float(item.unit_price), "discount": float(item.discount), "line_total": float(item.line_total)} for item in summary.items],
+        "payments": [{"id": payment.id, "amount": float(payment.amount), "method": payment.method, "reference": payment.reference} for payment in summary.payments],
+        "subtotal": float(summary.subtotal), "discounts": float(summary.discounts), "total": float(summary.total), "paid": float(summary.paid), "balance": float(summary.balance),
     }
 
 
