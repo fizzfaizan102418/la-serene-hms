@@ -74,6 +74,11 @@ def post_transaction(db: Session, *, transaction_type: str, description: str, li
     if len(currency_set) != 1: raise ValueError("A transaction must use one currency")
     if money(debits) != money(credits): raise ValueError(f"Unbalanced ledger transaction: debit={money(debits)} credit={money(credits)}")
     tx_date = business_date or current_business_date(db)
+    state = db.get(BusinessDateState, 1)
+    if business_date is not None and tx_date != current_business_date(db):
+        raise ValueError(f"Financial posting date {tx_date.isoformat()} is not the current business date")
+    if state is not None and state.last_closed_at is not None and state.last_closed_at.date() >= tx_date:
+        raise ValueError(f"Business date {tx_date.isoformat()} is closed for financial posting")
     transaction = FinancialTransaction(transaction_no=new_transaction_no(tx_date), business_date=tx_date, transaction_type=transaction_type, status="posted", reference_type=reference_type, reference_id=reference_id, folio_id=folio_id, reservation_id=reservation_id, description=description, created_by=created_by, reversal_of_id=reversal_of_id)
     db.add(transaction); db.flush()
     for line in normalized:
@@ -129,3 +134,8 @@ def reverse_transaction_endpoint(transaction_id: int, reason: str = "Correction"
         return {"id": reversal.id, "transaction_no": reversal.transaction_no, "reversal_of_id": reversal.reversal_of_id, "status": reversal.status}
     except ValueError as exc:
         db.rollback(); raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+# Financial controls are mounted here because billing already mounts the ledger router.
+from .finance_controls import router as finance_controls_router
+router.include_router(finance_controls_router)
