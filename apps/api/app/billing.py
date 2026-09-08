@@ -9,6 +9,7 @@ from .auth import require_roles
 from .db import get_db
 from .financial_models import PaymentRefund
 from .financial_ops import router as financial_ops_router
+from .deposit_transfer import router as deposit_transfer_router
 from .front_desk import router as front_desk_router
 from .housekeeping import router as housekeeping_router
 from .financial_authority import folio_ledger_summary, has_posted_folio_item_transaction, post_folio_charge_authoritative
@@ -31,6 +32,7 @@ router.include_router(housekeeping_router)
 router.include_router(reports_router)
 router.include_router(night_audit_router)
 router.include_router(financial_ops_router)
+router.include_router(deposit_transfer_router)
 router.include_router(pms_domain_router)
 router.include_router(ledger_router)
 router.include_router(stay_lifecycle_router)

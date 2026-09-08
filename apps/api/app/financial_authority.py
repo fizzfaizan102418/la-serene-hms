@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 
-from sqlalchemy import event, func, select
+from sqlalchemy import event, func, or_, select
 from sqlalchemy.orm import Session
 
 from .models import DepositTransaction, FinancialTransaction, FolioItem, LedgerEntry, Payment
@@ -169,6 +169,25 @@ def _has_transaction(connection, reference_type: str, reference_id: int) -> bool
     ).scalar_one_or_none() is not None
 
 
+def _has_deposit_transaction(connection, target: DepositTransaction) -> bool:
+    return connection.execute(
+        select(FinancialTransaction.id)
+        .where(
+            or_(
+                (
+                    (FinancialTransaction.reference_type == "deposit")
+                    & (FinancialTransaction.reference_id == str(target.id))
+                ),
+                (
+                    (FinancialTransaction.reference_type == "deposit_transfer")
+                    & (FinancialTransaction.reference_id == target.reference)
+                ),
+            )
+        )
+        .limit(1)
+    ).scalar_one_or_none() is not None
+
+
 @event.listens_for(FolioItem, "before_update")
 def prevent_posted_folio_item_update(mapper, connection, target: FolioItem) -> None:
     if _has_transaction(connection, "folio_item", target.id):
@@ -198,7 +217,7 @@ def prevent_refund_mutation(mapper, connection, target: PaymentRefund) -> None:
 @event.listens_for(DepositTransaction, "before_update")
 @event.listens_for(DepositTransaction, "before_delete")
 def prevent_deposit_mutation(mapper, connection, target: DepositTransaction) -> None:
-    if _has_transaction(connection, "deposit", target.id):
+    if _has_deposit_transaction(connection, target):
         raise ValueError("Posted deposit transactions are immutable; use a new deposit transaction")
 
 
