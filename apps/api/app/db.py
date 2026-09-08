@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
@@ -7,9 +8,16 @@ BASE_DIR = Path(__file__).resolve().parents[3]
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-DATABASE_URL = f"sqlite:///{DATA_DIR / 'la_serene_hms.sqlite3'}"
+# Production uses PostgreSQL through HMS_DATABASE_URL. SQLite remains the explicit
+# local-development fallback so existing developer databases can still be opened
+# during the migration period.
+DATABASE_URL = os.getenv("HMS_DATABASE_URL", f"sqlite:///{DATA_DIR / 'la_serene_hms.sqlite3'}")
+IS_SQLITE = DATABASE_URL.startswith("sqlite")
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+engine_kwargs = {"pool_pre_ping": True}
+if IS_SQLITE:
+    engine_kwargs["connect_args"] = {"check_same_thread": False}
+engine = create_engine(DATABASE_URL, **engine_kwargs)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
@@ -18,7 +26,9 @@ class Base(DeclarativeBase):
 
 
 def ensure_schema_compatibility() -> None:
-    """Apply small, idempotent SQLite compatibility changes for existing installs."""
+    """Keep legacy SQLite development installs compatible during the PG migration."""
+    if not IS_SQLITE:
+        return
     inspector = inspect(engine)
     tables = set(inspector.get_table_names())
     if "reservations" not in tables:
@@ -40,17 +50,12 @@ def ensure_schema_compatibility() -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS idx_reservations_checked_in_at ON reservations(checked_in_at)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS idx_reservations_checked_out_at ON reservations(checked_out_at)"))
 
-        # Financial Ledger 2.0: keep older installations compatible with the new
-        # stay-linked room charge source. SQLite accepts the nullable integer column
-        # before the newer ORM metadata references stays as a foreign key.
         if "folio_items" in tables:
             folio_columns = {column["name"] for column in inspect(connection).get_columns("folio_items")}
             if "stay_id" not in folio_columns:
                 connection.execute(text("ALTER TABLE folio_items ADD COLUMN stay_id INTEGER"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS idx_folio_items_stay ON folio_items(stay_id)"))
 
-            # Upgrade legacy room charges where the old description convention lets
-            # us unambiguously match a folio line to its room-level stay.
             if "stays" in tables and "rooms" in tables:
                 connection.execute(text(
                     "UPDATE folio_items "
@@ -73,7 +78,4 @@ def get_db():
         db.close()
 
 
-# The app historically used Base.metadata.create_all(), so existing installations
-# may already have the reservations table before newer columns are introduced.
-# Apply the compatibility upgrade as soon as the database module loads.
 ensure_schema_compatibility()
