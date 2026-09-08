@@ -23,12 +23,7 @@ def money(value: Decimal | int | float | str) -> Decimal:
 
 
 def folio_ledger_summary(db: Session, folio_id: int) -> FolioLedgerSummary:
-    """Return the folio balance from posted ledger entries, not operational payment/item tables.
-
-    Guest Receivables debits increase the amount owed; credits reduce it. Payment credits
-    and payment-refund debits are used to derive the net settled amount. This keeps refunds
-    from being mistaken for revenue while preserving the receivable balance.
-    """
+    """Return the folio financial position from posted Guest Receivables ledger entries."""
     debit_total = db.scalar(
         select(func.coalesce(func.sum(LedgerEntry.amount), 0))
         .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
@@ -49,7 +44,6 @@ def folio_ledger_summary(db: Session, folio_id: int) -> FolioLedgerSummary:
             FinancialTransaction.status == "posted",
         )
     ) or Decimal("0.00")
-
     settlement_credits = db.scalar(
         select(func.coalesce(func.sum(LedgerEntry.amount), 0))
         .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
@@ -73,12 +67,10 @@ def folio_ledger_summary(db: Session, folio_id: int) -> FolioLedgerSummary:
         )
     ) or Decimal("0.00")
 
+    raw_balance = Decimal(debit_total) - Decimal(credit_total)
     paid = money(Decimal(settlement_credits) - Decimal(refund_debits))
-    total = money(Decimal(debit_total) - Decimal(refund_debits))
-    # Corrections/adjustments that touch Guest Receivables are naturally reflected by
-    # the net ledger position. The derived balance is never allowed to go negative.
-    balance = money(max(Decimal("0.00"), Decimal(debit_total) - Decimal(credit_total)))
-    total = money(balance + paid)
+    total = money(raw_balance + paid)
+    balance = money(max(Decimal("0.00"), raw_balance))
     return FolioLedgerSummary(total=total, paid=paid, balance=balance)
 
 
