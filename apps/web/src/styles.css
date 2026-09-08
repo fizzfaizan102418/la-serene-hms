@@ -103,6 +103,24 @@ h2 { margin: 0; }
 .folio-items article > div { display: grid; gap: 3px; }
 .folio-items span { color: #657067; font-size: 12px; }
 .billing-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.housekeeping-heading-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.housekeeping-stats { margin-top: 0; grid-template-columns: repeat(3, 1fr); }
+.housekeeping-toolbar { margin-top: 16px; display: flex; justify-content: space-between; gap: 16px; align-items: center; }
+.housekeeping-toolbar .muted { margin: 0 0 4px; }
+.housekeeping-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 16px; }
+.housekeeping-card { display: grid; gap: 14px; min-height: 220px; padding: 18px; border-radius: 18px; background: white; }
+.housekeeping-card.room-dirty { box-shadow: inset 0 0 0 2px #d6bda0; }
+.housekeeping-card.room-available { box-shadow: inset 0 0 0 2px #c6dbc4; }
+.housekeeping-card.room-out_of_order { box-shadow: inset 0 0 0 2px #b9bdc0; }
+.housekeeping-card-head { display: flex; justify-content: space-between; gap: 12px; align-items: start; }
+.housekeeping-card-head > div { display: grid; gap: 4px; }
+.housekeeping-card-head strong { font-size: 25px; }
+.housekeeping-card-head span { color: #657067; font-size: 13px; }
+.housekeeping-status { padding: 6px 9px; border-radius: 999px; background: #f4f1ea; color: #536057; font-size: 12px; text-transform: capitalize; }
+.housekeeping-meta { display: grid; grid-template-columns: 1fr auto; gap: 7px 12px; padding: 12px; border-radius: 14px; background: #f7f5f0; }
+.housekeeping-meta span { color: #788079; font-size: 12px; }
+.housekeeping-meta strong { text-align: right; font-size: 13px; }
+.housekeeping-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
 .auth-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
 .auth-card { width: min(100%, 460px); padding: 36px; border-radius: 28px; background: white; box-shadow: 0 18px 50px rgba(30,30,20,.08); }
 .auth-card h1 { font-size: clamp(34px, 7vw, 56px); margin: 18px 0 12px; }
@@ -112,8 +130,8 @@ h2 { margin: 0; }
 .auth-form input:focus { border-color: #869582; box-shadow: 0 0 0 3px rgba(134,149,130,.15); }
 .link-button { margin-top: 18px; padding: 4px 0; }
 .link-button:hover { text-decoration: underline; }
-@media (max-width: 1000px) { .stats { grid-template-columns: repeat(3, 1fr); } .rooms { grid-template-columns: repeat(3, 1fr); } .room-layout, .billing-layout { grid-template-columns: 1fr; } .desk-grid { grid-template-columns: 1fr; } }
-@media (max-width: 760px) { .room-map { grid-template-columns: repeat(2, 1fr); } .grid { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 640px) { .topbar, .welcome, .page-heading { align-items: flex-start; flex-direction: column; } .user-actions { width: 100%; justify-content: space-between; } .stats, .rooms, .grid { grid-template-columns: 1fr 1fr; } .module-nav { width: 100%; overflow-x: auto; } .shell { padding-top: 28px; } }
-@media (max-width: 520px) { .two-col, .search-bar { grid-template-columns: 1fr; display: grid; } .availability-picker { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 420px) { .stats, .rooms, .room-map, .grid, .availability-picker { grid-template-columns: 1fr; } .auth-card { padding: 28px 22px; } }
+@media (max-width: 1000px) { .stats, .housekeeping-stats { grid-template-columns: repeat(3, 1fr); } .rooms { grid-template-columns: repeat(3, 1fr); } .room-layout, .billing-layout { grid-template-columns: 1fr; } .desk-grid, .housekeeping-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 760px) { .room-map { grid-template-columns: repeat(2, 1fr); } .grid { grid-template-columns: 1fr 1fr; } .housekeeping-toolbar { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 640px) { .topbar, .welcome, .page-heading { align-items: flex-start; flex-direction: column; } .user-actions { width: 100%; justify-content: space-between; } .stats, .rooms, .grid, .housekeeping-grid { grid-template-columns: 1fr 1fr; } .module-nav { width: 100%; overflow-x: auto; } .shell { padding-top: 28px; } }
+@media (max-width: 520px) { .two-col, .search-bar { grid-template-columns: 1fr; display: grid; } .availability-picker { grid-template-columns: 1fr 1fr; } .housekeeping-heading-actions { width: 100%; } }
+@media (max-width: 420px) { .stats, .rooms, .room-map, .grid, .availability-picker, .housekeeping-grid { grid-template-columns: 1fr; } .auth-card { padding: 28px 22px; } }
