@@ -6,7 +6,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.db import Base
-from app.models import BusinessDateState, DepositTransaction, FinancialTransaction, Folio, FolioItem, Guest, Reservation, ReservationRoom, Role, Room, RoomType, StayOccupant, User
+from app.models import BusinessDateState, DepositTransaction, FinancialTransaction, Folio, Guest, Payment, Reservation, ReservationRoom, Role, Room, RoomType, StayOccupant, User
 from app.phase_a_completion import (
     DepositApplyCreate,
     DepositRefundCreate,
@@ -14,7 +14,6 @@ from app.phase_a_completion import (
     FolioItemRouteCreate,
     FolioWindowUpdatePayload,
     OccupantGuestChange,
-    ShareStayWithOccupant if False else OccupantGuestChange,
     StayCheckInPayload,
     apply_deposit,
     change_stay_occupant_guest,
@@ -27,6 +26,7 @@ from app.phase_a_completion import (
 )
 from app.pms_core import Stay
 from app.stay_lifecycle import StayFolioWindow
+from app.models import FolioItem
 
 
 class PhaseACompletionTests(unittest.TestCase):
@@ -63,9 +63,7 @@ class PhaseACompletionTests(unittest.TestCase):
         self.db.add(StayOccupant(stay_id=stay.id, guest_id=guests[1].id, role="primary", is_primary=True, check_in=stay.check_in, check_out=stay.check_out))
         window = StayFolioWindow(folio_id=folio.id, stay_id=stay.id, name="Room charges", payer_type="guest", guest_id=guests[1].id, status="open")
         self.db.add(window)
-        self.db.add_all([
-            DepositTransaction(stay_id=stay.id, transaction_type="received", amount=Decimal("200.00"), payment_method="cash", reference="DEP-SEED", created_by=self.user.id),
-        ])
+        self.db.add(DepositTransaction(stay_id=stay.id, transaction_type="received", amount=Decimal("200.00"), payment_method="cash", reference="DEP-SEED", created_by=self.user.id))
         self.db.add(BusinessDateState(id=1, current_business_date=date(2026, 9, 8)))
         self.db.add(self.user)
         self.db.commit()
@@ -118,11 +116,10 @@ class PhaseACompletionTests(unittest.TestCase):
 
         apply_result = apply_deposit(self.stay.id, DepositApplyCreate(folio_id=self.folio.id, amount=Decimal("100.00"), reason="Apply on arrival"), self.db, self.user)
         self.assertEqual(apply_result["remaining_deposit"], Decimal("25.00"))
-        payment_amount = self.db.scalar(select(FolioItem.id).where(FolioItem.folio_id == self.folio.id).limit(1))
-        self.assertIsNone(payment_amount)
-        payment = self.db.execute(select(__import__('app.models', fromlist=['Payment']).Payment).where(__import__('app.models', fromlist=['Payment']).Payment.folio_id == self.folio.id)).scalars().first()
+        payment = self.db.scalar(select(Payment).where(Payment.folio_id == self.folio.id))
         self.assertIsNotNone(payment)
         self.assertEqual(payment.amount, Decimal("100.00"))
+        self.assertEqual(payment.method, "deposit")
         self.assertTrue(self.db.scalar(select(FinancialTransaction.id).where(FinancialTransaction.transaction_type == "deposit_applied")))
 
     def test_folio_item_routing_and_window_lifecycle(self):
