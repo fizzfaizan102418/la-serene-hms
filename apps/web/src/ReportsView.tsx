@@ -8,6 +8,7 @@ type Report = {
   to_date: string;
   period_days: number;
   rooms: {
+    total: number;
     operational: number;
     available_room_nights: number;
     booked_room_nights: number;
@@ -15,10 +16,14 @@ type Report = {
     occupancy_rate: number;
   };
   operations: {
-    arrivals: number;
-    departures: number;
+    scheduled_arrivals: number;
+    scheduled_departures: number;
+    actual_check_ins: number;
+    actual_check_outs: number;
     checked_in_guests: number;
     completed_stays: number;
+    stays_overlapping_period: number;
+    legacy_lifecycle_records: number;
   };
   revenue: {
     gross: number;
@@ -74,13 +79,14 @@ export default function ReportsView({ api }: { api: ReportsApi }) {
         <article className="stat"><span>Net revenue</span><strong>{money(report.revenue.net)}</strong></article>
         <article className="stat"><span>Payments received</span><strong>{money(report.revenue.payments_received)}</strong></article>
         <article className="stat"><span>Outstanding</span><strong>{money(report.revenue.outstanding_balance)}</strong></article>
-        <article className="stat"><span>Arrivals</span><strong>{report.operations.arrivals}</strong></article>
-        <article className="stat"><span>Departures</span><strong>{report.operations.departures}</strong></article>
+        <article className="stat"><span>Actual check-ins</span><strong>{report.operations.actual_check_ins}</strong></article>
+        <article className="stat"><span>Actual check-outs</span><strong>{report.operations.actual_check_outs}</strong></article>
       </section>
       <div className="report-grid">
         <section className="panel">
           <div className="panel-head"><h2>Room performance</h2><span>{report.period_days} day(s)</span></div>
           <div className="report-list">
+            <div><span>Total rooms</span><strong>{report.rooms.total}</strong></div>
             <div><span>Operational rooms</span><strong>{report.rooms.operational}</strong></div>
             <div><span>Available room-nights</span><strong>{report.rooms.available_room_nights}</strong></div>
             <div><span>Booked room-nights</span><strong>{report.rooms.booked_room_nights}</strong></div>
@@ -88,11 +94,23 @@ export default function ReportsView({ api }: { api: ReportsApi }) {
           </div>
         </section>
         <section className="panel">
+          <div className="panel-head"><h2>Guest movement</h2><span>{report.operations.stays_overlapping_period} overlapping stays</span></div>
+          <div className="report-list">
+            <div><span>Scheduled arrivals</span><strong>{report.operations.scheduled_arrivals}</strong></div>
+            <div><span>Scheduled departures</span><strong>{report.operations.scheduled_departures}</strong></div>
+            <div><span>Actual check-ins</span><strong>{report.operations.actual_check_ins}</strong></div>
+            <div><span>Actual check-outs</span><strong>{report.operations.actual_check_outs}</strong></div>
+            <div><span>Completed stays</span><strong>{report.operations.completed_stays}</strong></div>
+          </div>
+          {report.operations.legacy_lifecycle_records > 0 && <p className="report-note">{report.operations.legacy_lifecycle_records} legacy reservation record(s) do not have lifecycle timestamps and use compatibility handling.</p>}
+        </section>
+        <section className="panel">
           <div className="panel-head"><h2>Revenue</h2><span>{report.from_date} → {report.to_date}</span></div>
           <div className="report-list">
             <div><span>Gross charges</span><strong>{money(report.revenue.gross)}</strong></div>
             <div><span>Discounts</span><strong>{money(report.revenue.discounts)}</strong></div>
             <div><span>Net charges</span><strong>{money(report.revenue.net)}</strong></div>
+            <div><span>Payments received</span><strong>{money(report.revenue.payments_received)}</strong></div>
             <div><span>Outstanding balance</span><strong>{money(report.revenue.outstanding_balance)}</strong></div>
           </div>
         </section>
