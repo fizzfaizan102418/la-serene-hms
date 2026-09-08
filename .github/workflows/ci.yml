@@ -5,9 +5,25 @@ on: [push, pull_request]
 jobs:
   api:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: hms
+          POSTGRES_PASSWORD: hms
+          POSTGRES_DB: la_serene_hms_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hms -d la_serene_hms_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     defaults:
       run:
         working-directory: apps/api
+    env:
+      HMS_DATABASE_URL: postgresql+psycopg://hms:hms@127.0.0.1:5432/la_serene_hms_ci
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -15,8 +31,10 @@ jobs:
           python-version: '3.12'
       - run: pip install -r requirements.txt
       - run: python -c "from app.main import app; print(app.title)"
-      - run: HMS_DATABASE_URL=sqlite:///ci_phase0.sqlite3 alembic upgrade head
+      - run: alembic upgrade head
       - run: python -m unittest discover -s tests -v
+      - run: python tests/test_postgres_smoke.py
+      - run: HMS_DATABASE_URL=sqlite:///ci_phase0.sqlite3 alembic upgrade head
 
   web:
     runs-on: ubuntu-latest
