@@ -58,26 +58,50 @@ def report_summary(
 
     booked_room_nights = 0
     occupied_room_nights = 0
-    arrivals = 0
-    departures = 0
+    scheduled_arrivals = 0
+    scheduled_departures = 0
+    actual_check_ins = 0
+    actual_check_outs = 0
     completed_stays = 0
     stays_overlapping_period = 0
+    legacy_lifecycle_records = 0
 
     for reservation in reservations:
-        nights = overlap_nights(reservation.check_in, reservation.check_out, period_start, period_end_exclusive)
         room_count = room_count_by_reservation.get(reservation.id, 0)
-        booked_room_nights += nights * room_count
+        planned_nights = overlap_nights(reservation.check_in, reservation.check_out, period_start, period_end_exclusive)
+        booked_room_nights += planned_nights * room_count
         stays_overlapping_period += 1
 
-        if reservation.status == "checked_in":
-            occupied_room_nights += nights * room_count
-
         if period_start <= reservation.check_in < period_end_exclusive:
-            arrivals += 1
+            scheduled_arrivals += 1
         if period_start <= reservation.check_out < period_end_exclusive:
-            departures += 1
-            if reservation.status == "checked_out":
-                completed_stays += 1
+            scheduled_departures += 1
+
+        if reservation.checked_in_at is not None:
+            if period_start <= reservation.checked_in_at.date() < period_end_exclusive:
+                actual_check_ins += 1
+        else:
+            legacy_lifecycle_records += 1
+
+        if reservation.checked_out_at is not None and period_start <= reservation.checked_out_at.date() < period_end_exclusive:
+            actual_check_outs += 1
+
+        if reservation.status == "checked_out":
+            completed_stays += 1
+
+        # Occupancy is based on the actual stay lifecycle when timestamps exist.
+        # New reservations therefore stop occupying rooms on their actual checkout,
+        # rather than the originally booked checkout date after an early departure.
+        if reservation.checked_in_at is not None:
+            effective_start = max(reservation.check_in, reservation.checked_in_at.date())
+            effective_end = reservation.check_out
+            if reservation.checked_out_at is not None:
+                effective_end = min(effective_end, reservation.checked_out_at.date())
+            occupied_nights = overlap_nights(effective_start, effective_end, period_start, period_end_exclusive)
+            occupied_room_nights += occupied_nights * room_count
+        elif reservation.status == "checked_in":
+            # Compatibility fallback for records created before lifecycle timestamps.
+            occupied_room_nights += planned_nights * room_count
 
     available_room_nights = operational_rooms * period_days
     occupancy_rate = round((occupied_room_nights / available_room_nights) * 100, 2) if available_room_nights else 0.0
@@ -166,11 +190,14 @@ def report_summary(
             "occupancy_rate": occupancy_rate,
         },
         "operations": {
-            "arrivals": arrivals,
-            "departures": departures,
+            "scheduled_arrivals": scheduled_arrivals,
+            "scheduled_departures": scheduled_departures,
+            "actual_check_ins": actual_check_ins,
+            "actual_check_outs": actual_check_outs,
             "checked_in_guests": sum(1 for reservation in reservations if reservation.status == "checked_in"),
             "completed_stays": completed_stays,
             "stays_overlapping_period": stays_overlapping_period,
+            "legacy_lifecycle_records": legacy_lifecycle_records,
         },
         "revenue": {
             "gross": float(gross_revenue),
