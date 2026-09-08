@@ -186,7 +186,7 @@ def update_folio_item(folio_id: int, item_id: int, payload: FolioItemUpdate, db:
 def remove_folio_item(folio_id: int, item_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "reception"))):
     folio = db.get(Folio, folio_id); item = db.get(FolioItem, item_id)
     if not folio or not item or item.folio_id != folio_id: raise HTTPException(status_code=404, detail="Folio item not found")
-    if folio.status != "open": raise HTTPException(status_code=404, detail="Folio item not found")
+    if folio.status != "open": raise HTTPException(status_code=409, detail="Folio is already closed")
     if has_posted_folio_item_transaction(db, item.id): raise HTTPException(status_code=409, detail="Posted folio charges are immutable; use a ledger adjustment or reversal")
     if item.stay_id is not None: raise HTTPException(status_code=409, detail="Stay-generated room charges cannot be manually removed")
     db.delete(item); audit(db, user.id, "remove", "folio_item", item_id, {"folio_id": folio_id}); db.commit()
