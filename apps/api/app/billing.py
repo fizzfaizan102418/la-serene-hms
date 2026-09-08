@@ -6,7 +6,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .auth import require_roles
-from .db import get_db
+from .financial_models import PaymentRefund
+from .financial_ops import router as financial_ops_router
 from .housekeeping import router as housekeeping_router
 from .ledger import post_folio_charge, post_folio_payment, router as ledger_router
 from .models import AuditLog, Folio, FolioItem, Guest, Payment, Reservation, ReservationRoom, Room, User
@@ -23,6 +24,9 @@ FOOD_CATEGORIES = {"food", "restaurant", "room_service", "beverage", "drink", "s
 router.include_router(housekeeping_router)
 router.include_router(reports_router)
 router.include_router(night_audit_router)
+# Register the Phase B operations before legacy PMS-domain routes. This lets
+# the atomic checkout and ledger-backed deposit endpoint take precedence.
+router.include_router(financial_ops_router)
 router.include_router(pms_domain_router)
 router.include_router(ledger_router)
 
@@ -43,12 +47,13 @@ def is_food_item(item: FolioItem) -> bool:
 def build_folio_response(db: Session, folio: Folio) -> FolioResponse:
     items = db.scalars(select(FolioItem).where(FolioItem.folio_id == folio.id).order_by(FolioItem.id)).all()
     payments = db.scalars(select(Payment).where(Payment.folio_id == folio.id).order_by(Payment.id)).all()
+    refunds = db.scalar(select(func.coalesce(func.sum(PaymentRefund.amount), 0)).where(PaymentRefund.folio_id == folio.id)) or Decimal("0.00")
     subtotal = money(sum((Decimal(i.quantity) * Decimal(i.unit_price) for i in items), Decimal("0.00")))
     discounts = money(sum((Decimal(i.discount) for i in items), Decimal("0.00")))
     food_net = money(sum((item_line_total(i) for i in items if is_food_item(i)), Decimal("0.00")))
     food_service_charge = money(food_net * FOOD_SERVICE_CHARGE_RATE)
     total = money(sum((item_line_total(i) for i in items), Decimal("0.00")) + food_service_charge)
-    paid = money(sum((Decimal(p.amount) for p in payments), Decimal("0.00")))
+    paid = money(sum((Decimal(p.amount) for p in payments), Decimal("0.00")) - Decimal(refunds))
     balance = money(max(Decimal("0.00"), total - paid))
     return FolioResponse(id=folio.id, reservation_id=folio.reservation_id, status=folio.status, items=[FolioItemResponse(id=i.id, description=i.description, category=i.category, quantity=i.quantity, unit_price=i.unit_price, discount=i.discount, line_total=item_line_total(i)) for i in items], payments=[PaymentResponse.model_validate(p) for p in payments], subtotal=subtotal, discounts=discounts, food_service_charge=food_service_charge, total=total, paid=paid, balance=balance)
 
@@ -94,7 +99,7 @@ def get_receipt(folio_id: int, db: Session = Depends(get_db), _: User = Depends(
     summary = build_folio_response(db, folio)
     room_ids = db.scalars(select(ReservationRoom.room_id).where(ReservationRoom.reservation_id == reservation.id)).all()
     rooms = [db.get(Room, room_id) for room_id in room_ids]
-    return {"folio_id": folio.id, "reservation_id": reservation.id, "status": folio.status, "guest": {"full_name": guest.full_name, "phone": guest.phone, "email": guest.email, "address": guest.address}, "stay": {"check_in": reservation.check_in, "check_out": reservation.check_out, "nights": (reservation.check_out - reservation.check_in).days}, "rooms": [{"id": room.id, "number": room.number, "room_type_id": room.room_type_id} for room in rooms if room], "items": [{"id": item.id, "description": item.description, "category": item.category, "quantity": float(item.quantity), "unit_price": float(item.unit_price), "discount": float(item.discount), "line_total": float(item.line_total)} for item in summary.items], "payments": [{"id": payment.id, "amount": float(payment.amount), "method": payment.method, "reference": payment.reference} for payment in summary.payments], "subtotal": float(summary.subtotal), "discounts": float(summary.discounts), "food_service_charge": float(summary.food_service_charge), "total": float(summary.total), "paid": float(summary.paid), "balance": float(summary.balance)}
+    return {"folio_id": folio.id, "reservation_id": reservation.id, "status": folio.status, "guest": {"full_name": guest.full_name, "phone": guest.phone, "email": guest.email, "address": guest.address}, "stay": {"check_in": reservation.check_in, "check_out": reservation.check_out, "nights": (reservation.check_out - reservation.check_in).days}, "rooms": [{"id": room.id, "number": room.number, "room_type_id": room.room_type_id} for room in rooms if room], "items": [{"id": item.id, "description": item.description, "category": item.category, "quantity": float(item.quantity), "unit_price": float(item.unit_price), "discount": float(item.discount), "line_total": float(item.line_total)} for item in summary.items], "payments": [{"id": payment.id, "amount": float(payment.amount), "method": payment.method, "reference": payment.reference} for payment in summary.payments], "refunds": [{"id": refund.id, "payment_id": refund.payment_id, "amount": float(refund.amount), "method": refund.method, "reference": refund.reference, "reason": refund.reason} for refund in db.scalars(select(PaymentRefund).where(PaymentRefund.folio_id == folio.id).order_by(PaymentRefund.id)).all()], "subtotal": float(summary.subtotal), "discounts": float(summary.discounts), "food_service_charge": float(summary.food_service_charge), "total": float(summary.total), "paid": float(summary.paid), "balance": float(summary.balance)}
 
 
 @router.post("/folios/{folio_id}/room-charges", response_model=FolioResponse)
