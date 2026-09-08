@@ -6,10 +6,11 @@ type Api = <T>(path: string, options?: RequestInit) => Promise<T>;
 type Guest = { id: number; name: string };
 type Occupant = { id: number; guest_id: number; guest_name: string; role: string; is_primary: boolean; check_in: string; check_out: string; notes?: string | null };
 type RateSegment = { id: number; from_date: string; to_date: string; rate: string | number; discount_percent: string | number; discount_amount: string | number; net_rate: string | number; rate_plan?: string | null; source?: string | null };
+type FolioWindow = { id: number; folio_id: number; stay_id: number; name: string; payer_type: string; guest_id?: number | null; group_id?: number | null; status: string };
 type Stay = {
  id: number; room_id: number; room_number: string | null; room_status: string | null; status: string; check_in: string; check_out: string;
  guest: Guest; agreed_rate: string | number; discount_percent: string | number; discount_amount: string | number;
- deposit_required: string | number; deposit_received: string | number; occupants: Occupant[]; rate_segments: RateSegment[];
+ deposit_required: string | number; deposit_received: string | number; occupants: Occupant[]; rate_segments: RateSegment[]; folio_windows: FolioWindow[];
 };
 type Overview = { reservation: { id: number; guest_id: number; guest_name: string; check_in: string; check_out: string; status: string; folio_id: number | null }; stays: Stay[] };
 
@@ -151,7 +152,7 @@ export default function StayLifecyclePanel({ reservationId, rooms, api, onRefres
     <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
      <input value={windowNames[stay.id] || ''} onChange={e => setWindowNames(prev => ({ ...prev, [stay.id]: e.target.value }))} placeholder="New folio window name"/><button className="secondary-button small-button" disabled={busy || !windowNames[stay.id]} onClick={() => void createWindow(stay)}>Add folio window</button>
     </div>
-    {stay.folio_windows && <div style={{ marginTop: 8 }}><small className="muted">Folio windows: {stay.folio_windows.map(window => `${window.name} (${window.status})`).join(' · ') || 'None'}</small></div>}
+    <div style={{ marginTop: 8 }}>{stay.folio_windows.length ? stay.folio_windows.map(window => <span key={window.id} style={{ display: 'inline-block', marginRight: 6, marginBottom: 4, padding: '4px 8px', borderRadius: 999, background: '#eef5ed', fontSize: 12 }}>{window.name} · {window.payer_type} · {window.status}</span>) : <small className="muted">No folio windows created for this stay.</small>}</div>
    </article>)}
   </div>
 
