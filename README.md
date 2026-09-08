@@ -15,6 +15,8 @@ Offline-first Hotel Management System (PMS/HMS) for La Serene Hotel.
 - Visual room map with status filtering and housekeeping controls
 - Guest records with search by name, phone or email
 - Reservation register with date-aware room availability
+- Front desk arrivals, departures and in-house workflow
+- Check-in, check-out and room-transfer transactions
 - Automatic folio creation for reservations
 - Audit logging for important operational mutations
 - Offline-first deployment target
@@ -67,10 +69,41 @@ Room status changes are audited. A reserved room cannot be manually returned to 
 
 Availability is date-aware: a room can have a future reservation without being incorrectly treated as unavailable for every other date range. `dirty` and `out_of_order` rooms are excluded from new bookings.
 
+## Front desk workflow
+
+1. Open **Front Desk** to see today's arrivals, departures and current in-house guests.
+2. A receptionist or admin can check in an eligible arrival; the reservation becomes `checked_in` and its assigned rooms become `occupied` atomically.
+3. A receptionist or admin can check out an in-house reservation; it becomes `checked_out` and occupied rooms move to `dirty` for housekeeping.
+4. A checked-in guest can be transferred from an assigned room to an available room. The old room becomes `dirty`, the new room becomes `occupied`, and all reservation/room changes are audited in the same transaction.
+
+The lifecycle deliberately keeps business state transitions in FastAPI rather than in React. The frontend only requests an operation and renders the API result.
+
 ## Architecture
 The frontend never owns financial/business calculations. Business rules live in the API/domain layer and database writes are transactional.
 
 Authentication is enforced server-side. The frontend stores the short-lived bearer token locally only to maintain the current local session; API permissions are determined by the authenticated user's role.
+
+The intended operational lifecycle is:
+
+```text
+Reservation
+   ↓
+Check-in
+   ↓
+Room occupied
+   ↓
+Guest in house
+   ↓
+Check-out
+   ↓
+Room dirty
+   ↓
+Housekeeping
+   ↓
+Room available
+```
+
+Billing, folio finalization, payment capture and daily closing will be added as the next financial milestone. Those calculations will remain server-side and transactional.
 
 ## Product direction
 This system starts with a clean operational database. Existing Excel files are reference material for workflow and validation design; historical spreadsheet data is not imported into the operational database.
