@@ -14,13 +14,11 @@ depends_on = None
 
 def upgrade() -> None:
     bind = op.get_bind()
-    dialect = bind.dialect.name
-    if dialect != "postgresql":
+    if bind.dialect.name != "postgresql":
         # SQLite development installs receive compatible runtime backfills from
         # the existing startup compatibility layer.
         return
 
-    bind.execute(op.inline_literal("SELECT 1"))
     bind.exec_driver_sql(
         "INSERT INTO stay_occupants (stay_id, guest_id, role, is_primary, check_in, check_out, notes, created_at, updated_at) "
         "SELECT s.id, s.guest_id, 'primary', TRUE, s.check_in, s.check_out, s.notes, s.created_at, s.updated_at "
