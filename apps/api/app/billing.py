@@ -11,10 +11,11 @@ from .financial_models import PaymentRefund
 from .financial_ops import router as financial_ops_router
 from .housekeeping import router as housekeeping_router
 from .ledger import post_folio_charge, post_folio_payment, router as ledger_router
-from .models import AuditLog, Folio, FolioItem, Guest, Payment, Reservation, ReservationRoom, Room, User
+from .models import AuditLog, Folio, FolioItem, Guest, Payment, Reservation, ReservationRoom, Room, StayRateSegment, User
 from .night_audit import router as night_audit_router
 from .pms_core import Stay
 from .pms_domain import router as pms_domain_router
+from .rate_lifecycle import router as rate_lifecycle_router
 from .reports import router as reports_router
 from .schemas import BillingSummaryResponse, FolioItemCreate, FolioItemResponse, FolioItemUpdate, FolioResponse, PaymentCreate, PaymentResponse
 from .stay_lifecycle import router as stay_lifecycle_router
@@ -31,6 +32,7 @@ router.include_router(financial_ops_router)
 router.include_router(pms_domain_router)
 router.include_router(ledger_router)
 router.include_router(stay_lifecycle_router)
+router.include_router(rate_lifecycle_router)
 
 
 def money(value: Decimal) -> Decimal:
@@ -118,14 +120,30 @@ def add_room_charges(folio_id: int, db: Session = Depends(get_db), user: User = 
         total_nights = max(0, (stay.check_out - stay.check_in).days)
         if total_nights <= 0: continue
         charged = db.scalar(select(func.coalesce(func.sum(FolioItem.quantity), 0)).where(FolioItem.folio_id == folio.id, FolioItem.stay_id == stay.id, FolioItem.category == "room")) or 0
-        delta_nights = Decimal(total_nights) - Decimal(charged)
-        if delta_nights <= 0: continue
+        charged_nights = Decimal(str(charged))
+        if charged_nights >= total_nights: continue
+        segments = db.scalars(select(StayRateSegment).where(StayRateSegment.stay_id == stay.id).order_by(StayRateSegment.from_date, StayRateSegment.id)).all()
+        if not segments:
+            net_rate = money(stay.agreed_rate)
+            segments = [type("LegacyRate", (), {"from_date": stay.check_in, "to_date": stay.check_out, "rate": net_rate, "discount_amount": Decimal("0.00")})()]
+        remaining_to_skip = charged_nights
+        remaining_nights = Decimal(total_nights) - charged_nights
         room = db.get(Room, stay.room_id)
         if not room: raise HTTPException(status_code=409, detail=f"Stay {stay.id} references an invalid room")
-        item = FolioItem(folio_id=folio.id, stay_id=stay.id, description=f"Room {room.number} · stay #{stay.id} · {int(delta_nights)} night(s)", category="room", quantity=delta_nights, unit_price=money(stay.agreed_rate), discount=Decimal("0.00"))
-        db.add(item); db.flush()
-        post_folio_charge(db, folio_id=folio.id, reservation_id=reservation.id, item_id=item.id, amount=item_line_total(item), stay_id=stay.id, category=item.category, created_by=user.id)
-        posted += 1
+        for segment in segments:
+            segment_nights = Decimal(max(0, (segment.to_date - segment.from_date).days))
+            if segment_nights <= 0: continue
+            skip = min(remaining_to_skip, segment_nights)
+            remaining_to_skip -= skip
+            billable = min(segment_nights - skip, remaining_nights)
+            if billable <= 0: continue
+            net_rate = money(Decimal(segment.rate) - Decimal(segment.discount_amount))
+            item = FolioItem(folio_id=folio.id, stay_id=stay.id, description=f"Room {room.number} · stay #{stay.id} · {int(billable)} night(s) · {segment.from_date}→{segment.to_date}", category="room", quantity=billable, unit_price=net_rate, discount=Decimal("0.00"))
+            db.add(item); db.flush()
+            post_folio_charge(db, folio_id=folio.id, reservation_id=reservation.id, item_id=item.id, amount=item_line_total(item), stay_id=stay.id, category=item.category, created_by=user.id)
+            posted += 1
+            remaining_nights -= billable
+            if remaining_nights <= 0: break
     if posted:
         audit(db, user.id, "add_room_charges", "folio", folio.id, {"reservation_id": reservation.id, "stay_ids": [stay.id for stay in stays], "room_charges_posted": posted}); db.commit(); db.refresh(folio)
     return build_folio_response(db, folio)
