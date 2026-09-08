@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import shutil
 import sqlite3
 from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .auth import require_roles
@@ -48,7 +46,6 @@ def validate_sqlite(path: Path) -> tuple[bool, str]:
 def create_backup(prefix: str = "backup") -> Path:
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     target = BACKUP_DIR / f"{prefix}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S_%f')}.sqlite3"
-    engine.dispose()
     with sqlite3.connect(DATABASE_PATH) as source:
         with sqlite3.connect(target) as destination:
             source.backup(destination)
@@ -68,7 +65,7 @@ def backup_info(path: Path) -> dict:
 def list_backups(_: User = Depends(require_roles("admin"))):
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     backups = sorted(BACKUP_DIR.glob("*.sqlite3"), key=lambda path: path.stat().st_mtime, reverse=True)
-    return {"database": DATABASE_PATH.name, "backups": [backup_info(path) for path in backups]}
+    return {"database": DATABASE_PATH.name, "backups": [backup_info(path) for path in backups if not path.name.startswith('.')]} 
 
 
 @router.post("")
@@ -85,7 +82,7 @@ def create_database_backup(user: User = Depends(require_roles("admin"))):
 
 @router.get("/{filename}/download")
 def download_backup(filename: str, _: User = Depends(require_roles("admin"))):
-    if Path(filename).name != filename or not filename.endswith(".sqlite3"):
+    if Path(filename).name != filename or not filename.endswith(".sqlite3") or filename.startswith('.'):
         raise HTTPException(status_code=400, detail="Invalid backup filename")
     target = BACKUP_DIR / filename
     if not target.exists():
@@ -120,14 +117,15 @@ async def restore_database(file: UploadFile = File(...), user: User = Depends(re
             raise HTTPException(status_code=400, detail=f"Backup rejected: {reason}")
 
         safety_backup = create_backup("pre_restore")
+        with sqlite3.connect(temp_path) as source:
+            with sqlite3.connect(DATABASE_PATH) as destination:
+                source.backup(destination)
         engine.dispose()
-        shutil.copy2(temp_path, DATABASE_PATH)
         ensure_schema_compatibility()
-        with engine.begin() as connection:
-            connection.execute(text("PRAGMA foreign_keys=ON"))
-        with SessionLocal() as audit_db:
-            audit(audit_db, user.id, "restore", {"source_filename": file.filename, "safety_backup": safety_backup.name, "bytes": bytes_written})
-            audit_db.commit()
+
+        with SessionLocal() as db:
+            audit(db, user.id, "restore", {"source_filename": file.filename, "safety_backup": safety_backup.name, "bytes": bytes_written})
+            db.commit()
         return {"restored": True, "source_filename": file.filename, "safety_backup": backup_info(safety_backup)}
     except HTTPException:
         raise
