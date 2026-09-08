@@ -11,6 +11,7 @@ from .housekeeping import router as housekeeping_router
 from .models import AuditLog, Folio, FolioItem, Guest, Payment, Reservation, ReservationRoom, Room, User
 from .night_audit import router as night_audit_router
 from .pms_core import Stay
+from .pms_domain import router as pms_domain_router
 from .reports import router as reports_router
 from .schemas import BillingSummaryResponse, FolioItemCreate, FolioItemResponse, FolioItemUpdate, FolioResponse, PaymentCreate, PaymentResponse
 
@@ -21,6 +22,7 @@ FOOD_CATEGORIES = {"food", "restaurant", "room_service", "beverage", "drink", "s
 router.include_router(housekeeping_router)
 router.include_router(reports_router)
 router.include_router(night_audit_router)
+router.include_router(pms_domain_router)
 
 
 def money(value: Decimal) -> Decimal:
