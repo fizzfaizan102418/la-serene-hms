@@ -5,6 +5,7 @@ Revises: 0004_phase_b_financial_ops
 Create Date: 2026-09-08
 """
 from alembic import op
+from sqlalchemy import inspect
 import sqlalchemy as sa
 
 revision = "0005_stay_folio_windows"
@@ -14,21 +15,33 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "stay_folio_windows",
-        sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("folio_id", sa.Integer(), sa.ForeignKey("folios.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("stay_id", sa.Integer(), sa.ForeignKey("stays.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("name", sa.String(length=80), nullable=False),
-        sa.Column("payer_type", sa.String(length=30), nullable=False, server_default="guest"),
-        sa.Column("guest_id", sa.Integer(), sa.ForeignKey("guests.id"), nullable=True),
-        sa.Column("group_id", sa.Integer(), sa.ForeignKey("booking_groups.id"), nullable=True),
-        sa.Column("status", sa.String(length=20), nullable=False, server_default="open"),
-        sa.Column("created_at", sa.DateTime(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(), nullable=False),
-    )
-    op.create_index("ix_stay_folio_windows_folio_id", "stay_folio_windows", ["folio_id"])
-    op.create_index("ix_stay_folio_windows_stay_id", "stay_folio_windows", ["stay_id"])
+    bind = op.get_bind()
+    inspector = inspect(bind)
+
+    # Current development installations still run SQLAlchemy metadata
+    # bootstrap during app import. When that bootstrap has already created
+    # this table, the migration must adopt it rather than issue a duplicate
+    # CREATE TABLE. Fresh Alembic-only installations still create it here.
+    if "stay_folio_windows" not in inspector.get_table_names():
+        op.create_table(
+            "stay_folio_windows",
+            sa.Column("id", sa.Integer(), primary_key=True),
+            sa.Column("folio_id", sa.Integer(), sa.ForeignKey("folios.id", ondelete="CASCADE"), nullable=False),
+            sa.Column("stay_id", sa.Integer(), sa.ForeignKey("stays.id", ondelete="CASCADE"), nullable=False),
+            sa.Column("name", sa.String(length=80), nullable=False),
+            sa.Column("payer_type", sa.String(length=30), nullable=False, server_default="guest"),
+            sa.Column("guest_id", sa.Integer(), sa.ForeignKey("guests.id"), nullable=True),
+            sa.Column("group_id", sa.Integer(), sa.ForeignKey("booking_groups.id"), nullable=True),
+            sa.Column("status", sa.String(length=20), nullable=False, server_default="open"),
+            sa.Column("created_at", sa.DateTime(), nullable=False),
+            sa.Column("updated_at", sa.DateTime(), nullable=False),
+        )
+
+    existing_indexes = {item["name"] for item in inspect(bind).get_indexes("stay_folio_windows")}
+    if "ix_stay_folio_windows_folio_id" not in existing_indexes:
+        op.create_index("ix_stay_folio_windows_folio_id", "stay_folio_windows", ["folio_id"])
+    if "ix_stay_folio_windows_stay_id" not in existing_indexes:
+        op.create_index("ix_stay_folio_windows_stay_id", "stay_folio_windows", ["stay_id"])
 
 
 def downgrade() -> None:
