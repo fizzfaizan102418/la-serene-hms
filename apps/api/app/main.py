@@ -24,11 +24,13 @@ from .schemas import (
     RoomStatusUpdate,
     RoomTypeCreate,
     RoomTypeResponse,
+    RoomTypeUpdate,
+    RoomUpdate,
     SetupStatusResponse,
 )
 
 Base.metadata.create_all(bind=engine)
-app = FastAPI(title="La Serene HMS API", version="0.3.0")
+app = FastAPI(title="La Serene HMS API", version="0.4.0")
 
 
 def write_audit(db: Session, action: str, entity_type: str, entity_id: int | None = None, details: dict | None = None, user_id: int | None = None):
@@ -113,7 +115,24 @@ def create_room_type(payload: RoomTypeCreate, db: Session = Depends(get_db), use
     if db.scalar(select(RoomType).where(RoomType.name == payload.name)):
         raise HTTPException(status_code=409, detail="Room type already exists")
     room_type = RoomType(**payload.model_dump())
-    db.add(room_type); db.flush(); write_audit(db, "create", "room_type", room_type.id, {"name": room_type.name}, user.id); db.commit(); db.refresh(room_type)
+    db.add(room_type); db.flush(); write_audit(db, "create", "room_type", room_type.id, {"name": room_type.name, "base_rate": str(room_type.base_rate)}, user.id); db.commit(); db.refresh(room_type)
+    return room_type
+
+
+@app.patch("/api/room-types/{room_type_id}", response_model=RoomTypeResponse)
+def update_room_type(room_type_id: int, payload: RoomTypeUpdate, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    room_type = db.get(RoomType, room_type_id)
+    if not room_type:
+        raise HTTPException(status_code=404, detail="Room type not found")
+    existing = db.scalar(select(RoomType).where(RoomType.name == payload.name, RoomType.id != room_type_id))
+    if existing:
+        raise HTTPException(status_code=409, detail="Room type already exists")
+    old = {"name": room_type.name, "base_rate": str(room_type.base_rate), "description": room_type.description}
+    room_type.name = payload.name
+    room_type.base_rate = payload.base_rate
+    room_type.description = payload.description
+    write_audit(db, "update", "room_type", room_type.id, {"from": old, "to": payload.model_dump(mode="json")}, user.id)
+    db.commit(); db.refresh(room_type)
     return room_type
 
 
@@ -124,9 +143,29 @@ def list_rooms(db: Session = Depends(get_db), _: User = Depends(get_current_user
 
 @app.post("/api/rooms", response_model=RoomResponse, status_code=201)
 def create_room(payload: RoomCreate, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
-    if not db.get(RoomType, payload.room_type_id): raise HTTPException(status_code=400, detail="Room type does not exist")
-    if db.scalar(select(Room).where(Room.number == payload.number)): raise HTTPException(status_code=409, detail="Room number already exists")
-    room = Room(**payload.model_dump()); db.add(room); db.flush(); write_audit(db, "create", "room", room.id, {"number": room.number}, user.id); db.commit(); db.refresh(room)
+    if not db.get(RoomType, payload.room_type_id):
+        raise HTTPException(status_code=400, detail="Room type does not exist")
+    if db.scalar(select(Room).where(Room.number == payload.number)):
+        raise HTTPException(status_code=409, detail="Room number already exists")
+    room = Room(**payload.model_dump()); db.add(room); db.flush(); write_audit(db, "create", "room", room.id, {"number": room.number, "room_type_id": room.room_type_id}, user.id); db.commit(); db.refresh(room)
+    return room
+
+
+@app.patch("/api/rooms/{room_id}", response_model=RoomResponse)
+def update_room(room_id: int, payload: RoomUpdate, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    room = db.get(Room, room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    if not db.get(RoomType, payload.room_type_id):
+        raise HTTPException(status_code=400, detail="Room type does not exist")
+    existing = db.scalar(select(Room).where(Room.number == payload.number, Room.id != room_id))
+    if existing:
+        raise HTTPException(status_code=409, detail="Room number already exists")
+    old = {"number": room.number, "room_type_id": room.room_type_id}
+    room.number = payload.number
+    room.room_type_id = payload.room_type_id
+    write_audit(db, "update", "room", room.id, {"from": old, "to": payload.model_dump()}, user.id)
+    db.commit(); db.refresh(room)
     return room
 
 
@@ -134,6 +173,10 @@ def create_room(payload: RoomCreate, db: Session = Depends(get_db), user: User =
 def update_room_status(room_id: int, payload: RoomStatusUpdate, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "reception", "housekeeping"))):
     room = db.get(Room, room_id)
     if not room: raise HTTPException(status_code=404, detail="Room not found")
+    if room.status == "reserved" and payload.status == "available":
+        active_reservation = db.scalar(select(ReservationRoom.reservation_id).where(ReservationRoom.room_id == room.id).join(Reservation, Reservation.id == ReservationRoom.reservation_id).where(Reservation.status == "reserved").limit(1))
+        if active_reservation:
+            raise HTTPException(status_code=409, detail="Room is linked to an active reservation")
     old_status = room.status; room.status = payload.status
     write_audit(db, "status_change", "room", room.id, {"from": old_status, "to": room.status}, user.id); db.commit(); db.refresh(room)
     return room
