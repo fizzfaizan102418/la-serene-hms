@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 import BillingView from './BillingView';
+import HousekeepingView from './HousekeepingView';
 
 type User = { id: number; username: string; role: string };
 type Dashboard = { business_date: string; total_rooms: number; available_rooms: number; reserved_rooms: number; occupied_rooms: number; dirty_rooms: number; out_of_order_rooms: number; arrivals_today: number; departures_today: number; in_house_guests: number };
@@ -12,9 +13,9 @@ type Reservation = { id: number; guest_id: number; guest_name: string; check_in:
 type FrontDeskData = { arrivals: Reservation[]; departures: Reservation[]; in_house: Reservation[] };
 type BillingSummary = { folio_id: number; reservation_id: number; guest_name: string; status: string; total: number; paid: number; balance: number };
 type AuthMode = 'login' | 'bootstrap';
-type View = 'Dashboard' | 'Rooms' | 'Guests' | 'Reservations' | 'Front Desk' | 'Billing';
+type View = 'Dashboard' | 'Rooms' | 'Guests' | 'Reservations' | 'Front Desk' | 'Housekeeping' | 'Billing';
 
-const modules: View[] = ['Dashboard', 'Rooms', 'Guests', 'Reservations', 'Front Desk', 'Billing'];
+const modules: View[] = ['Dashboard', 'Rooms', 'Guests', 'Reservations', 'Front Desk', 'Housekeeping', 'Billing'];
 const TOKEN_KEY = 'la_serene_access_token';
 const statuses = ['available', 'reserved', 'occupied', 'dirty', 'out_of_order'] as const;
 
@@ -96,14 +97,27 @@ function RoomsView({ user, rooms, setRooms, roomTypes, onRefresh }: { user: User
 
 function App(){
   const [user,setUser]=useState<User|null>(null); const [authMode,setAuthMode]=useState<AuthMode>('login'); const [checking,setChecking]=useState(true); const [dashboard,setDashboard]=useState<Dashboard|null>(null); const [rooms,setRooms]=useState<Room[]>([]); const [roomTypes,setRoomTypes]=useState<RoomType[]>([]); const [guests,setGuests]=useState<Guest[]>([]); const [reservations,setReservations]=useState<Reservation[]>([]); const [frontDesk,setFrontDesk]=useState<FrontDeskData>({arrivals:[],departures:[],in_house:[]}); const [billing,setBilling]=useState<BillingSummary[]>([]); const [view,setView]=useState<View>('Dashboard'); const [error,setError]=useState('');
-  async function refresh(){const [d,r,rt,g,rs,fd,b]=await Promise.all([api<Dashboard>('/api/dashboard'),api<Room[]>('/api/rooms'),api<RoomType[]>('/api/room-types'),api<Guest[]>('/api/guests'),api<Reservation[]>('/api/reservations'),api<FrontDeskData>('/api/front-desk'),api<BillingSummary[]>('/api/billing')]);setDashboard(d);setRooms(r);setRoomTypes(rt);setGuests(g);setReservations(rs);setFrontDesk(fd);setBilling(b);}
+  const visibleModules = user?.role === 'admin' || user?.role === 'reception' ? modules : modules.filter(module => module !== 'Billing');
+  async function refresh(){
+    const [d,r,rt,g,rs,fd] = await Promise.all([
+      api<Dashboard>('/api/dashboard'),
+      api<Room[]>('/api/rooms'),
+      api<RoomType[]>('/api/room-types'),
+      api<Guest[]>('/api/guests'),
+      api<Reservation[]>('/api/reservations'),
+      api<FrontDeskData>('/api/front-desk'),
+    ]);
+    setDashboard(d);setRooms(r);setRoomTypes(rt);setGuests(g);setReservations(rs);setFrontDesk(fd);
+    if (user?.role === 'admin' || user?.role === 'reception') setBilling(await api<BillingSummary[]>('/api/billing')); else setBilling([]);
+  }
   useEffect(()=>{const token=localStorage.getItem(TOKEN_KEY);if(!token){api<{initialized:boolean}>('/api/auth/setup-status').then(s=>setAuthMode(s.initialized?'login':'bootstrap')).catch(()=>setError('Backend is not running.')).finally(()=>setChecking(false));return;}api<User>('/api/auth/me').then(setUser).catch(()=>localStorage.removeItem(TOKEN_KEY)).finally(()=>setChecking(false));},[]);
   useEffect(()=>{if(!user)return;refresh().catch(err=>{if((err as Error&{status?:number}).status===401)logout();else setError(err instanceof Error?err.message:'Unable to load hotel data');});},[user]);
+  useEffect(()=>{if (!visibleModules.includes(view)) setView('Dashboard');}, [user?.role]);
   function authenticated(next:User,token:string){localStorage.setItem(TOKEN_KEY,token);setUser(next);setView('Dashboard');}
   function logout(){localStorage.removeItem(TOKEN_KEY);setUser(null);setDashboard(null);setRooms([]);setRoomTypes([]);setGuests([]);setReservations([]);setFrontDesk({arrivals:[],departures:[],in_house:[]});setBilling([]);setAuthMode('login');}
   if(checking)return <main className="auth-shell"><p className="muted">Checking local session…</p></main>;
   if(!user)return <AuthScreen mode={authMode} setMode={setAuthMode} onAuthenticated={authenticated}/>;
-  return <main className="shell"><header className="topbar"><div><p className="eyebrow">LA SERENE HOTEL</p><h1>Hotel Management System</h1></div><div className="user-actions"><div className="user-chip"><strong>{user.username}</strong><span>{user.role}</span></div><button className="logout-button" onClick={logout}>Log out</button></div></header><nav className="module-nav">{modules.map(m=><button key={m} className={view===m?'active':''} onClick={()=>setView(m)}>{m}</button>)}</nav>{error&&<p className="error">{error}</p>}{view==='Dashboard'&&<><section className="welcome"><div><p className="muted">Operations dashboard</p><h2>{dashboard?`Business date · ${dashboard.business_date}`:'Loading hotel data…'}</h2></div></section><DashboardView dashboard={dashboard} rooms={rooms} roomTypes={roomTypes}/></>}{view==='Rooms'&&<RoomsView user={user} rooms={rooms} setRooms={setRooms} roomTypes={roomTypes} onRefresh={refresh}/>} {view==='Guests'&&<GuestsView user={user} guests={guests} setGuests={setGuests} onRefresh={refresh}/>} {view==='Reservations'&&<ReservationsView user={user} guests={guests} rooms={rooms} roomTypes={roomTypes} reservations={reservations} onRefresh={refresh}/>} {view==='Front Desk'&&<FrontDeskView user={user} data={frontDesk} rooms={rooms} onRefresh={refresh}/>} {view==='Billing'&&<BillingView userRole={user.role} summaries={billing} onRefresh={refresh} api={api}/>}</main>;
+  return <main className="shell"><header className="topbar"><div><p className="eyebrow">LA SERENE HOTEL</p><h1>Hotel Management System</h1></div><div className="user-actions"><div className="user-chip"><strong>{user.username}</strong><span>{user.role}</span></div><button className="logout-button" onClick={logout}>Log out</button></div></header><nav className="module-nav">{visibleModules.map(m=><button key={m} className={view===m?'active':''} onClick={()=>setView(m)}>{m}</button>)}</nav>{error&&<p className="error">{error}</p>}{view==='Dashboard'&&<><section className="welcome"><div><p className="muted">Operations dashboard</p><h2>{dashboard?`Business date · ${dashboard.business_date}`:'Loading hotel data…'}</h2></div></section><DashboardView dashboard={dashboard} rooms={rooms} roomTypes={roomTypes}/></>}{view==='Rooms'&&<RoomsView user={user} rooms={rooms} setRooms={setRooms} roomTypes={roomTypes} onRefresh={refresh}/>} {view==='Guests'&&<GuestsView user={user} guests={guests} setGuests={setGuests} onRefresh={refresh}/>} {view==='Reservations'&&<ReservationsView user={user} guests={guests} rooms={rooms} roomTypes={roomTypes} reservations={reservations} onRefresh={refresh}/>} {view==='Front Desk'&&<FrontDeskView user={user} data={frontDesk} rooms={rooms} onRefresh={refresh}/>} {view==='Housekeeping'&&<HousekeepingView userRole={user.role} api={api}/>} {view==='Billing'&&<BillingView userRole={user.role} summaries={billing} onRefresh={refresh} api={api}/>}</main>;
 }
 
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);
