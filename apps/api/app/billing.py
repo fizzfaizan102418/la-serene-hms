@@ -3,6 +3,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .auth import require_roles
@@ -185,7 +186,7 @@ def update_folio_item(folio_id: int, item_id: int, payload: FolioItemUpdate, db:
 def remove_folio_item(folio_id: int, item_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "reception"))):
     folio = db.get(Folio, folio_id); item = db.get(FolioItem, item_id)
     if not folio or not item or item.folio_id != folio_id: raise HTTPException(status_code=404, detail="Folio item not found")
-    if folio.status != "open": raise HTTPException(status_code=409, detail="Folio is already closed")
+    if folio.status != "open": raise HTTPException(status_code=404, detail="Folio item not found")
     if has_posted_folio_item_transaction(db, item.id): raise HTTPException(status_code=409, detail="Posted folio charges are immutable; use a ledger adjustment or reversal")
     if item.stay_id is not None: raise HTTPException(status_code=409, detail="Stay-generated room charges cannot be manually removed")
     db.delete(item); audit(db, user.id, "remove", "folio_item", item_id, {"folio_id": folio_id}); db.commit()
@@ -207,9 +208,13 @@ def add_payment(folio_id: int, payload: PaymentCreate, idempotency_key: str | No
     summary = build_folio_response(db, folio)
     if payload.amount > summary.balance: raise HTTPException(status_code=400, detail=f"Payment exceeds outstanding balance of {summary.balance}")
     reservation = db.get(Reservation, folio.reservation_id)
-    payment = Payment(folio_id=folio_id, amount=payload.amount, method=payload.method, reference=payload.reference); db.add(payment); db.flush()
-    tx = post_folio_payment(db, folio_id=folio.id, reservation_id=reservation.id if reservation else 0, payment_id=payment.id, amount=payload.amount, method=payload.method, created_by=user.id)
-    if idempotency_key and tx.idempotency_key != idempotency_key: raise HTTPException(status_code=409, detail="Financial idempotency key was not applied")
+    payment = Payment(folio_id=folio_id, amount=payload.amount, method=payload.method, reference=payload.reference); db.add(payment)
+    try:
+        db.flush()
+        tx = post_folio_payment(db, folio_id=folio.id, reservation_id=reservation.id if reservation else 0, payment_id=payment.id, amount=payload.amount, method=payload.method, created_by=user.id)
+        if idempotency_key and tx.idempotency_key != idempotency_key: raise HTTPException(status_code=409, detail="Financial idempotency key was not applied")
+    except IntegrityError as exc:
+        db.rollback(); raise HTTPException(status_code=409, detail="Payment exceeds the current outstanding balance; another transaction completed first") from exc
     audit(db, user.id, "payment", "folio", folio_id, {"amount": str(payload.amount), "method": payload.method, "reference": payload.reference}); db.commit(); db.refresh(payment)
     return payment
 
