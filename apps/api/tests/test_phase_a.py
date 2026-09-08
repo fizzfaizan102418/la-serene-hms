@@ -1,7 +1,5 @@
-import os
 import unittest
-
-os.environ["HMS_DATABASE_URL"] = "sqlite:///:memory:"
+from datetime import date
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -16,9 +14,10 @@ class PhaseADomainTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
-        Base.metadata.create_all(bind=cls.engine)
 
     def setUp(self):
+        Base.metadata.drop_all(bind=self.engine)
+        Base.metadata.create_all(bind=self.engine)
         self.db = Session(self.engine)
         role_guest = Guest(full_name="Booking Guest")
         occupant_guest = Guest(full_name="Occupant Guest")
@@ -28,7 +27,7 @@ class PhaseADomainTests(unittest.TestCase):
         self.db.add(room_type); self.db.flush()
         room = Room(number="101", room_type_id=room_type.id, status="available")
         self.db.add(room); self.db.flush()
-        reservation = Reservation(guest_id=role_guest.id, check_in=__import__("datetime").date(2026, 9, 8), check_out=__import__("datetime").date(2026, 9, 10), status="reserved")
+        reservation = Reservation(guest_id=role_guest.id, check_in=date(2026, 9, 8), check_out=date(2026, 9, 10), status="reserved")
         self.db.add(reservation); self.db.flush()
         stay = Stay(reservation_id=reservation.id, room_id=room.id, guest_id=role_guest.id, status="reserved", check_in=reservation.check_in, check_out=reservation.check_out, agreed_rate=100, discount_percent=10, discount_amount=10, payment_due_policy="at_checkout", deposit_required=180, deposit_received=0)
         self.db.add(stay); self.db.flush()
@@ -51,8 +50,8 @@ class PhaseADomainTests(unittest.TestCase):
 
     def test_rate_segments_can_model_rate_change(self):
         self.db.add_all([
-            StayRateSegment(stay_id=self.stay.id, from_date=self.stay.check_in, to_date=__import__("datetime").date(2026, 9, 9), rate=100, discount_percent=10, discount_amount=10, source="reservation"),
-            StayRateSegment(stay_id=self.stay.id, from_date=__import__("datetime").date(2026, 9, 9), to_date=self.stay.check_out, rate=120, discount_percent=0, discount_amount=0, source="manual"),
+            StayRateSegment(stay_id=self.stay.id, from_date=self.stay.check_in, to_date=date(2026, 9, 9), rate=100, discount_percent=10, discount_amount=10, source="reservation"),
+            StayRateSegment(stay_id=self.stay.id, from_date=date(2026, 9, 9), to_date=self.stay.check_out, rate=120, discount_percent=0, discount_amount=0, source="manual"),
         ])
         self.db.commit()
         rows = self.db.query(StayRateSegment).filter(StayRateSegment.stay_id == self.stay.id).order_by(StayRateSegment.from_date).all()
@@ -69,7 +68,6 @@ class PhaseADomainTests(unittest.TestCase):
         self.assertEqual(balance, 60)
 
     def test_business_date_state_exists_as_singleton_capable_table(self):
-        from datetime import date
         state = BusinessDateState(id=1, current_business_date=date(2026, 9, 8))
         self.db.add(state); self.db.commit()
         self.assertEqual(self.db.get(BusinessDateState, 1).current_business_date, date(2026, 9, 8))
