@@ -56,7 +56,6 @@ export default function BackupView({ api }: { api: BackupApi }) {
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail ?? `Restore failed (${response.status})`);
       const result = await response.json(); setRestoreFile(null);
       setMessage(`Database restored. Safety backup: ${result.safety_backup.filename}. Reload the app to reconnect to the restored database.`);
-      await refresh();
     } catch (err) { setError(err instanceof Error ? err.message : 'Unable to restore database'); }
     finally { setRestoring(false); }
   }
