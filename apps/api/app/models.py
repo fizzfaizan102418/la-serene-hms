@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, Text
+from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, Text, event
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -62,6 +62,14 @@ class Reservation(TimestampMixin, Base):
     checked_out_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(30), default="reserved", index=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+@event.listens_for(Reservation.status, "set", retval=False)
+def track_reservation_lifecycle(target: Reservation, value: str, oldvalue: str | None, initiator):
+    if value == "checked_in" and oldvalue != "checked_in" and target.checked_in_at is None:
+        target.checked_in_at = datetime.utcnow()
+    elif value == "checked_out" and oldvalue != "checked_out" and target.checked_out_at is None:
+        target.checked_out_at = datetime.utcnow()
 
 
 class ReservationRoom(Base):
