@@ -46,6 +46,7 @@ def validate_sqlite(path: Path) -> tuple[bool, str]:
 def create_backup(prefix: str = "backup") -> Path:
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     target = BACKUP_DIR / f"{prefix}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S_%f')}.sqlite3"
+    engine.dispose()
     with sqlite3.connect(DATABASE_PATH) as source:
         with sqlite3.connect(target) as destination:
             source.backup(destination)
@@ -117,16 +118,22 @@ async def restore_database(file: UploadFile = File(...), user: User = Depends(re
             raise HTTPException(status_code=400, detail=f"Backup rejected: {reason}")
 
         safety_backup = create_backup("pre_restore")
+
+        # Close pooled SQLAlchemy connections before replacing the database contents.
+        engine.dispose()
         with sqlite3.connect(temp_path) as source:
             with sqlite3.connect(DATABASE_PATH) as destination:
                 source.backup(destination)
-        engine.dispose()
+
         ensure_schema_compatibility()
 
-        with SessionLocal() as db:
-            audit(db, user.id, "restore", {"source_filename": file.filename, "safety_backup": safety_backup.name, "bytes": bytes_written})
-            db.commit()
-        return {"restored": True, "source_filename": file.filename, "safety_backup": backup_info(safety_backup)}
+        # Do not insert an audit row after restore: the restored database may belong to
+        # a different installation and therefore may not contain the current admin user.
+        return {
+            "restored": True,
+            "source_filename": file.filename,
+            "safety_backup": backup_info(safety_backup),
+        }
     except HTTPException:
         raise
     except Exception as exc:
