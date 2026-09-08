@@ -11,6 +11,7 @@ from .models import Folio, FolioItem, Guest, Payment, Reservation, ReservationRo
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 MONEY = Decimal("0.01")
+ACTIVE_STATUSES = ("reserved", "checked_in", "checked_out")
 
 
 def money(value: Decimal | int | float) -> Decimal:
@@ -36,46 +37,54 @@ def report_summary(
         raise HTTPException(status_code=400, detail="to_date must be on or after from_date")
 
     period_days = (period_end_exclusive - period_start).days
+    total_rooms = db.scalar(select(func.count(Room.id))) or 0
     operational_rooms = db.scalar(select(func.count(Room.id)).where(Room.status != "out_of_order")) or 0
 
     reservations = db.scalars(
-        select(Reservation)
-        .where(Reservation.check_in < period_end_exclusive, Reservation.check_out > period_start)
+        select(Reservation).where(
+            Reservation.check_in < period_end_exclusive,
+            Reservation.check_out > period_start,
+            Reservation.status.in_(ACTIVE_STATUSES),
+        )
     ).all()
 
-    occupied_room_nights = 0
+    room_count_by_reservation = {
+        reservation_id: int(count)
+        for reservation_id, count in db.execute(
+            select(ReservationRoom.reservation_id, func.count(ReservationRoom.room_id))
+            .group_by(ReservationRoom.reservation_id)
+        )
+    }
+
     booked_room_nights = 0
+    occupied_room_nights = 0
     arrivals = 0
     departures = 0
-    checked_in_guests = 0
     completed_stays = 0
-
-    room_count_by_reservation: dict[int, int] = {}
-    for reservation_id, count in db.execute(
-        select(ReservationRoom.reservation_id, func.count(ReservationRoom.room_id))
-        .group_by(ReservationRoom.reservation_id)
-    ):
-        room_count_by_reservation[reservation_id] = int(count)
+    stays_overlapping_period = 0
 
     for reservation in reservations:
         nights = overlap_nights(reservation.check_in, reservation.check_out, period_start, period_end_exclusive)
         room_count = room_count_by_reservation.get(reservation.id, 0)
         booked_room_nights += nights * room_count
+        stays_overlapping_period += 1
+
         if reservation.status == "checked_in":
             occupied_room_nights += nights * room_count
-            checked_in_guests += 1
-        if reservation.check_in >= period_start and reservation.check_in < period_end_exclusive:
-            if reservation.status in ("reserved", "checked_in"):
-                arrivals += 1
-        if reservation.check_out >= period_start and reservation.check_out < period_end_exclusive:
-            if reservation.status in ("checked_in", "checked_out"):
-                departures += 1
-        if reservation.status == "checked_out":
-            completed_stays += 1
+
+        if period_start <= reservation.check_in < period_end_exclusive:
+            arrivals += 1
+        if period_start <= reservation.check_out < period_end_exclusive:
+            departures += 1
+            if reservation.status == "checked_out":
+                completed_stays += 1
 
     available_room_nights = operational_rooms * period_days
     occupancy_rate = round((occupied_room_nights / available_room_nights) * 100, 2) if available_room_nights else 0.0
 
+    # Charges and payments are reported by transaction creation date. This matches
+    # how the PMS currently records folio items and payments and avoids treating a
+    # historical folio as current-period revenue just because the stay overlaps.
     revenue_row = db.execute(
         select(
             func.coalesce(func.sum(FolioItem.quantity * FolioItem.unit_price), 0),
@@ -133,7 +142,11 @@ def report_summary(
     guest_rows = db.execute(
         select(Guest.full_name, func.count(Reservation.id))
         .join(Reservation, Reservation.guest_id == Guest.id)
-        .where(Reservation.check_in < period_end_exclusive, Reservation.check_out > period_start)
+        .where(
+            Reservation.check_in < period_end_exclusive,
+            Reservation.check_out > period_start,
+            Reservation.status.in_(ACTIVE_STATUSES),
+        )
         .group_by(Guest.id, Guest.full_name)
         .order_by(func.count(Reservation.id).desc(), Guest.full_name)
         .limit(5)
@@ -145,6 +158,7 @@ def report_summary(
         "to_date": period_end_exclusive - timedelta(days=1),
         "period_days": period_days,
         "rooms": {
+            "total": total_rooms,
             "operational": operational_rooms,
             "available_room_nights": available_room_nights,
             "booked_room_nights": booked_room_nights,
@@ -154,8 +168,9 @@ def report_summary(
         "operations": {
             "arrivals": arrivals,
             "departures": departures,
-            "checked_in_guests": checked_in_guests,
+            "checked_in_guests": sum(1 for reservation in reservations if reservation.status == "checked_in"),
             "completed_stays": completed_stays,
+            "stays_overlapping_period": stays_overlapping_period,
         },
         "revenue": {
             "gross": float(gross_revenue),
