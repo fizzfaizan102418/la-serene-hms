@@ -9,6 +9,7 @@ from .auth import require_roles
 from .db import get_db
 from .financial_models import PaymentRefund
 from .financial_ops import router as financial_ops_router
+from .front_desk import router as front_desk_router
 from .housekeeping import router as housekeeping_router
 from .ledger import post_folio_charge, post_folio_payment, router as ledger_router
 from .models import AuditLog, Folio, FolioItem, Guest, Payment, Reservation, ReservationRoom, Room, StayRateSegment, User
@@ -28,13 +29,14 @@ FOOD_CATEGORIES = {"food", "restaurant", "room_service", "beverage", "drink", "s
 router.include_router(housekeeping_router)
 router.include_router(reports_router)
 router.include_router(night_audit_router)
-# Register Phase B operations before legacy PMS-domain routes.
 router.include_router(financial_ops_router)
 router.include_router(pms_domain_router)
 router.include_router(ledger_router)
 router.include_router(stay_lifecycle_router)
 router.include_router(rate_lifecycle_router)
 router.include_router(phase_a_completion_router)
+# Front Desk 2.0 is registered before legacy reservation routes in main.py.
+router.include_router(front_desk_router)
 
 
 def money(value: Decimal) -> Decimal:
@@ -89,9 +91,10 @@ def get_folio(folio_id: int, db: Session = Depends(get_db), _: User = Depends(re
 @router.get("/reservations/{reservation_id}/folio", response_model=FolioResponse)
 def reservation_folio(reservation_id: int, db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception", "housekeeping"))):
     if not db.get(Reservation, reservation_id): raise HTTPException(status_code=404, detail="Reservation not found")
-    folio = db.scalar(select(Folio).where(Folio.reservation_id == reservation_id))
+    folio = db.scalar(select(Folio.id).where(Folio.reservation_id == reservation_id))
     if not folio: raise HTTPException(status_code=404, detail="Folio not found")
-    return build_folio_response(db, folio)
+    folio_obj = db.get(Folio, folio)
+    return build_folio_response(db, folio_obj)
 
 
 @router.get("/folios/{folio_id}/receipt")
