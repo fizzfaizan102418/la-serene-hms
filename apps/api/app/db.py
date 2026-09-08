@@ -47,3 +47,9 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+# The app historically used Base.metadata.create_all(), so existing installations
+# may already have the reservations table before newer columns are introduced.
+# Apply the compatibility upgrade as soon as the database module loads.
+ensure_schema_compatibility()
