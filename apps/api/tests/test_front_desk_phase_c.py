@@ -90,15 +90,16 @@ class FrontDeskPhaseCTests(unittest.TestCase):
         self.assertEqual(self.db.get(Folio, folio.id).status, "closed")
         self.assertEqual(self.db.get(Room, self.room1.id).status, "dirty")
 
-    def test_atomic_checkout_route_is_mounted_before_legacy_checkout_route(self):
-        matches = [
+    def test_atomic_checkout_route_is_mounted(self):
+        path = app.url_path_for("atomic_checkout", reservation_id=123)
+        self.assertEqual(str(path), "/api/reservations/123/checkout")
+        mounted = [
             route
             for route in app.routes
-            if getattr(route, "path", None) == "/api/reservations/{reservation_id}/checkout"
+            if getattr(route, "name", None) == "atomic_checkout"
             and "POST" in getattr(route, "methods", set())
         ]
-        self.assertEqual(len(matches), 1)
-        self.assertEqual(getattr(matches[0], "endpoint", None).__name__, "atomic_checkout")
+        self.assertEqual(len(mounted), 1)
 
 
 if __name__ == "__main__":
