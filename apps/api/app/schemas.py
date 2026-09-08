@@ -116,6 +116,25 @@ class AvailabilityResponse(BaseModel):
     rooms: list[RoomResponse]
 
 
+class CheckInResponse(ReservationResponse):
+    pass
+
+
+class CheckOutResponse(ReservationResponse):
+    pass
+
+
+class RoomTransferRequest(BaseModel):
+    from_room_id: int
+    to_room_id: int
+
+
+class FrontDeskResponse(BaseModel):
+    arrivals: list[ReservationListResponse]
+    departures: list[ReservationListResponse]
+    in_house: list[ReservationListResponse]
+
+
 class DashboardResponse(BaseModel):
     business_date: date
     total_rooms: int
