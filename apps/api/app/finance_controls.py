@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 from .auth import require_roles
 from .db import get_db
 from .financial_models import PaymentRefund
-from .ledger import post_transaction
 from .models import AuditLog, BusinessDateState, DepositTransaction, FinancialTransaction, Folio, FolioItem, LedgerEntry, Payment, Reservation, User
 from .pms_core import FolioWindow, Stay
 
@@ -40,6 +39,11 @@ def require_open_business_date(db: Session) -> date:
 def audit(db: Session, user_id: int, action: str, entity_type: str, entity_id: int | str, details: dict) -> None:
     import json
     db.add(AuditLog(user_id=user_id, action=action, entity_type=entity_type, entity_id=str(entity_id), details=json.dumps(details)))
+
+
+def post_to_ledger(db: Session, **kwargs):
+    from .ledger import post_transaction
+    return post_transaction(db, **kwargs)
 
 
 class FolioTransferCreate(BaseModel):
@@ -76,7 +80,7 @@ def transfer_folio_item(payload: FolioTransferCreate, db: Session = Depends(get_
     amount = money(max(Decimal("0.00"), Decimal(item.quantity) * Decimal(item.unit_price) - Decimal(item.discount)))
     source_id, destination_id = source.id, destination.id
     item.folio_id = destination_id; db.flush()
-    post_transaction(db, transaction_type="folio_transfer", description=f"Transfer folio item #{item.id}: {source_id} -> {destination_id}", reference_type="folio_item", reference_id=str(item.id), folio_id=destination_id, reservation_id=destination.reservation_id, created_by=user.id, lines=[{"account": "Guest Receivables", "direction": "debit", "amount": amount, "folio_id": destination_id}, {"account": "Guest Receivables", "direction": "credit", "amount": amount, "folio_id": source_id}])
+    post_to_ledger(db, transaction_type="folio_transfer", description=f"Transfer folio item #{item.id}: {source_id} -> {destination_id}", reference_type="folio_item", reference_id=str(item.id), folio_id=destination_id, reservation_id=destination.reservation_id, created_by=user.id, lines=[{"account": "Guest Receivables", "direction": "debit", "amount": amount, "folio_id": destination_id}, {"account": "Guest Receivables", "direction": "credit", "amount": amount, "folio_id": source_id}])
     audit(db, user.id, "transfer", "folio_item", item.id, {"from_folio_id": source_id, "to_folio_id": destination_id, "amount": str(amount), "reason": payload.reason})
     db.commit(); return {"item_id": item.id, "from_folio_id": source_id, "to_folio_id": destination_id, "amount": amount, "reason": payload.reason}
 
@@ -106,7 +110,7 @@ def post_deposit(stay_id: int, payload: DepositPostCreate, db: Session = Depends
     else:
         account = CASH_ACCOUNTS.get(payload.payment_method or "other", "Other Payment")
         lines = [{"account": "Guest Deposits", "direction": "debit", "amount": tx.amount, "folio_id": tx.folio_id, "stay_id": stay_id}, {"account": account, "direction": "credit", "amount": tx.amount, "folio_id": tx.folio_id, "stay_id": stay_id, "payment_method": payload.payment_method}]
-    post_transaction(db, transaction_type=f"deposit_{payload.transaction_type}", description=f"Deposit {payload.transaction_type} #{tx.id}", reference_type="deposit", reference_id=str(tx.id), folio_id=tx.folio_id, reservation_id=reservation.id if reservation else None, created_by=user.id, business_date=business_date, lines=lines)
+    post_to_ledger(db, transaction_type=f"deposit_{payload.transaction_type}", description=f"Deposit {payload.transaction_type} #{tx.id}", reference_type="deposit", reference_id=str(tx.id), folio_id=tx.folio_id, reservation_id=reservation.id if reservation else None, created_by=user.id, business_date=business_date, lines=lines)
     stay.deposit_received = new_balance
     audit(db, user.id, "deposit", "stay", stay_id, {"deposit_id": tx.id, "transaction_type": payload.transaction_type, "amount": str(tx.amount), "new_balance": str(new_balance)})
     db.commit(); db.refresh(tx)
