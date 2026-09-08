@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import ForeignKey, Numeric, String, UniqueConstraint
@@ -40,7 +40,7 @@ class Invoice(Base):
     invoice_no: Mapped[str] = mapped_column(String(40), unique=True, index=True)
     folio_id: Mapped[int] = mapped_column(ForeignKey("folios.id", ondelete="RESTRICT"), unique=True, index=True)
     reservation_id: Mapped[int] = mapped_column(ForeignKey("reservations.id", ondelete="RESTRICT"), index=True)
-    business_date: Mapped[datetime] = mapped_column()
+    business_date: Mapped[date] = mapped_column()
     total: Mapped[Decimal] = mapped_column(Numeric(14, 2))
     currency: Mapped[str] = mapped_column(String(3), default="PKR")
     status: Mapped[str] = mapped_column(String(20), default="issued")
