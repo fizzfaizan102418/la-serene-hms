@@ -43,7 +43,7 @@ export default function ReservationsPMSView({ user, guests, rooms, roomTypes, re
   const selected = selectedId ? reservations.find(r => r.id === selectedId) ?? null : null;
 
   async function loadGroups() {
-    try { setGroups(await api<Group[]>('/api/groups')); } catch { /* optional panel */ }
+    try { setGroups(await api<Group[]>('/api/groups')); } catch { /* optional */ }
   }
 
   async function findAvailable() {
@@ -54,7 +54,7 @@ export default function ReservationsPMSView({ user, guests, rooms, roomTypes, re
       const result = await api<{ rooms: Room[] }>(`/api/availability?check_in=${checkIn}&check_out=${checkOut}`);
       setAvailable(result.rooms);
       await loadGroups();
-      setMessage(`${result.rooms.length} room(s) available.`);
+      setMessage(`${result.rooms.length} room(s) available for the selected dates.`);
     } catch (err) { setMessage(err instanceof Error ? err.message : 'Availability check failed'); }
   }
 
@@ -63,39 +63,27 @@ export default function ReservationsPMSView({ user, guests, rooms, roomTypes, re
     const type = typeById.get(room.room_type_id);
     setAllocations(current => [...current, { roomId: room.id, occupantId: bookingGuest, rate: String(type?.base_rate ?? 0), discountPercent: '0', fixedDiscount: '0' }]);
   }
-
-  function updateAllocation(roomId: number, patch: Partial<Allocation>) {
-    setAllocations(current => current.map(item => item.roomId === roomId ? { ...item, ...patch } : item));
-  }
-
+  function updateAllocation(roomId: number, patch: Partial<Allocation>) { setAllocations(current => current.map(item => item.roomId === roomId ? { ...item, ...patch } : item)); }
   function removeRoom(roomId: number) { setAllocations(current => current.filter(item => item.roomId !== roomId)); }
 
   async function createReservation(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true); setMessage('');
     try {
-      const payload = {
-        guest_id: Number(bookingGuest),
-        check_in: checkIn,
-        check_out: checkOut,
-        room_ids: allocations.map(a => a.roomId),
-        notes: notes || null,
-      };
-      const created = await api<Reservation>('/api/reservations', { method: 'POST', body: JSON.stringify(payload) });
-      const staysPayload = allocations.map(a => ({
-        room_id: a.roomId,
-        guest_id: a.occupantId ? Number(a.occupantId) : Number(bookingGuest),
-        agreed_rate: Number(a.rate || 0),
-        discount_percent: Number(a.discountPercent || 0),
-        discount_amount: Number(a.fixedDiscount || 0),
-        payment_due_policy: paymentPolicy,
-        deposit_required: Number(a.rate || 0) * Number(checkOut && checkIn ? Math.max(1, Math.round((new Date(`${checkOut}T00:00:00`).getTime() - new Date(`${checkIn}T00:00:00`).getTime()) / 86400000)) : 1),
-        deposit_received: Number(deposit || 0),
-        notes: notes || null,
-      }));
-      await api(`/api/reservations/${created.id}/stays`, { method: 'POST', body: JSON.stringify(staysPayload) });
-      if (groupId) await api(`/api/groups/${groupId}/reservations`, { method: 'POST', body: JSON.stringify({ reservation_id: created.id, role: 'member' }) });
-      setMessage(`Reservation #${created.id} created with ${allocations.length} room(s).`);
+      await api<Reservation>('/api/reservations/workflow', {
+        method: 'POST',
+        body: JSON.stringify({
+          guest_id: Number(bookingGuest),
+          check_in: checkIn,
+          check_out: checkOut,
+          rooms: allocations.map(a => ({ room_id: a.roomId, occupant_guest_id: a.occupantId ? Number(a.occupantId) : Number(bookingGuest), agreed_rate: Number(a.rate || 0), discount_percent: Number(a.discountPercent || 0), fixed_discount: Number(a.fixedDiscount || 0) })),
+          group_id: groupId ? Number(groupId) : null,
+          notes: notes || null,
+          payment_policy: paymentPolicy,
+          deposit_received: Number(deposit || 0),
+        }),
+      });
+      setMessage(`Reservation created with ${allocations.length} room(s).`);
       setBookingGuest(''); setAllocations([]); setAvailable([]); setGroupId(''); setNotes(''); setDeposit('0');
       await onRefresh();
     } catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to create reservation'); }
