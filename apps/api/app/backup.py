@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -55,6 +56,20 @@ def create_backup(prefix: str = "backup") -> Path:
         target.unlink(missing_ok=True)
         raise RuntimeError(f"Created backup did not pass validation: {reason}")
     return target
+
+
+def cleanup_temp_file(path: Path) -> None:
+    """Best-effort Windows-safe cleanup for uploaded restore files."""
+    for attempt in range(5):
+        try:
+            path.unlink(missing_ok=True)
+            return
+        except PermissionError:
+            if attempt == 4:
+                # A transient antivirus/indexer lock must never turn a successful restore
+                # into HTTP 500. The hidden temp file will be ignored by backup listing.
+                return
+            time.sleep(0.1 * (attempt + 1))
 
 
 def backup_info(path: Path) -> dict:
@@ -139,5 +154,5 @@ async def restore_database(file: UploadFile = File(...), user: User = Depends(re
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Restore failed: {exc}") from exc
     finally:
-        temp_path.unlink(missing_ok=True)
         await file.close()
+        cleanup_temp_file(temp_path)
