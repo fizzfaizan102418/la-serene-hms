@@ -66,7 +66,12 @@ class PhaseACompletionTests(unittest.TestCase):
         window = StayFolioWindow(folio_id=folio.id, stay_id=stay.id, name="Room charges", payer_type="guest", guest_id=guests[1].id, status="open")
         self.db.add(window)
         self.db.add(DepositTransaction(stay_id=stay.id, transaction_type="received", amount=Decimal("200.00"), payment_method="cash", reference="DEP-SEED", created_by=self.user.id))
-        self.db.add(BusinessDateState(id=1, current_business_date=date(2026, 9, 8)))
+        business_date_state = self.db.get(BusinessDateState, 1)
+        if business_date_state is None:
+            self.db.add(BusinessDateState(id=1, current_business_date=date(2026, 9, 8)))
+        else:
+            business_date_state.current_business_date = date(2026, 9, 8)
+            business_date_state.last_closed_at = None
         self.db.commit()
         self.db.expire_all()
         self.reservation = self.db.get(Reservation, reservation.id)
@@ -111,11 +116,9 @@ class PhaseACompletionTests(unittest.TestCase):
         transferred = transfer_deposit(self.stay.id, DepositTransferCreate(target_stay_id=other_stay.id, amount=Decimal("50.00"), reason="Room split"), self.db, self.user)
         self.assertEqual(transferred["source_balance"], Decimal("150.00"))
         self.assertEqual(transferred["target_balance"], Decimal("50.00"))
-
         refunded = refund_deposit(self.stay.id, DepositRefundCreate(amount=Decimal("25.00"), payment_method="cash", reason="Guest request"), self.db, self.user)
         self.assertEqual(refunded["balance"], Decimal("125.00"))
         self.assertTrue(self.db.scalar(select(FinancialTransaction.id).where(FinancialTransaction.transaction_type == "deposit_refund")))
-
         apply_result = apply_deposit(self.stay.id, DepositApplyCreate(folio_id=self.folio.id, amount=Decimal("100.00"), reason="Apply on arrival"), self.db, self.user)
         self.assertEqual(apply_result["remaining_deposit"], Decimal("25.00"))
         payment = self.db.scalar(select(Payment).where(Payment.folio_id == self.folio.id))
