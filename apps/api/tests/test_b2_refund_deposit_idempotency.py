@@ -3,7 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from fastapi import HTTPException
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
 from app.db import Base
@@ -11,9 +11,10 @@ import app.financial_authority  # noqa: F401
 import app.financial_models  # noqa: F401
 import app.models  # noqa: F401
 import app.pms_core  # noqa: F401
+from app.financial_authority import post_folio_charge_authoritative
+from app.financial_models import PaymentRefund
 from app.financial_ops import RefundCreate, create_deposit_with_ledger, refund_payment
 from app.ledger import post_folio_payment
-from app.financial_authority import post_folio_charge_authoritative
 from app.models import (
     BusinessDateState,
     DepositTransaction,
@@ -21,7 +22,6 @@ from app.models import (
     Folio,
     FolioItem,
     Guest,
-    LedgerEntry,
     Payment,
     Reservation,
     ReservationRoom,
@@ -127,13 +127,14 @@ class PhaseB2RefundDepositIdempotencyTests(unittest.TestCase):
         replay = refund_payment(self.folio.id, payload, "refund-001", self.db, self.user)
 
         self.assertEqual(first["id"], replay["id"])
+        self.assertFalse(first["replayed"])
         self.assertTrue(replay["replayed"])
         self.assertEqual(
-            self.db.scalar(select(func_count()).select_from(PaymentRefund).where(PaymentRefund.payment_id == self.payment.id)),
+            self.db.scalar(select(func.count()).select_from(PaymentRefund).where(PaymentRefund.payment_id == self.payment.id)),
             1,
         )
         self.assertEqual(
-            self.db.scalar(select(func_count()).select_from(FinancialTransaction).where(FinancialTransaction.idempotency_key == "refund-001")),
+            self.db.scalar(select(func.count()).select_from(FinancialTransaction).where(FinancialTransaction.idempotency_key == "refund-001")),
             1,
         )
 
@@ -169,24 +170,20 @@ class PhaseB2RefundDepositIdempotencyTests(unittest.TestCase):
 
         self.assertEqual(applied["balance"], Decimal("60.00"))
         self.assertEqual(replay["balance"], Decimal("60.00"))
+        self.assertFalse(applied["replayed"])
         self.assertTrue(replay["replayed"])
         self.assertEqual(
             self.db.scalar(
-                select(func_count()).select_from(FinancialTransaction).where(FinancialTransaction.transaction_type == "deposit_applied")
+                select(func.count()).select_from(FinancialTransaction).where(FinancialTransaction.transaction_type == "deposit_applied")
             ),
             1,
         )
         self.assertEqual(
             self.db.scalar(
-                select(func_count()).select_from(DepositTransaction).where(DepositTransaction.reference == "deposit-apply-001")
+                select(func.count()).select_from(DepositTransaction).where(DepositTransaction.reference == "deposit-apply-001")
             ),
             1,
         )
-
-
-from sqlalchemy import func as _unused_func
-func_count = lambda: _unused_func.count()
-from app.financial_models import PaymentRefund
 
 
 if __name__ == "__main__":
