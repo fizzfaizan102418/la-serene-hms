@@ -15,9 +15,10 @@ import app.financial_models  # noqa: F401
 import app.models  # noqa: F401
 import app.pms_core  # noqa: F401
 from app.billing import add_payment
+from app.financial_authority import post_folio_charge_authoritative
 from app.financial_models import PaymentRefund
 from app.financial_ops import RefundCreate, create_deposit_with_ledger, refund_payment
-from app.ledger import post_folio_charge_authoritative, post_folio_payment
+from app.ledger import post_folio_payment
 from app.models import (
     BusinessDateState,
     DepositTransaction,
@@ -131,7 +132,7 @@ class PostgreSQLFinancialConcurrencyTests(unittest.TestCase):
                     user,
                 )
                 results.append(("ok", result.id))
-            except Exception as exc:  # one transaction is expected to lose the race
+            except Exception as exc:
                 results.append(("error", exc))
             finally:
                 db.close()
