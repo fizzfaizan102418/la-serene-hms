@@ -14,7 +14,7 @@ from .db import get_db
 from .business_date import get_current_business_date
 from .financial_authority import folio_ledger_summary
 from .ledger import post_deposit_received
-from .models import AuditLog, Folio, FolioItem, Guest, Reservation, ReservationRoom, Room, RoomType, User
+from .models import AuditLog, DepositTransaction, Folio, FolioItem, Guest, Reservation, ReservationRoom, Room, RoomType, User
 from .pms_core import Stay
 
 router = APIRouter(tags=["front-desk-2"])
@@ -123,7 +123,7 @@ def create_walk_in(payload: WalkInCreate, db: Session = Depends(get_db), user: U
         if room: room.status = "occupied"
         assigned_deposit = min(per_room_deposit, money(net * nights))
         if assigned_deposit > 0:
-            deposit = __import__("app.models", fromlist=["DepositTransaction"]).DepositTransaction(stay_id=stay.id, folio_id=folio.id, transaction_type="received", amount=assigned_deposit, payment_method=payload.deposit_method, reference=f"WALKIN-{reservation.id}-{stay.id}", notes="Walk-in deposit received", created_by=user.id)
+            deposit = DepositTransaction(stay_id=stay.id, folio_id=folio.id, transaction_type="received", amount=assigned_deposit, payment_method=payload.deposit_method, reference=f"WALKIN-{reservation.id}-{stay.id}", notes="Walk-in deposit received", created_by=user.id)
             db.add(deposit); db.flush()
             post_deposit_received(db, stay_id=stay.id, folio_id=folio.id, reservation_id=reservation.id, deposit_id=deposit.id, amount=assigned_deposit, method=payload.deposit_method, created_by=user.id)
     audit(db, user.id, "walk_in_check_in", "reservation", reservation.id, {"room_ids": room_ids, "guest_id": payload.guest_id, "deposit_received": str(payload.deposit_received), "deposit_method": payload.deposit_method})
