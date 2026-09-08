@@ -2,14 +2,19 @@
 
 Offline-first Hotel Management System (PMS/HMS) for La Serene Hotel.
 
-## Phase 1 — Foundation
+## Phase 1 — Core PMS foundation
 - FastAPI backend
 - React + TypeScript frontend
 - SQLite local database
 - Live operations dashboard
-- Authentication with JWT access tokens
+- JWT authentication with Argon2 password hashing
 - Role-based permissions for admin, reception and housekeeping
-- Initial domain schema for users, rooms, guests, reservations, folios, payments, expenses and audit logs
+- Room types with base rates and descriptions
+- Room inventory management
+- Operational room statuses: available, reserved, occupied, dirty and out of order
+- Visual room map with status filtering and housekeeping controls
+- Guest and reservation foundation with automatic folio creation
+- Audit logging for important operational mutations
 - Offline-first deployment target
 
 ## Development
@@ -37,6 +42,17 @@ npm run dev
 ```
 
 On a new database, open the web app and create the first administrator account. After initialization, the login screen is used for subsequent sessions.
+
+## Rooms workflow
+
+1. Sign in as an `admin`.
+2. Open **Rooms** from the module navigation.
+3. Create room types and enter their base rates.
+4. Add rooms and assign each room to a room type.
+5. Use the room map to filter rooms and update operational status.
+6. `reception` and `housekeeping` users may change room status, while room/type setup remains restricted to `admin`.
+
+Room status changes are audited. A reserved room cannot be manually returned to `available` while it is still linked to an active reservation.
 
 ## Architecture
 The frontend never owns financial/business calculations. Business rules live in the API/domain layer and database writes are transactional.
