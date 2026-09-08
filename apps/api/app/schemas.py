@@ -135,6 +135,65 @@ class FrontDeskResponse(BaseModel):
     in_house: list[ReservationListResponse]
 
 
+class FolioItemCreate(BaseModel):
+    description: str = Field(min_length=1, max_length=200)
+    category: str = Field(min_length=1, max_length=50)
+    quantity: Decimal = Field(default=1, gt=0)
+    unit_price: Decimal = Field(ge=0)
+    discount: Decimal = Field(default=0, ge=0)
+
+
+class FolioItemResponse(FolioItemCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    line_total: Decimal
+
+
+class PaymentCreate(BaseModel):
+    amount: Decimal = Field(gt=0)
+    method: str = Field(pattern="^(cash|card|bank_transfer|other)$")
+    reference: str | None = Field(default=None, max_length=100)
+
+
+class PaymentResponse(PaymentCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+
+
+class FolioResponse(BaseModel):
+    id: int
+    reservation_id: int
+    status: str
+    items: list[FolioItemResponse]
+    payments: list[PaymentResponse]
+    subtotal: Decimal
+    discounts: Decimal
+    total: Decimal
+    paid: Decimal
+    balance: Decimal
+
+
+class FolioItemListResponse(BaseModel):
+    id: int
+    folio_id: int
+    description: str
+    category: str
+    quantity: Decimal
+    unit_price: Decimal
+    discount: Decimal
+    line_total: Decimal
+
+
+class BillingSummaryResponse(BaseModel):
+    folio_id: int
+    reservation_id: int
+    guest_name: str
+    status: str
+    total: Decimal
+    paid: Decimal
+    balance: Decimal
+
+
 class DashboardResponse(BaseModel):
     business_date: date
     total_rooms: int
