@@ -31,13 +31,13 @@ class StayLifecycleTests(unittest.TestCase):
 
     def setUp(self):
         self.db = Session(self.engine)
-        role = Role(name="reception")
+        role = Role(name=f"reception-{id(self)}")
         self.db.add(role)
         guest = Guest(full_name="Booking Guest")
         occupant = Guest(full_name="Room Occupant")
         self.db.add_all([guest, occupant])
         self.db.flush()
-        user = User(username="reception", password_hash="test", role_id=role.id)
+        user = User(username=f"reception-{id(self)}", password_hash="test", role_id=role.id)
         self.db.add(user)
         room_type = RoomType(name=f"Standard-{guest.id}", base_rate=100)
         self.db.add(room_type)
@@ -52,6 +52,7 @@ class StayLifecycleTests(unittest.TestCase):
         folio = Folio(reservation_id=reservation.id, status="open")
         self.db.add(folio)
         self.db.flush()
+        self.folio = folio
         self.db.add(ReservationRoom(reservation_id=reservation.id, room_id=room_a.id))
         stay = Stay(reservation_id=reservation.id, room_id=room_a.id, guest_id=guest.id, status="reserved", check_in=date(2026, 9, 8), check_out=date(2026, 9, 12), agreed_rate=Decimal("100.00"))
         self.db.add(stay)
@@ -106,7 +107,7 @@ class StayLifecycleTests(unittest.TestCase):
         result = create_stay_folio_window(self.stay.id, FolioWindowCreate(name="Room Charges", payer_type="guest", guest_id=self.guest.id), self.db, self.user)
         self.assertEqual(result["stay_id"], self.stay.id)
         row = self.db.get(StayFolioWindow, result["id"])
-        self.assertEqual(row.folio_id, 1)
+        self.assertEqual(row.folio_id, self.folio.id)
         self.assertEqual(row.payer_type, "guest")
 
 
