@@ -2,7 +2,7 @@ import unittest
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.db import Base
@@ -40,6 +40,7 @@ class FinancialPhaseBTests(unittest.TestCase):
         payment = Payment(folio_id=folio.id, amount=100, method="cash")
         self.db.add_all([item, payment])
         self.db.add(BusinessDateState(id=1, current_business_date=date(2026, 9, 8), opened_at=datetime.utcnow()))
+        self.db.add(InvoiceSequence(id=1, last_number=0))
         self.db.commit()
         self.user = user; self.reservation = reservation; self.folio = folio; self.payment = payment
 
