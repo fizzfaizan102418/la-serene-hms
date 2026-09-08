@@ -3,7 +3,7 @@ from datetime import date
 from decimal import Decimal
 
 from fastapi import HTTPException
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.db import Base
@@ -54,10 +54,10 @@ class FrontDeskPhaseCTests(unittest.TestCase):
         self.assertEqual(result["status"], "checked_in")
         reservation = self.db.get(Reservation, result["reservation_id"])
         self.assertEqual(reservation.status, "checked_in")
-        link = self.db.scalar(__import__("sqlalchemy").select(ReservationRoom).where(ReservationRoom.reservation_id == reservation.id))
+        link = self.db.scalar(select(ReservationRoom).where(ReservationRoom.reservation_id == reservation.id))
         self.assertEqual(link.room_id, self.room1.id)
-        self.assertEqual(self.db.scalar(__import__("sqlalchemy").select(Folio.id).where(Folio.reservation_id == reservation.id)), result["folio_id"])
-        self.assertEqual(self.db.scalar(__import__("sqlalchemy").select(Room.status).where(Room.id == self.room1.id)), "occupied")
+        self.assertEqual(self.db.scalar(select(Folio.id).where(Folio.reservation_id == reservation.id)), result["folio_id"])
+        self.assertEqual(self.db.scalar(select(Room.status).where(Room.id == self.room1.id)), "occupied")
 
     def test_walk_in_rejects_occupied_room(self):
         reservation = Reservation(guest_id=self.guest.id, check_in=date(2026, 9, 8), check_out=date(2026, 9, 10), status="checked_in")
@@ -90,9 +90,14 @@ class FrontDeskPhaseCTests(unittest.TestCase):
         self.assertEqual(self.db.get(Folio, folio.id).status, "closed")
         self.assertEqual(self.db.get(Room, self.room1.id).status, "dirty")
 
-    def test_atomic_checkout_route_precedes_legacy_route(self):
-        matches = [route for route in app.routes if getattr(route, "path", None) == "/api/reservations/{reservation_id}/checkout" and "POST" in getattr(route, "methods", set())]
-        self.assertGreaterEqual(len(matches), 2)
+    def test_atomic_checkout_route_is_mounted_before_legacy_checkout_route(self):
+        matches = [
+            route
+            for route in app.routes
+            if getattr(route, "path", None) == "/api/reservations/{reservation_id}/checkout"
+            and "POST" in getattr(route, "methods", set())
+        ]
+        self.assertEqual(len(matches), 1)
         self.assertEqual(getattr(matches[0], "endpoint", None).__name__, "atomic_checkout")
 
 
