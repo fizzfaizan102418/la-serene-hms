@@ -143,6 +143,14 @@ class FolioItemCreate(BaseModel):
     discount: Decimal = Field(default=0, ge=0)
 
 
+class FolioItemUpdate(BaseModel):
+    description: str = Field(min_length=1, max_length=200)
+    category: str = Field(min_length=1, max_length=50)
+    quantity: Decimal = Field(gt=0)
+    unit_price: Decimal = Field(ge=0)
+    discount: Decimal = Field(default=0, ge=0)
+
+
 class FolioItemResponse(FolioItemCreate):
     model_config = ConfigDict(from_attributes=True)
     id: int
