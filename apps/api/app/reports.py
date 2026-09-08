@@ -9,7 +9,7 @@ from .auth import require_roles
 from .db import get_db
 from .models import Folio, FolioItem, Guest, Payment, Reservation, ReservationRoom, Room, User
 
-router = APIRouter(prefix="/api/reports", tags=["reports"])
+router = APIRouter(prefix="/reports", tags=["reports"])
 MONEY = Decimal("0.01")
 
 
