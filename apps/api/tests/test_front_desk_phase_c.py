@@ -10,6 +10,7 @@ from app.db import Base
 import app.financial_models  # noqa: F401
 import app.models  # noqa: F401
 import app.pms_core  # noqa: F401
+from app.billing import router as billing_router
 from app.front_desk import atomic_checkout, create_walk_in, WalkInCreate, WalkInRoom
 from app.models import Guest, Folio, FolioItem, Payment, Reservation, ReservationRoom, Role, Room, RoomType, User
 from app.main import app
@@ -91,15 +92,18 @@ class FrontDeskPhaseCTests(unittest.TestCase):
         self.assertEqual(self.db.get(Room, self.room1.id).status, "dirty")
 
     def test_atomic_checkout_route_is_mounted(self):
-        path = app.url_path_for("atomic_checkout", reservation_id=123)
-        self.assertEqual(str(path), "/api/reservations/123/checkout")
-        mounted = [
+        matches = [
             route
-            for route in app.routes
-            if getattr(route, "name", None) == "atomic_checkout"
+            for route in billing_router.routes
+            if getattr(route, "endpoint", None) is atomic_checkout
             and "POST" in getattr(route, "methods", set())
         ]
-        self.assertEqual(len(mounted), 1)
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(getattr(matches[0], "path", None), "/reservations/{reservation_id}/checkout")
+
+        openapi_route = app.openapi()["paths"].get("/api/reservations/{reservation_id}/checkout")
+        self.assertIsNotNone(openapi_route)
+        self.assertIn("post", openapi_route)
 
 
 if __name__ == "__main__":
