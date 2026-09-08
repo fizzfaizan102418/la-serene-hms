@@ -10,7 +10,8 @@ import app.financial_models  # noqa: F401
 import app.models  # noqa: F401
 import app.pms_core  # noqa: F401
 from app.financial_authority import folio_ledger_summary
-from app.models import BusinessDateState, FinancialTransaction, Folio, FolioItem, Invoice, LedgerEntry
+from app.financial_models import Invoice
+from app.models import BusinessDateState, FinancialTransaction, Folio, FolioItem, LedgerEntry
 
 
 class FinancialAuthorityTests(unittest.TestCase):
