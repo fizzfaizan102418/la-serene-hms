@@ -86,7 +86,6 @@ class PostgreSQLB2ConcurrencyTests(unittest.TestCase):
                     db.add(payment)
                     db.flush()
                     payment_ids.append(payment.id)
-            refund_payment_id = None
             refund_ids = []
             if charge_amount:
                 refund_payment = Payment(folio_id=folio.id, amount=Decimal("100.00"), method="cash", reference=f"REFUND-PAY-{suffix}")
@@ -100,7 +99,6 @@ class PostgreSQLB2ConcurrencyTests(unittest.TestCase):
                         {"account": "Guest Receivables", "direction": "credit", "amount": Decimal("100.00"), "folio_id": folio.id, "payment_method": "cash"},
                     ],
                 )
-                refund_payment_id = refund_payment.id
                 for n in (1, 2):
                     refund = PaymentRefund(payment_id=refund_payment.id, folio_id=folio.id, amount=Decimal("70.00"), method="cash", reason=f"B2 race {n}", created_by=user.id)
                     db.add(refund)
@@ -114,7 +112,7 @@ class PostgreSQLB2ConcurrencyTests(unittest.TestCase):
                     db.flush()
                     deposit_apply_ids.append(apply.id)
             db.commit()
-            return {"user_id": user.id, "folio_id": folio.id, "reservation_id": reservation.id, "stay_id": stay.id, "payment_ids": payment_ids, "refund_payment_id": refund_payment_id, "refund_ids": refund_ids, "deposit_apply_ids": deposit_apply_ids}
+            return {"user_id": user.id, "folio_id": folio.id, "reservation_id": reservation.id, "stay_id": stay.id, "payment_ids": payment_ids, "refund_ids": refund_ids, "deposit_apply_ids": deposit_apply_ids}
 
     def _run_two(self, fn1, fn2):
         barrier = Barrier(2)
@@ -128,16 +126,19 @@ class PostgreSQLB2ConcurrencyTests(unittest.TestCase):
                 except HTTPException as exc:
                     db.rollback()
                     return ("rejected", exc.status_code, str(exc.detail))
+                except Exception as exc:
+                    db.rollback()
+                    return ("error", type(exc).__name__, str(exc))
         with ThreadPoolExecutor(max_workers=2) as pool:
-            return pool.map(run, (fn1, fn2))
+            return list(pool.map(run, (fn1, fn2)))
 
     def test_concurrent_payments_are_serialized(self):
         f = self._fixture(charge_amount=100, deposit_amount=0)
         def post_payment(db, pid):
             return post_transaction(db, transaction_type="folio_payment", description="B2 race payment", reference_type="payment", reference_id=str(pid), folio_id=f["folio_id"], reservation_id=f["reservation_id"], created_by=f["user_id"], lines=[{"account":"Cash","direction":"debit","amount":Decimal("60.00"),"folio_id":f["folio_id"]},{"account":"Guest Receivables","direction":"credit","amount":Decimal("60.00"),"folio_id":f["folio_id"]}]).id
-        results = list(self._run_two(lambda db: post_payment(db, f["payment_ids"][0]), lambda db: post_payment(db, f["payment_ids"][1])))
-        self.assertEqual(sum(r[0] == "ok" for r in results), 1)
-        self.assertEqual(sum(r[0] == "rejected" for r in results), 1)
+        results = self._run_two(lambda db: post_payment(db, f["payment_ids"][0]), lambda db: post_payment(db, f["payment_ids"][1]))
+        self.assertEqual(sum(r[0] == "ok" for r in results), 1, repr(results))
+        self.assertEqual(sum(r[0] == "rejected" for r in results), 1, repr(results))
         with Session(engine) as db:
             self.assertEqual(folio_ledger_summary(db, f["folio_id"]).balance, Decimal("40.00"))
 
