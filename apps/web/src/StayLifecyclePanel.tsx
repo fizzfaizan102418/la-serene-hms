@@ -60,7 +60,9 @@ export default function StayLifecyclePanel({ reservationId, rooms, api, onRefres
 
  async function extendStay() {
   if (!overview || !newCheckout) return;
-  const rate_overrides = overview.stays.map(stay => ({ stay_id: stay.id, rate: Number(extensionRates[stay.id] || stay.rate_segments.at(-1)?.net_rate || stay.agreed_rate) }));
+  const rate_overrides = overview.stays
+   .filter(stay => extensionRates[stay.id]?.trim())
+   .map(stay => ({ stay_id: stay.id, rate: Number(extensionRates[stay.id]) }));
   await run(async () => {
    await api(`/api/reservations/${reservationId}/extend-rate-aware`, { method: 'POST', body: JSON.stringify({ new_check_out: newCheckout, rate_overrides }) });
   }, `Reservation #${reservationId} extended through ${newCheckout}.`);
@@ -151,7 +153,7 @@ export default function StayLifecyclePanel({ reservationId, rooms, api, onRefres
    </article>)}
   </div>
 
-  {overview.reservation.status === 'checked_in' && <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid #dedbd2' }}><h3 style={{ marginTop: 0 }}>Extend stay with rate control</h3><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}><input type="date" min={overview.reservation.check_out} value={newCheckout} onChange={e => setNewCheckout(e.target.value)}/>{overview.stays.map(stay => <input key={stay.id} value={extensionRates[stay.id] || ''} onChange={e => setExtensionRates(prev => ({ ...prev, [stay.id]: e.target.value }))} placeholder={`Stay #${stay.id} rate`} inputMode="decimal" style={{ maxWidth: 150 }}/>) }<button className="primary-button small-button" disabled={busy || !newCheckout} onClick={() => void extendStay()}>Extend</button></div><small className="muted">Past rate segments remain unchanged; extension nights receive the rates shown above.</small></div>}
+  {overview.reservation.status === 'checked_in' && <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid #dedbd2' }}><h3 style={{ marginTop: 0 }}>Extend stay with rate control</h3><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}><input type="date" min={overview.reservation.check_out} value={newCheckout} onChange={e => setNewCheckout(e.target.value)}/>{overview.stays.map(stay => <input key={stay.id} value={extensionRates[stay.id] || ''} onChange={e => setExtensionRates(prev => ({ ...prev, [stay.id]: e.target.value }))} placeholder={`Stay #${stay.id} new rate (optional)`} inputMode="decimal" style={{ maxWidth: 180 }}/>) }<button className="primary-button small-button" disabled={busy || !newCheckout} onClick={() => void extendStay()}>Extend</button></div><small className="muted">Leave a room rate blank to carry its last rate and discount forward; entering a value creates a new extension segment.</small></div>}
 
   {canSplit && <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid #dedbd2' }}><h3 style={{ marginTop: 0 }}>Split reservation by room</h3><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>{overview.stays.filter(stay => stay.status === 'reserved').map(stay => <label key={stay.id} style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}><input type="checkbox" checked={selectedSplit.includes(stay.room_id)} onChange={e => setSelectedSplit(prev => e.target.checked ? [...prev, stay.room_id] : prev.filter(id => id !== stay.room_id))}/>{stay.room_number ?? stay.room_id}</label>)}<button className="secondary-button small-button" disabled={busy || selectedSplit.length === 0 || selectedSplit.length >= overview.stays.filter(stay => stay.status === 'reserved').length} onClick={() => void splitReservation()}>Split selected rooms</button></div></div>}
   <div style={{ marginTop: 12 }}><small className="muted">Folio #{overview.reservation.folio_id ?? '—'} · Room-level operations stay attached to their individual Stay records.</small></div>
