@@ -92,18 +92,16 @@ class FrontDeskPhaseCTests(unittest.TestCase):
         self.assertEqual(self.db.get(Room, self.room1.id).status, "dirty")
 
     def test_atomic_checkout_route_is_mounted(self):
-        matches = [
-            route
-            for route in billing_router.routes
-            if getattr(route, "endpoint", None) is atomic_checkout
-            and "POST" in getattr(route, "methods", set())
-        ]
-        self.assertEqual(len(matches), 1)
-        self.assertEqual(getattr(matches[0], "path", None), "/reservations/{reservation_id}/checkout")
+        schema = app.openapi()
+        paths = schema.get("paths", {})
+        self.assertIn("/api/reservations/{reservation_id}/checkout", paths)
+        self.assertIn("post", paths["/api/reservations/{reservation_id}/checkout"])
+        self.assertIn("/api/reservations/{reservation_id}/check-out", paths)
+        operation_id = paths["/api/reservations/{reservation_id}/checkout"]["post"].get("operationId", "")
+        self.assertIn("atomic_checkout", operation_id)
 
-        openapi_route = app.openapi()["paths"].get("/api/reservations/{reservation_id}/checkout")
-        self.assertIsNotNone(openapi_route)
-        self.assertIn("post", openapi_route)
+        route_names = [getattr(route, "name", "") for route in billing_router.routes]
+        self.assertIn("atomic_checkout", route_names)
 
 
 if __name__ == "__main__":
