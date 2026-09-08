@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from .auth import require_roles
 from .db import get_db
-from .financial_models import PaymentRefund
+from .financial_authority import folio_ledger_summary
 from .models import AuditLog, BusinessDateState, DepositTransaction, FinancialTransaction, Folio, FolioItem, LedgerEntry, Payment, Reservation, User
 from .pms_core import FolioWindow, Stay
 
@@ -161,12 +161,11 @@ def revenue_report(business_date: date | None = None, db: Session = Depends(get_
 
 @router.get("/reports/accounts-receivable")
 def accounts_receivable(db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception"))):
-    folios = db.scalars(select(Folio)).all(); result = []; total = Decimal("0.00")
-    for folio in folios:
-        charges = db.scalar(select(func.coalesce(func.sum(FolioItem.quantity * FolioItem.unit_price - FolioItem.discount), 0)).where(FolioItem.folio_id == folio.id)) or 0
-        payments = db.scalar(select(func.coalesce(func.sum(Payment.amount), 0)).where(Payment.folio_id == folio.id)) or 0
-        refunds = db.scalar(select(func.coalesce(func.sum(PaymentRefund.amount), 0)).where(PaymentRefund.folio_id == folio.id)) or 0
-        balance = money(max(Decimal("0.00"), Decimal(charges) - Decimal(payments) + Decimal(refunds)))
-        if balance > 0: total += balance; result.append({"folio_id": folio.id, "reservation_id": folio.reservation_id, "balance": balance, "status": folio.status})
+    result = []; total = Decimal("0.00")
+    for folio in db.scalars(select(Folio).order_by(Folio.id)).all():
+        balance = folio_ledger_summary(db, folio.id).balance
+        if balance > 0:
+            total += balance
+            result.append({"folio_id": folio.id, "reservation_id": folio.reservation_id, "balance": balance, "status": folio.status})
     result.sort(key=lambda row: row["balance"], reverse=True)
     return {"total_outstanding": money(total), "folios": result}
