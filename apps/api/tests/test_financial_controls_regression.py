@@ -123,6 +123,8 @@ class FinancialControlsRegressionTests(unittest.TestCase):
             reservation_id=self.res_a.id,
             room_id=self.room_a.id,
             status="in_house",
+            check_in=self.res_a.check_in,
+            check_out=self.res_a.check_out,
             deposit_required=deposit_required,
             deposit_received=0,
         )
