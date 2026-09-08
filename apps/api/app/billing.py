@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .auth import require_roles
+from .db import get_db
 from .financial_models import PaymentRefund
 from .financial_ops import router as financial_ops_router
 from .housekeeping import router as housekeeping_router
