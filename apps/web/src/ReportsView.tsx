@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import './reports.css';
 
 type ReportsApi = <T>(path: string, options?: RequestInit) => Promise<T>;
 
