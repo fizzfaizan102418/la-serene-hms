@@ -17,6 +17,7 @@ from .pms_core import Stay
 from .pms_domain import router as pms_domain_router
 from .reports import router as reports_router
 from .schemas import BillingSummaryResponse, FolioItemCreate, FolioItemResponse, FolioItemUpdate, FolioResponse, PaymentCreate, PaymentResponse
+from .stay_lifecycle import router as stay_lifecycle_router
 
 router = APIRouter(prefix="/api", tags=["billing"])
 MONEY = Decimal("0.01")
@@ -25,11 +26,11 @@ FOOD_CATEGORIES = {"food", "restaurant", "room_service", "beverage", "drink", "s
 router.include_router(housekeeping_router)
 router.include_router(reports_router)
 router.include_router(night_audit_router)
-# Register the Phase B operations before legacy PMS-domain routes. This lets
-# the atomic checkout and ledger-backed deposit endpoint take precedence.
+# Register Phase B operations before legacy PMS-domain routes.
 router.include_router(financial_ops_router)
 router.include_router(pms_domain_router)
 router.include_router(ledger_router)
+router.include_router(stay_lifecycle_router)
 
 
 def money(value: Decimal) -> Decimal:
