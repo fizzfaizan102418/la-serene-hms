@@ -133,14 +133,14 @@ class PostgreSQLB2ConcurrencyTests(unittest.TestCase):
             return list(pool.map(run, (fn1, fn2)))
 
     def test_concurrent_payments_are_serialized(self):
-        f = self._fixture(charge_amount=100, deposit_amount=0)
+        f = self._fixture(charge_amount=160, deposit_amount=0)
         def post_payment(db, pid):
             return post_transaction(db, transaction_type="folio_payment", description="B2 race payment", reference_type="payment", reference_id=str(pid), folio_id=f["folio_id"], reservation_id=f["reservation_id"], created_by=f["user_id"], lines=[{"account":"Cash","direction":"debit","amount":Decimal("60.00"),"folio_id":f["folio_id"]},{"account":"Guest Receivables","direction":"credit","amount":Decimal("60.00"),"folio_id":f["folio_id"]}]).id
         results = self._run_two(lambda db: post_payment(db, f["payment_ids"][0]), lambda db: post_payment(db, f["payment_ids"][1]))
         self.assertEqual(sum(r[0] == "ok" for r in results), 1, repr(results))
         self.assertEqual(sum(r[0] == "rejected" for r in results), 1, repr(results))
         with Session(engine) as db:
-            self.assertEqual(folio_ledger_summary(db, f["folio_id"]).balance, Decimal("40.00"))
+            self.assertEqual(folio_ledger_summary(db, f["folio_id"]).balance, Decimal("0.00"))
 
     def test_concurrent_refunds_are_serialized(self):
         f = self._fixture(charge_amount=100, deposit_amount=0)
