@@ -14,6 +14,8 @@ from .schemas import BillingSummaryResponse, FolioItemCreate, FolioItemResponse,
 
 router = APIRouter(prefix="/api", tags=["billing"])
 MONEY = Decimal("0.01")
+FOOD_SERVICE_CHARGE_RATE = Decimal("0.10")
+FOOD_CATEGORIES = {"food", "restaurant", "room_service", "beverage", "drink", "snack"}
 router.include_router(housekeeping_router)
 router.include_router(reports_router)
 
@@ -27,19 +29,25 @@ def item_line_total(item: FolioItem) -> Decimal:
     return money(max(Decimal("0.00"), gross - Decimal(item.discount)))
 
 
+def is_food_item(item: FolioItem) -> bool:
+    return item.category.strip().lower() in FOOD_CATEGORIES
+
+
 def build_folio_response(db: Session, folio: Folio) -> FolioResponse:
     items = db.scalars(select(FolioItem).where(FolioItem.folio_id == folio.id).order_by(FolioItem.id)).all()
     payments = db.scalars(select(Payment).where(Payment.folio_id == folio.id).order_by(Payment.id)).all()
     subtotal = money(sum((Decimal(i.quantity) * Decimal(i.unit_price) for i in items), Decimal("0.00")))
     discounts = money(sum((Decimal(i.discount) for i in items), Decimal("0.00")))
-    total = money(sum((item_line_total(i) for i in items), Decimal("0.00")))
+    food_net = money(sum((item_line_total(i) for i in items if is_food_item(i)), Decimal("0.00")))
+    food_service_charge = money(food_net * FOOD_SERVICE_CHARGE_RATE)
+    total = money(sum((item_line_total(i) for i in items), Decimal("0.00")) + food_service_charge)
     paid = money(sum((Decimal(p.amount) for p in payments), Decimal("0.00")))
     balance = money(max(Decimal("0.00"), total - paid))
     return FolioResponse(
         id=folio.id, reservation_id=folio.reservation_id, status=folio.status,
         items=[FolioItemResponse(id=i.id, description=i.description, category=i.category, quantity=i.quantity, unit_price=i.unit_price, discount=i.discount, line_total=item_line_total(i)) for i in items],
         payments=[PaymentResponse.model_validate(p) for p in payments],
-        subtotal=subtotal, discounts=discounts, total=total, paid=paid, balance=balance,
+        subtotal=subtotal, discounts=discounts, food_service_charge=food_service_charge, total=total, paid=paid, balance=balance,
     )
 
 
@@ -93,7 +101,7 @@ def get_receipt(folio_id: int, db: Session = Depends(get_db), _: User = Depends(
         "rooms": [{"id": room.id, "number": room.number, "room_type_id": room.room_type_id} for room in rooms if room],
         "items": [{"id": item.id, "description": item.description, "category": item.category, "quantity": float(item.quantity), "unit_price": float(item.unit_price), "discount": float(item.discount), "line_total": float(item.line_total)} for item in summary.items],
         "payments": [{"id": payment.id, "amount": float(payment.amount), "method": payment.method, "reference": payment.reference} for payment in summary.payments],
-        "subtotal": float(summary.subtotal), "discounts": float(summary.discounts), "total": float(summary.total), "paid": float(summary.paid), "balance": float(summary.balance),
+        "subtotal": float(summary.subtotal), "discounts": float(summary.discounts), "food_service_charge": float(summary.food_service_charge), "total": float(summary.total), "paid": float(summary.paid), "balance": float(summary.balance),
     }
 
 
@@ -129,7 +137,7 @@ def add_folio_item(folio_id: int, payload: FolioItemCreate, db: Session = Depend
     gross = money(payload.quantity * payload.unit_price)
     if payload.discount > gross: raise HTTPException(status_code=400, detail="Discount cannot exceed the line amount")
     item = FolioItem(folio_id=folio_id, **payload.model_dump()); db.add(item); db.flush()
-    audit(db, user.id, "add", "folio_item", item.id, {"folio_id": folio_id, "description": item.description, "amount": str(item_line_total(item))})
+    audit(db, user.id, "add", "folio_item", item.id, {"folio_id": folio_id, "description": item.description, "amount": str(item_line_total(item)), "category": item.category})
     db.commit(); db.refresh(item)
     return FolioItemResponse(id=item.id, description=item.description, category=item.category, quantity=item.quantity, unit_price=item.unit_price, discount=item.discount, line_total=item_line_total(item))
 
@@ -161,5 +169,5 @@ def close_folio(folio_id: int, db: Session = Depends(get_db), user: User = Depen
     if folio.status != "open": raise HTTPException(status_code=409, detail="Folio is already closed")
     summary = build_folio_response(db, folio)
     if summary.balance != Decimal("0.00"): raise HTTPException(status_code=409, detail=f"Cannot close folio with outstanding balance of {summary.balance}")
-    folio.status = "closed"; audit(db, user.id, "close", "folio", folio.id, {"total": str(summary.total), "paid": str(summary.paid)}); db.commit(); db.refresh(folio)
+    folio.status = "closed"; audit(db, user.id, "close", "folio", folio.id, {"total": str(summary.total), "paid": str(summary.paid), "food_service_charge": str(summary.food_service_charge)}); db.commit(); db.refresh(folio)
     return build_folio_response(db, folio)
