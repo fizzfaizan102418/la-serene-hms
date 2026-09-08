@@ -4,6 +4,7 @@ import './styles.css';
 import BillingView from './BillingView';
 import HousekeepingView from './HousekeepingView';
 import ReportsView from './ReportsView';
+import BackupView from './BackupView';
 
 type User = { id: number; username: string; role: string };
 type Dashboard = { business_date: string; total_rooms: number; available_rooms: number; reserved_rooms: number; occupied_rooms: number; dirty_rooms: number; out_of_order_rooms: number; arrivals_today: number; departures_today: number; in_house_guests: number };
@@ -14,9 +15,9 @@ type Reservation = { id: number; guest_id: number; guest_name: string; check_in:
 type FrontDeskData = { arrivals: Reservation[]; departures: Reservation[]; in_house: Reservation[] };
 type BillingSummary = { folio_id: number; reservation_id: number; guest_name: string; status: string; total: number; paid: number; balance: number };
 type AuthMode = 'login' | 'bootstrap';
-type View = 'Dashboard' | 'Rooms' | 'Guests' | 'Reservations' | 'Front Desk' | 'Housekeeping' | 'Reports' | 'Billing';
+type View = 'Dashboard' | 'Rooms' | 'Guests' | 'Reservations' | 'Front Desk' | 'Housekeeping' | 'Reports' | 'Billing' | 'Backup';
 
-const modules: View[] = ['Dashboard', 'Rooms', 'Guests', 'Reservations', 'Front Desk', 'Housekeeping', 'Reports', 'Billing'];
+const modules: View[] = ['Dashboard', 'Rooms', 'Guests', 'Reservations', 'Front Desk', 'Housekeeping', 'Reports', 'Billing', 'Backup'];
 const TOKEN_KEY = 'la_serene_access_token';
 const statuses = ['available', 'reserved', 'occupied', 'dirty', 'out_of_order'] as const;
 
@@ -37,42 +38,25 @@ async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 function AuthScreen({ mode, setMode, onAuthenticated }: { mode: AuthMode; setMode: (mode: AuthMode) => void; onAuthenticated: (user: User, token: string) => void }) {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  async function submit(event: React.FormEvent) {
-    event.preventDefault(); setError(''); setBusy(true);
-    try {
-      if (mode === 'bootstrap') await api('/api/auth/bootstrap-admin', { method: 'POST', body: JSON.stringify({ username, password }) });
-      const login = await api<{ access_token: string; user_id: number; username: string; role: string }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) });
-      onAuthenticated({ id: login.user_id, username: login.username, role: login.role }, login.access_token);
-    } catch (err) { setError(err instanceof Error ? err.message : 'Something went wrong'); }
-    finally { setBusy(false); }
-  }
+  const [username, setUsername] = useState(''); const [password, setPassword] = useState(''); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
+  async function submit(event: React.FormEvent) { event.preventDefault(); setError(''); setBusy(true); try { if (mode === 'bootstrap') await api('/api/auth/bootstrap-admin', { method: 'POST', body: JSON.stringify({ username, password }) }); const login = await api<{ access_token: string; user_id: number; username: string; role: string }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }); onAuthenticated({ id: login.user_id, username: login.username, role: login.role }, login.access_token); } catch (err) { setError(err instanceof Error ? err.message : 'Something went wrong'); } finally { setBusy(false); } }
   return <main className="auth-shell"><section className="auth-card"><p className="eyebrow">LA SERENE HOTEL</p><h1>{mode === 'bootstrap' ? 'Create your admin account' : 'Welcome back'}</h1><p className="muted">{mode === 'bootstrap' ? 'Create the first administrator for this local installation.' : 'Sign in to continue to hotel operations.'}</p><form onSubmit={submit} className="auth-form"><label>Username<input value={username} onChange={e => setUsername(e.target.value)} required minLength={3} /></label><label>Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={mode === 'bootstrap' ? 8 : 1} /></label>{error && <p className="form-error">{error}</p>}<button className="primary-button" disabled={busy}>{busy ? 'Please wait…' : mode === 'bootstrap' ? 'Create admin & sign in' : 'Sign in'}</button></form><button className="link-button" onClick={() => { setError(''); setMode(mode === 'login' ? 'bootstrap' : 'login'); }}>{mode === 'login' ? 'New installation? Create the first admin' : 'Already initialized? Sign in instead'}</button></section></main>;
 }
 
 function DashboardView({ dashboard, rooms, roomTypes }: { dashboard: Dashboard | null; rooms: Room[]; roomTypes: RoomType[] }) {
-  const typeById = useMemo(() => new Map(roomTypes.map(t => [t.id, t])), [roomTypes]);
-  const label = (status: string) => status.replace(/_/g, ' ');
+  const typeById = useMemo(() => new Map(roomTypes.map(t => [t.id, t])), [roomTypes]); const label = (status: string) => status.replace(/_/g, ' ');
   return <><section className="stats">{[['Total Rooms', dashboard?.total_rooms], ['Available', dashboard?.available_rooms], ['Occupied', dashboard?.occupied_rooms], ['Reserved', dashboard?.reserved_rooms], ['Arrivals', dashboard?.arrivals_today], ['Departures', dashboard?.departures_today]].map(([name, value]) => <article className="stat" key={name as string}><span>{name}</span><strong>{value ?? '—'}</strong></article>)}</section><section className="workspace"><div className="panel"><div className="panel-head"><h2>Room Status</h2><span>{rooms.length} rooms</span></div><div className="rooms">{rooms.length ? rooms.map(room => <div className={`room room-${room.status}`} key={room.id}><strong>{room.number}</strong><span>{typeById.get(room.room_type_id)?.name ?? 'Unassigned'} · {label(room.status)}</span></div>) : <p className="muted">No rooms configured yet.</p>}</div></div><div className="panel"><div className="panel-head"><h2>Operations</h2></div><div className="operations"><div><span>Dirty rooms</span><strong>{dashboard?.dirty_rooms ?? '—'}</strong></div><div><span>Out of order</span><strong>{dashboard?.out_of_order_rooms ?? '—'}</strong></div><div><span>In-house guests</span><strong>{dashboard?.in_house_guests ?? '—'}</strong></div></div></div></section></>;
 }
 
 function GuestsView({ user, guests, setGuests, onRefresh }: { user: User; guests: Guest[]; setGuests: React.Dispatch<React.SetStateAction<Guest[]>>; onRefresh: () => Promise<void> }) {
-  const [query, setQuery] = useState('');
-  const [form, setForm] = useState({ full_name: '', phone: '', email: '', address: '', id_document: '' });
-  const [message, setMessage] = useState('');
-  const canCreate = user.role === 'admin' || user.role === 'reception';
+  const [query, setQuery] = useState(''); const [form, setForm] = useState({ full_name: '', phone: '', email: '', address: '', id_document: '' }); const [message, setMessage] = useState(''); const canCreate = user.role === 'admin' || user.role === 'reception';
   async function search(event: React.FormEvent) { event.preventDefault(); try { setGuests(await api<Guest[]>(`/api/guests?q=${encodeURIComponent(query)}`)); } catch (err) { setMessage(err instanceof Error ? err.message : 'Search failed'); } }
   async function create(event: React.FormEvent) { event.preventDefault(); try { await api('/api/guests', { method: 'POST', body: JSON.stringify({ ...form, phone: form.phone || null, email: form.email || null, address: form.address || null, id_document: form.id_document || null }) }); setForm({ full_name: '', phone: '', email: '', address: '', id_document: '' }); setMessage('Guest created.'); await onRefresh(); } catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to create guest'); } }
   return <section className="page"><div className="page-heading"><div><p className="muted">Guest records</p><h2>Guests</h2></div><span className="room-count">{guests.length} records</span></div>{message && <p className="notice">{message}</p>}<div className="content-layout"><div className="panel"><form className="search-bar" onSubmit={search}><input placeholder="Search name, phone or email" value={query} onChange={e => setQuery(e.target.value)} /><button className="secondary-button">Search</button></form><div className="guest-list">{guests.length ? guests.map(g => <article key={g.id}><div><strong>{g.full_name}</strong><span>{g.phone || 'No phone'} · {g.email || 'No email'}</span></div><small>{g.id_document || 'No ID document recorded'}</small></article>) : <p className="muted">No guests found.</p>}</div></div>{canCreate && <form className="panel form-panel" onSubmit={create}><div className="panel-head"><h2>New guest</h2></div>{([['full_name','Full name'],['phone','Phone'],['email','Email'],['address','Address'],['id_document','ID document']] as const).map(([key,label]) => <label key={key}>{label}{key === 'address' ? <textarea value={form[key]} onChange={e => setForm({...form, [key]: e.target.value})} rows={2} /> : <input type={key === 'email' ? 'email' : 'text'} value={form[key]} onChange={e => setForm({...form, [key]: e.target.value})} required={key === 'full_name'} />}</label>)}<button className="primary-button">Create guest</button></form>}</div></section>;
 }
 
 function ReservationsView({ user, guests, rooms, roomTypes, reservations, onRefresh }: { user: User; guests: Guest[]; rooms: Room[]; roomTypes: RoomType[]; reservations: Reservation[]; onRefresh: () => Promise<void> }) {
-  const today = new Date().toISOString().slice(0, 10);
-  const [checkIn, setCheckIn] = useState(today); const [checkOut, setCheckOut] = useState(''); const [guestId, setGuestId] = useState(''); const [roomIds, setRoomIds] = useState<number[]>([]); const [available, setAvailable] = useState<Room[]>([]); const [notes, setNotes] = useState(''); const [message, setMessage] = useState('');
-  const typeById = useMemo(() => new Map(roomTypes.map(t => [t.id, t])), [roomTypes]); const canCreate = user.role === 'admin' || user.role === 'reception';
+  const today = new Date().toISOString().slice(0, 10); const [checkIn, setCheckIn] = useState(today); const [checkOut, setCheckOut] = useState(''); const [guestId, setGuestId] = useState(''); const [roomIds, setRoomIds] = useState<number[]>([]); const [available, setAvailable] = useState<Room[]>([]); const [notes, setNotes] = useState(''); const [message, setMessage] = useState(''); const typeById = useMemo(() => new Map(roomTypes.map(t => [t.id, t])), [roomTypes]); const canCreate = user.role === 'admin' || user.role === 'reception';
   async function findAvailable() { setMessage(''); setRoomIds([]); if (!checkOut) { setMessage('Select a check-out date.'); return; } try { const r = await api<{ rooms: Room[] }>(`/api/availability?check_in=${checkIn}&check_out=${checkOut}`); setAvailable(r.rooms); if (!r.rooms.length) setMessage('No rooms available for those dates.'); } catch (err) { setMessage(err instanceof Error ? err.message : 'Availability check failed'); } }
   async function create(event: React.FormEvent) { event.preventDefault(); try { await api('/api/reservations', { method: 'POST', body: JSON.stringify({ guest_id: Number(guestId), check_in: checkIn, check_out: checkOut, room_ids: roomIds, notes: notes || null }) }); setMessage('Reservation created.'); setGuestId(''); setRoomIds([]); setAvailable([]); setNotes(''); await onRefresh(); } catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to create reservation'); } }
   const toggle = (id: number) => setRoomIds(current => current.includes(id) ? current.filter(x => x !== id) : [...current, id]);
@@ -98,19 +82,8 @@ function RoomsView({ user, rooms, setRooms, roomTypes, onRefresh }: { user: User
 
 function App(){
   const [user,setUser]=useState<User|null>(null); const [authMode,setAuthMode]=useState<AuthMode>('login'); const [checking,setChecking]=useState(true); const [dashboard,setDashboard]=useState<Dashboard|null>(null); const [rooms,setRooms]=useState<Room[]>([]); const [roomTypes,setRoomTypes]=useState<RoomType[]>([]); const [guests,setGuests]=useState<Guest[]>([]); const [reservations,setReservations]=useState<Reservation[]>([]); const [frontDesk,setFrontDesk]=useState<FrontDeskData>({arrivals:[],departures:[],in_house:[]}); const [billing,setBilling]=useState<BillingSummary[]>([]); const [view,setView]=useState<View>('Dashboard'); const [error,setError]=useState('');
-  const visibleModules = user?.role === 'admin' || user?.role === 'reception' ? modules : modules.filter(module => module !== 'Billing' && module !== 'Reports');
-  async function refresh(){
-    const [d,r,rt,g,rs,fd] = await Promise.all([
-      api<Dashboard>('/api/dashboard'),
-      api<Room[]>('/api/rooms'),
-      api<RoomType[]>('/api/room-types'),
-      api<Guest[]>('/api/guests'),
-      api<Reservation[]>('/api/reservations'),
-      api<FrontDeskData>('/api/front-desk'),
-    ]);
-    setDashboard(d);setRooms(r);setRoomTypes(rt);setGuests(g);setReservations(rs);setFrontDesk(fd);
-    if (user?.role === 'admin' || user?.role === 'reception') setBilling(await api<BillingSummary[]>('/api/billing')); else setBilling([]);
-  }
+  const visibleModules = user?.role === 'admin' ? modules : user?.role === 'reception' ? modules.filter(module => module !== 'Backup') : modules.filter(module => module !== 'Billing' && module !== 'Reports' && module !== 'Backup');
+  async function refresh(){ const [d,r,rt,g,rs,fd] = await Promise.all([api<Dashboard>('/api/dashboard'),api<Room[]>('/api/rooms'),api<RoomType[]>('/api/room-types'),api<Guest[]>('/api/guests'),api<Reservation[]>('/api/reservations'),api<FrontDeskData>('/api/front-desk')]); setDashboard(d);setRooms(r);setRoomTypes(rt);setGuests(g);setReservations(rs);setFrontDesk(fd); if (user?.role === 'admin' || user?.role === 'reception') setBilling(await api<BillingSummary[]>('/api/billing')); else setBilling([]); }
   useEffect(()=>{const token=localStorage.getItem(TOKEN_KEY);if(!token){api<{initialized:boolean}>('/api/auth/setup-status').then(s=>setAuthMode(s.initialized?'login':'bootstrap')).catch(()=>setError('Backend is not running.')).finally(()=>setChecking(false));return;}api<User>('/api/auth/me').then(setUser).catch(()=>localStorage.removeItem(TOKEN_KEY)).finally(()=>setChecking(false));},[]);
   useEffect(()=>{if(!user)return;refresh().catch(err=>{if((err as Error&{status?:number}).status===401)logout();else setError(err instanceof Error?err.message:'Unable to load hotel data');});},[user]);
   useEffect(()=>{if (!visibleModules.includes(view)) setView('Dashboard');}, [user?.role]);
@@ -118,7 +91,7 @@ function App(){
   function logout(){localStorage.removeItem(TOKEN_KEY);setUser(null);setDashboard(null);setRooms([]);setRoomTypes([]);setGuests([]);setReservations([]);setFrontDesk({arrivals:[],departures:[],in_house:[]});setBilling([]);setAuthMode('login');}
   if(checking)return <main className="auth-shell"><p className="muted">Checking local session…</p></main>;
   if(!user)return <AuthScreen mode={authMode} setMode={setAuthMode} onAuthenticated={authenticated}/>;
-  return <main className="shell"><header className="topbar"><div><p className="eyebrow">LA SERENE HOTEL</p><h1>Hotel Management System</h1></div><div className="user-actions"><div className="user-chip"><strong>{user.username}</strong><span>{user.role}</span></div><button className="logout-button" onClick={logout}>Log out</button></div></header><nav className="module-nav">{visibleModules.map(m=><button key={m} className={view===m?'active':''} onClick={()=>setView(m)}>{m}</button>)}</nav>{error&&<p className="error">{error}</p>}{view==='Dashboard'&&<><section className="welcome"><div><p className="muted">Operations dashboard</p><h2>{dashboard?`Business date · ${dashboard.business_date}`:'Loading hotel data…'}</h2></div></section><DashboardView dashboard={dashboard} rooms={rooms} roomTypes={roomTypes}/></>}{view==='Rooms'&&<RoomsView user={user} rooms={rooms} setRooms={setRooms} roomTypes={roomTypes} onRefresh={refresh}/>} {view==='Guests'&&<GuestsView user={user} guests={guests} setGuests={setGuests} onRefresh={refresh}/>} {view==='Reservations'&&<ReservationsView user={user} guests={guests} rooms={rooms} roomTypes={roomTypes} reservations={reservations} onRefresh={refresh}/>} {view==='Front Desk'&&<FrontDeskView user={user} data={frontDesk} rooms={rooms} onRefresh={refresh}/>} {view==='Housekeeping'&&<HousekeepingView userRole={user.role} api={api}/>} {view==='Reports'&&<ReportsView api={api}/>} {view==='Billing'&&<BillingView userRole={user.role} summaries={billing} onRefresh={refresh} api={api}/>}</main>;
+  return <main className="shell"><header className="topbar"><div><p className="eyebrow">LA SERENE HOTEL</p><h1>Hotel Management System</h1></div><div className="user-actions"><div className="user-chip"><strong>{user.username}</strong><span>{user.role}</span></div><button className="logout-button" onClick={logout}>Log out</button></div></header><nav className="module-nav">{visibleModules.map(m=><button key={m} className={view===m?'active':''} onClick={()=>setView(m)}>{m}</button>)}</nav>{error&&<p className="error">{error}</p>}{view==='Dashboard'&&<><section className="welcome"><div><p className="muted">Operations dashboard</p><h2>{dashboard?`Business date · ${dashboard.business_date}`:'Loading hotel data…'}</h2></div></section><DashboardView dashboard={dashboard} rooms={rooms} roomTypes={roomTypes}/></>}{view==='Rooms'&&<RoomsView user={user} rooms={rooms} setRooms={setRooms} roomTypes={roomTypes} onRefresh={refresh}/>} {view==='Guests'&&<GuestsView user={user} guests={guests} setGuests={setGuests} onRefresh={refresh}/>} {view==='Reservations'&&<ReservationsView user={user} guests={guests} rooms={rooms} roomTypes={roomTypes} reservations={reservations} onRefresh={refresh}/>} {view==='Front Desk'&&<FrontDeskView user={user} data={frontDesk} rooms={rooms} onRefresh={refresh}/>} {view==='Housekeeping'&&<HousekeepingView userRole={user.role} api={api}/>} {view==='Reports'&&<ReportsView api={api}/>} {view==='Billing'&&<BillingView userRole={user.role} summaries={billing} onRefresh={refresh} api={api}/>} {view==='Backup'&&<BackupView api={api}/>}</main>;
 }
 
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);
