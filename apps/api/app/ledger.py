@@ -6,14 +6,15 @@ from secrets import token_hex
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .auth import require_roles
 from .db import get_db
 from .models import BusinessDateState, FinancialTransaction, LedgerEntry, User
 
-router = APIRouter(prefix="/api/ledger", tags=["ledger"])
+# Mounted inside billing.py, whose router prefix is already /api.
+router = APIRouter(prefix="/ledger", tags=["ledger"])
 MONEY = Decimal("0.01")
 
 
@@ -197,6 +198,8 @@ def reverse_transaction(db: Session, *, transaction_id: int, created_by: int, re
         raise ValueError("Transaction has already been reversed")
 
     source_lines = db.scalars(select(LedgerEntry).where(LedgerEntry.transaction_id == transaction_id).order_by(LedgerEntry.id)).all()
+    if not source_lines:
+        raise ValueError("Cannot reverse a transaction without ledger entries")
     reversed_lines = [
         {
             "account": line.account,
