@@ -23,6 +23,7 @@ from .db import DATA_DIR, get_db
 from .financial_ops import ledger_reconciliation
 from .finance_controls import payment_reconciliation, revenue_report, trial_balance
 from .models import AuditLog, BusinessDateState, Expense, Folio, FolioItem, Payment, Reservation, Room, User
+from .business_date import get_current_business_date
 
 router = APIRouter(prefix="/night-audit", tags=["night-audit"])
 MONEY = Decimal("0.01")
@@ -52,13 +53,7 @@ def serializable(value):
 
 
 def get_business_date(db: Session) -> date:
-    state = db.get(BusinessDateState, 1)
-    if state is None:
-        now = datetime.utcnow()
-        state = BusinessDateState(id=1, current_business_date=date.today(), opened_at=now)
-        db.add(state)
-        db.flush()
-    return state.current_business_date
+    return get_current_business_date(db, fallback_to_today=True)
 
 
 def audit(db: Session, user_id: int, action: str, business_date: date, details: dict) -> None:

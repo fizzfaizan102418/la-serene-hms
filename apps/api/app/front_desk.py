@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from .auth import require_roles
 from .db import get_db
+from .business_date import get_current_business_date
 from .models import AuditLog, Folio, FolioItem, Guest, Payment, Reservation, ReservationRoom, Room, RoomType, User
 from .financial_models import PaymentRefund
 from .pms_core import Stay
@@ -82,7 +83,7 @@ def room_rack(db: Session = Depends(get_db), _: User = Depends(require_roles("ad
 
 @router.post("/front-desk/walk-ins", status_code=201)
 def create_walk_in(payload: WalkInCreate, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "reception"))):
-    business_date = date.today()
+    business_date = get_current_business_date(db, fallback_to_today=True)
     if payload.check_out <= business_date:
         raise HTTPException(status_code=400, detail="Walk-in check-out must be after the current business date")
     if not db.get(Guest, payload.guest_id):
