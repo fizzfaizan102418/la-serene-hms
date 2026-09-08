@@ -168,6 +168,7 @@ class FolioResponse(BaseModel):
     payments: list[PaymentResponse]
     subtotal: Decimal
     discounts: Decimal
+    food_service_charge: Decimal = Decimal("0.00")
     total: Decimal
     paid: Decimal
     balance: Decimal
