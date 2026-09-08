@@ -88,27 +88,31 @@ def transfer_deposit(
     if stay_id == payload.destination_stay_id:
         raise HTTPException(status_code=400, detail="Source and destination stay must be different")
 
-    existing_tx = db.scalar(select(FinancialTransaction).where(FinancialTransaction.idempotency_key == key))
-    if existing_tx is not None:
-        if existing_tx.transaction_type != "deposit_transfer" or existing_tx.reference_type != "deposit_transfer":
-            raise HTTPException(status_code=409, detail="Idempotency key is already bound to a different financial transaction")
-        source = db.get(Stay, stay_id)
-        destination = db.get(Stay, payload.destination_stay_id)
-        rows = db.scalars(select(DepositTransaction).where(DepositTransaction.reference == key).order_by(DepositTransaction.id)).all()
-        if not source or not destination or len(rows) != 2:
-            raise HTTPException(status_code=409, detail="Idempotent deposit transfer exists but its operational records are incomplete")
-        stay_ids = {row.stay_id for row in rows}
-        if stay_ids != {source.id, destination.id}:
-            raise HTTPException(status_code=409, detail="Idempotency key is bound to an incompatible deposit transfer")
-        transfer_amounts = {money(row.amount) for row in rows}
-        if len(transfer_amounts) != 1 or next(iter(transfer_amounts)) != money(payload.amount):
-            raise HTTPException(status_code=409, detail="Idempotency key is bound to different transfer parameters")
-        return transfer_response(db, existing_tx, key, source, destination, next(iter(transfer_amounts)), True)
-
     source = db.get(Stay, stay_id)
     destination = db.get(Stay, payload.destination_stay_id)
     if not source or not destination:
         raise HTTPException(status_code=404, detail="Source or destination stay not found")
+
+    amount = money(payload.amount)
+    existing_tx = db.scalar(select(FinancialTransaction).where(FinancialTransaction.idempotency_key == key))
+    if existing_tx is not None:
+        expected_description = f"Deposit transfer {source.id} → {destination.id}: {payload.reason}"
+        if (
+            existing_tx.transaction_type != "deposit_transfer"
+            or existing_tx.reference_type != "deposit_transfer"
+            or existing_tx.reference_id != key
+            or existing_tx.description != expected_description
+        ):
+            raise HTTPException(status_code=409, detail="Idempotency key is already bound to different transfer parameters")
+        rows = db.scalars(select(DepositTransaction).where(DepositTransaction.reference == key).order_by(DepositTransaction.id)).all()
+        if len(rows) != 2:
+            raise HTTPException(status_code=409, detail="Idempotent deposit transfer exists but its operational records are incomplete")
+        if {row.stay_id for row in rows} != {source.id, destination.id}:
+            raise HTTPException(status_code=409, detail="Idempotency key is bound to an incompatible deposit transfer")
+        transfer_amounts = {money(row.amount) for row in rows}
+        if len(transfer_amounts) != 1 or next(iter(transfer_amounts)) != amount:
+            raise HTTPException(status_code=409, detail="Idempotency key is already bound to different transfer parameters")
+        return transfer_response(db, existing_tx, key, source, destination, amount, True)
 
     source_reservation = db.get(Reservation, source.reservation_id)
     destination_reservation = db.get(Reservation, destination.reservation_id)
@@ -120,7 +124,6 @@ def transfer_deposit(
     if not source_folio or not destination_folio:
         raise HTTPException(status_code=409, detail="Source or destination folio not found")
 
-    amount = money(payload.amount)
     available = stay_deposit_balance(db, source.id)
     if amount > available:
         raise HTTPException(status_code=409, detail=f"Transfer exceeds available source deposit balance of {available}")
