@@ -8,8 +8,10 @@ from sqlalchemy.orm import Session
 from .auth import require_roles
 from .db import get_db
 from .models import Folio, FolioItem, Guest, Payment, Reservation, ReservationRoom, Room, User
+from .night_audit import router as night_audit_router
 
 router = APIRouter(prefix="/reports", tags=["reports"])
+router.include_router(night_audit_router)
 MONEY = Decimal("0.01")
 ACTIVE_STATUSES = ("reserved", "checked_in", "checked_out")
 
@@ -89,9 +91,6 @@ def report_summary(
         if reservation.status == "checked_out":
             completed_stays += 1
 
-        # Occupancy is based on the actual stay lifecycle when timestamps exist.
-        # New reservations therefore stop occupying rooms on their actual checkout,
-        # rather than the originally booked checkout date after an early departure.
         if reservation.checked_in_at is not None:
             effective_start = max(reservation.check_in, reservation.checked_in_at.date())
             effective_end = reservation.check_out
@@ -100,112 +99,38 @@ def report_summary(
             occupied_nights = overlap_nights(effective_start, effective_end, period_start, period_end_exclusive)
             occupied_room_nights += occupied_nights * room_count
         elif reservation.status == "checked_in":
-            # Compatibility fallback for records created before lifecycle timestamps.
             occupied_room_nights += planned_nights * room_count
 
     available_room_nights = operational_rooms * period_days
     occupancy_rate = round((occupied_room_nights / available_room_nights) * 100, 2) if available_room_nights else 0.0
 
-    # Charges and payments are reported by transaction creation date. This matches
-    # how the PMS currently records folio items and payments and avoids treating a
-    # historical folio as current-period revenue just because the stay overlaps.
     revenue_row = db.execute(
         select(
             func.coalesce(func.sum(FolioItem.quantity * FolioItem.unit_price), 0),
             func.coalesce(func.sum(FolioItem.discount), 0),
-        ).where(
-            FolioItem.created_at >= period_start,
-            FolioItem.created_at < period_end_exclusive,
-        )
+        ).where(FolioItem.created_at >= period_start, FolioItem.created_at < period_end_exclusive)
     ).first()
     gross_revenue = money(revenue_row[0] or 0)
     discounts = money(revenue_row[1] or 0)
     net_revenue = money(max(Decimal("0.00"), gross_revenue - discounts))
 
     payment_total = money(
-        db.scalar(
-            select(func.coalesce(func.sum(Payment.amount), 0)).where(
-                Payment.created_at >= period_start,
-                Payment.created_at < period_end_exclusive,
-            )
-        ) or 0
+        db.scalar(select(func.coalesce(func.sum(Payment.amount), 0)).where(Payment.created_at >= period_start, Payment.created_at < period_end_exclusive)) or 0
     )
-
-    payment_breakdown = [
-        {"method": method, "amount": float(money(amount or 0))}
-        for method, amount in db.execute(
-            select(Payment.method, func.coalesce(func.sum(Payment.amount), 0))
-            .where(Payment.created_at >= period_start, Payment.created_at < period_end_exclusive)
-            .group_by(Payment.method)
-            .order_by(Payment.method)
-        )
-    ]
-
-    item_totals = {
-        folio_id: (Decimal(gross or 0), Decimal(discount or 0))
-        for folio_id, gross, discount in db.execute(
-            select(
-                FolioItem.folio_id,
-                func.coalesce(func.sum(FolioItem.quantity * FolioItem.unit_price), 0),
-                func.coalesce(func.sum(FolioItem.discount), 0),
-            ).group_by(FolioItem.folio_id)
-        )
-    }
-    payment_totals = {
-        folio_id: Decimal(amount or 0)
-        for folio_id, amount in db.execute(
-            select(Payment.folio_id, func.coalesce(func.sum(Payment.amount), 0)).group_by(Payment.folio_id)
-        )
-    }
+    payment_breakdown = [{"method": method, "amount": float(money(amount or 0))} for method, amount in db.execute(select(Payment.method, func.coalesce(func.sum(Payment.amount), 0)).where(Payment.created_at >= period_start, Payment.created_at < period_end_exclusive).group_by(Payment.method).order_by(Payment.method))]
+    item_totals = {folio_id: (Decimal(gross or 0), Decimal(discount or 0)) for folio_id, gross, discount in db.execute(select(FolioItem.folio_id, func.coalesce(func.sum(FolioItem.quantity * FolioItem.unit_price), 0), func.coalesce(func.sum(FolioItem.discount), 0)).group_by(FolioItem.folio_id))}
+    payment_totals = {folio_id: Decimal(amount or 0) for folio_id, amount in db.execute(select(Payment.folio_id, func.coalesce(func.sum(Payment.amount), 0)).group_by(Payment.folio_id))}
     outstanding = Decimal("0.00")
     for folio_id in db.scalars(select(Folio.id)):
-        gross, discount = item_totals.get(folio_id, (Decimal("0.00"), Decimal("0.00")))
-        paid = payment_totals.get(folio_id, Decimal("0.00"))
-        outstanding += max(Decimal("0.00"), gross - discount - paid)
+        gross, discount = item_totals.get(folio_id, (Decimal("0.00"), Decimal("0.00"))); paid = payment_totals.get(folio_id, Decimal("0.00")); outstanding += max(Decimal("0.00"), gross - discount - paid)
 
-    guest_rows = db.execute(
-        select(Guest.full_name, func.count(Reservation.id))
-        .join(Reservation, Reservation.guest_id == Guest.id)
-        .where(
-            Reservation.check_in < period_end_exclusive,
-            Reservation.check_out > period_start,
-            Reservation.status.in_(ACTIVE_STATUSES),
-        )
-        .group_by(Guest.id, Guest.full_name)
-        .order_by(func.count(Reservation.id).desc(), Guest.full_name)
-        .limit(5)
-    ).all()
+    guest_rows = db.execute(select(Guest.full_name, func.count(Reservation.id)).join(Reservation, Reservation.guest_id == Guest.id).where(Reservation.check_in < period_end_exclusive, Reservation.check_out > period_start, Reservation.status.in_(ACTIVE_STATUSES)).group_by(Guest.id, Guest.full_name).order_by(func.count(Reservation.id).desc(), Guest.full_name).limit(5)).all()
     top_guests = [{"guest_name": name, "stays": int(count)} for name, count in guest_rows]
 
     return {
-        "from_date": period_start,
-        "to_date": period_end_exclusive - timedelta(days=1),
-        "period_days": period_days,
-        "rooms": {
-            "total": total_rooms,
-            "operational": operational_rooms,
-            "available_room_nights": available_room_nights,
-            "booked_room_nights": booked_room_nights,
-            "occupied_room_nights": occupied_room_nights,
-            "occupancy_rate": occupancy_rate,
-        },
-        "operations": {
-            "scheduled_arrivals": scheduled_arrivals,
-            "scheduled_departures": scheduled_departures,
-            "actual_check_ins": actual_check_ins,
-            "actual_check_outs": actual_check_outs,
-            "checked_in_guests": sum(1 for reservation in reservations if reservation.status == "checked_in"),
-            "completed_stays": completed_stays,
-            "stays_overlapping_period": stays_overlapping_period,
-            "legacy_lifecycle_records": legacy_lifecycle_records,
-        },
-        "revenue": {
-            "gross": float(gross_revenue),
-            "discounts": float(discounts),
-            "net": float(net_revenue),
-            "payments_received": float(payment_total),
-            "outstanding_balance": float(money(outstanding)),
-        },
-        "payment_breakdown": payment_breakdown,
-        "top_guests": top_guests,
+        "from_date": period_start, "to_date": period_end_exclusive - timedelta(days=1), "period_days": period_days,
+        "rooms": {"total": total_rooms, "operational": operational_rooms, "available_room_nights": available_room_nights, "booked_room_nights": booked_room_nights, "occupied_room_nights": occupied_room_nights, "occupancy_rate": occupancy_rate},
+        "operations": {"scheduled_arrivals": scheduled_arrivals, "scheduled_departures": scheduled_departures, "actual_check_ins": actual_check_ins, "actual_check_outs": actual_check_outs, "checked_in_guests": sum(1 for reservation in reservations if reservation.status == "checked_in"), "completed_stays": completed_stays, "stays_overlapping_period": stays_overlapping_period, "legacy_lifecycle_records": legacy_lifecycle_records},
+        "revenue": {"gross": float(gross_revenue), "discounts": float(discounts), "net": float(net_revenue), "payments_received": float(payment_total), "outstanding_balance": float(money(outstanding))},
+        "payment_breakdown": payment_breakdown, "top_guests": top_guests,
     }
