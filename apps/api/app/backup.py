@@ -11,7 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .auth import require_roles
-from .db import DATA_DIR, engine, get_db, ensure_schema_compatibility
+from .db import DATA_DIR, SessionLocal, engine, ensure_schema_compatibility
 from .models import AuditLog, User
 
 router = APIRouter(prefix="/api/backup", tags=["backup"])
@@ -31,8 +31,7 @@ def validate_sqlite(path: Path) -> tuple[bool, str]:
         return False, "Backup file is empty or too small"
     try:
         with sqlite3.connect(path) as connection:
-            header = connection.execute("PRAGMA schema_version").fetchone()
-            if header is None:
+            if connection.execute("PRAGMA schema_version").fetchone() is None:
                 return False, "Not a valid SQLite database"
             integrity = connection.execute("PRAGMA integrity_check").fetchone()
             if not integrity or integrity[0] != "ok":
@@ -48,8 +47,7 @@ def validate_sqlite(path: Path) -> tuple[bool, str]:
 
 def create_backup(prefix: str = "backup") -> Path:
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
-    target = BACKUP_DIR / f"{prefix}_{timestamp}.sqlite3"
+    target = BACKUP_DIR / f"{prefix}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S_%f')}.sqlite3"
     engine.dispose()
     with sqlite3.connect(DATABASE_PATH) as source:
         with sqlite3.connect(target) as destination:
@@ -63,30 +61,25 @@ def create_backup(prefix: str = "backup") -> Path:
 
 def backup_info(path: Path) -> dict:
     stat = path.stat()
-    return {
-        "filename": path.name,
-        "size_bytes": stat.st_size,
-        "created_at": datetime.utcfromtimestamp(stat.st_mtime).isoformat() + "Z",
-    }
+    return {"filename": path.name, "size_bytes": stat.st_size, "created_at": datetime.utcfromtimestamp(stat.st_mtime).isoformat() + "Z"}
 
 
 @router.get("")
-def list_backups(db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+def list_backups(_: User = Depends(require_roles("admin"))):
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     backups = sorted(BACKUP_DIR.glob("*.sqlite3"), key=lambda path: path.stat().st_mtime, reverse=True)
-    audit(db, user.id, "list", {"count": len(backups)})
-    db.commit()
     return {"database": DATABASE_PATH.name, "backups": [backup_info(path) for path in backups]}
 
 
 @router.post("")
-def create_database_backup(db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+def create_database_backup(user: User = Depends(require_roles("admin"))):
     try:
         target = create_backup("backup")
+        with SessionLocal() as db:
+            audit(db, user.id, "create", {"filename": target.name, "size_bytes": target.stat().st_size})
+            db.commit()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Unable to create backup: {exc}") from exc
-    audit(db, user.id, "create", {"filename": target.name, "size_bytes": target.stat().st_size})
-    db.commit()
     return backup_info(target)
 
 
@@ -104,7 +97,7 @@ def download_backup(filename: str, _: User = Depends(require_roles("admin"))):
 
 
 @router.post("/restore")
-async def restore_database(file: UploadFile = File(...), db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+async def restore_database(file: UploadFile = File(...), user: User = Depends(require_roles("admin"))):
     if not file.filename or Path(file.filename).suffix.lower() not in {".sqlite3", ".db", ".sqlite"}:
         raise HTTPException(status_code=400, detail="Upload a SQLite database file (.sqlite3, .db, or .sqlite)")
 
@@ -130,11 +123,11 @@ async def restore_database(file: UploadFile = File(...), db: Session = Depends(g
         engine.dispose()
         shutil.copy2(temp_path, DATABASE_PATH)
         ensure_schema_compatibility()
-
         with engine.begin() as connection:
             connection.execute(text("PRAGMA foreign_keys=ON"))
-        audit(db, user.id, "restore", {"source_filename": file.filename, "safety_backup": safety_backup.name, "bytes": bytes_written})
-        db.commit()
+        with SessionLocal() as audit_db:
+            audit(audit_db, user.id, "restore", {"source_filename": file.filename, "safety_backup": safety_backup.name, "bytes": bytes_written})
+            audit_db.commit()
         return {"restored": True, "source_filename": file.filename, "safety_backup": backup_info(safety_backup)}
     except HTTPException:
         raise
