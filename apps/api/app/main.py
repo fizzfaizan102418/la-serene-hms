@@ -36,7 +36,7 @@ from .schemas import (
 )
 
 Base.metadata.create_all(bind=engine)
-app = FastAPI(title="La Serene HMS API", version="0.6.0")
+app = FastAPI(title="La Serene HMS API", version="0.6.1")
 
 
 def write_audit(db: Session, action: str, entity_type: str, entity_id: int | None = None, details: dict | None = None, user_id: int | None = None):
@@ -270,8 +270,6 @@ def create_reservation(payload: ReservationCreate, db: Session = Depends(get_db)
     for room in rooms:
         db.add(ReservationRoom(reservation_id=reservation.id, room_id=room.id))
         if payload.check_in == date.today():
-            room.status = "reserved"
-        else:
             room.status = "reserved"
     folio = Folio(reservation_id=reservation.id); db.add(folio); db.flush()
     write_audit(db, "create", "reservation", reservation.id, {"room_ids": payload.room_ids, "guest_id": payload.guest_id, "check_in": str(payload.check_in), "check_out": str(payload.check_out)}, user.id)
