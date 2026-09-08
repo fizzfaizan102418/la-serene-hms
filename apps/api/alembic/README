@@ -1,0 +1,7 @@
+Alembic migration environment for the production PostgreSQL database.
+
+Run from apps/api with HMS_DATABASE_URL configured:
+
+    alembic upgrade head
+
+The first migration is a metadata bootstrap. It is intentionally safe for an existing database because it creates only tables that are missing. Existing SQLite installations should be exported with scripts/migrate_sqlite_to_postgres.py before switching HMS_DATABASE_URL to PostgreSQL.
