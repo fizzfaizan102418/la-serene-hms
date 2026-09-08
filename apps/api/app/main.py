@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from .auth import create_access_token, get_current_user, hash_password, require_roles, verify_password
 from .billing import router as billing_router
 from .db import Base, engine, get_db
+from .housekeeping import router as housekeeping_router
 from .models import AuditLog, Folio, Guest, Reservation, ReservationRoom, Role, Room, RoomType, User
 from .schemas import (
     AvailabilityResponse, BootstrapAdminRequest, CheckInResponse, CheckOutResponse,
@@ -18,8 +19,9 @@ from .schemas import (
 )
 
 Base.metadata.create_all(bind=engine)
-app = FastAPI(title="La Serene HMS API", version="0.7.0")
+app = FastAPI(title="La Serene HMS API", version="0.8.0")
 app.include_router(billing_router)
+app.include_router(housekeeping_router)
 
 
 def write_audit(db: Session, action: str, entity_type: str, entity_id: int | None = None, details: dict | None = None, user_id: int | None = None):
