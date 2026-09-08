@@ -10,6 +10,9 @@ from .billing import router as billing_router
 from .db import Base, engine, get_db
 from .housekeeping import router as housekeeping_router
 from .models import AuditLog, Folio, Guest, Reservation, ReservationRoom, Role, Room, RoomType, User
+from .pms_core import router as pms_core_router
+from .pms_core_bootstrap import ensure_pms_core_schema
+from .reservation_workflows import router as reservation_workflows_router
 from .schemas import (
     AvailabilityResponse, BootstrapAdminRequest, CheckInResponse, CheckOutResponse,
     DashboardResponse, FrontDeskResponse, GuestCreate, GuestResponse, HealthResponse,
@@ -19,9 +22,11 @@ from .schemas import (
 )
 
 Base.metadata.create_all(bind=engine)
-app = FastAPI(title="La Serene HMS API", version="0.8.0")
+app = FastAPI(title="La Serene HMS API", version="0.9.1")
 app.include_router(billing_router)
 app.include_router(housekeeping_router)
+app.include_router(pms_core_router)
+app.include_router(reservation_workflows_router)
 
 
 def write_audit(db: Session, action: str, entity_type: str, entity_id: int | None = None, details: dict | None = None, user_id: int | None = None):
@@ -60,6 +65,10 @@ def seed_system_roles():
         for name in ("admin", "reception", "housekeeping"):
             if not db.scalar(select(Role).where(Role.name == name)):
                 db.add(Role(name=name))
+        db.commit()
+    # Existing local installations receive the PMS Core backfill/triggers on startup.
+    with Session(engine) as db:
+        ensure_pms_core_schema()
         db.commit()
 
 
@@ -257,6 +266,15 @@ def check_in_reservation(reservation_id: int, db: Session = Depends(get_db), use
     blocked = [room.number for room in rooms if room.status in ("dirty", "out_of_order", "occupied")]
     if blocked: raise HTTPException(status_code=409, detail=f"Assigned room(s) cannot be checked in: {', '.join(blocked)}")
     reservation.status = "checked_in"
+    from .pms_core import Stay
+    existing_stays = db.scalars(select(Stay).where(Stay.reservation_id == reservation.id)).all()
+    if not existing_stays:
+        for room in rooms:
+            db.add(Stay(reservation_id=reservation.id, room_id=room.id, guest_id=reservation.guest_id, status="checked_in", check_in=reservation.check_in, check_out=reservation.check_out, actual_check_in=__import__("datetime").datetime.utcnow(), agreed_rate=Decimal("0.00")))
+    else:
+        for stay in existing_stays:
+            stay.status = "checked_in"
+            stay.actual_check_in = stay.actual_check_in or __import__("datetime").datetime.utcnow()
     for room in rooms: room.status = "occupied"
     write_audit(db, "check_in", "reservation", reservation.id, {"room_ids": room_ids}, user.id)
     for room in rooms: write_audit(db, "check_in", "room", room.id, {"reservation_id": reservation.id}, user.id)
@@ -271,6 +289,10 @@ def check_out_reservation(reservation_id: int, db: Session = Depends(get_db), us
     room_ids = db.scalars(select(ReservationRoom.room_id).where(ReservationRoom.reservation_id == reservation.id)).all()
     rooms = [db.get(Room, rid) for rid in room_ids]
     reservation.status = "checked_out"
+    from .pms_core import Stay
+    for stay in db.scalars(select(Stay).where(Stay.reservation_id == reservation.id)).all():
+        stay.status = "completed"
+        stay.actual_check_out = stay.actual_check_out or __import__("datetime").datetime.utcnow()
     for room in rooms:
         if room and room.status == "occupied": room.status = "dirty"
     write_audit(db, "check_out", "reservation", reservation.id, {"room_ids": room_ids}, user.id)
@@ -293,6 +315,10 @@ def transfer_room(reservation_id: int, payload: RoomTransferRequest, db: Session
     if reservation_overlaps(target.id, date.today(), reservation.check_out, db, exclude_reservation_id=reservation.id):
         raise HTTPException(status_code=409, detail="Destination room has a conflicting reservation")
     db.delete(link); db.add(ReservationRoom(reservation_id=reservation.id, room_id=target.id))
+    from .pms_core import Stay
+    stay = db.scalar(select(Stay).where(Stay.reservation_id == reservation.id, Stay.room_id == source.id, Stay.status == "checked_in"))
+    if stay:
+        stay.room_id = target.id
     source.status = "dirty"; target.status = "occupied"
     write_audit(db, "room_transfer", "reservation", reservation.id, {"from_room_id": source.id, "to_room_id": target.id}, user.id)
     write_audit(db, "room_transfer", "room", source.id, {"reservation_id": reservation.id, "to_room_id": target.id, "new_status": "dirty"}, user.id)
