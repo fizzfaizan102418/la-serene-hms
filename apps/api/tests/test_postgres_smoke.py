@@ -3,13 +3,14 @@ from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import inspect, select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 from app.db import engine
 # Register the full PMS model metadata before exercising ledger ORM mappers.
 # Stay lives in pms_core.py rather than models.py and LedgerEntry references it.
 from app.pms_core import Stay  # noqa: F401
-from app.ledger import post_transaction
+from app.ledger import post_transaction, reverse_transaction
 from app.models import BusinessDateState, FinancialTransaction, LedgerEntry
 
 
@@ -21,7 +22,11 @@ class PostgreSQLSmokeTest(unittest.TestCase):
 
     def test_expected_tables_exist(self):
         names = set(inspect(engine).get_table_names())
-        for expected in ("stays", "stay_occupants", "stay_rate_segments", "deposit_transactions", "room_moves", "reservation_splits", "business_date_state", "financial_transactions", "ledger_entries"):
+        for expected in (
+            "stays", "stay_occupants", "stay_rate_segments", "deposit_transactions",
+            "room_moves", "reservation_splits", "business_date_state",
+            "financial_transactions", "ledger_entries",
+        ):
             self.assertIn(expected, names)
 
     def test_ledger_transaction_is_balanced_and_persistent(self):
@@ -51,6 +56,59 @@ class PostgreSQLSmokeTest(unittest.TestCase):
             self.assertEqual(len(entries), 2)
             self.assertEqual(sum((e.amount for e in entries if e.direction == "debit"), Decimal("0.00")), Decimal("10.00"))
             self.assertEqual(sum((e.amount for e in entries if e.direction == "credit"), Decimal("0.00")), Decimal("10.00"))
+
+    def test_ledger_entries_cannot_be_updated_or_deleted(self):
+        with Session(engine) as db:
+            tx = post_transaction(
+                db,
+                transaction_type="ci_immutability",
+                description="CI PostgreSQL ledger immutability test",
+                created_by=None,
+                lines=[
+                    {"account": "Cash", "direction": "debit", "amount": Decimal("7.00")},
+                    {"account": "Test Revenue", "direction": "credit", "amount": Decimal("7.00")},
+                ],
+            )
+            db.commit()
+            entry = db.scalars(select(LedgerEntry).where(LedgerEntry.transaction_id == tx.id).order_by(LedgerEntry.id)).first()
+            self.assertIsNotNone(entry)
+
+            entry.amount = Decimal("8.00")
+            with self.assertRaises(DBAPIError):
+                db.flush()
+            db.rollback()
+
+            entry = db.get(LedgerEntry, entry.id)
+            db.delete(entry)
+            with self.assertRaises(DBAPIError):
+                db.flush()
+            db.rollback()
+
+    def test_financial_transaction_can_only_transition_to_reversed(self):
+        with Session(engine) as db:
+            tx = post_transaction(
+                db,
+                transaction_type="ci_reversal",
+                description="CI PostgreSQL reversal test",
+                created_by=None,
+                lines=[
+                    {"account": "Cash", "direction": "debit", "amount": Decimal("5.00")},
+                    {"account": "Test Revenue", "direction": "credit", "amount": Decimal("5.00")},
+                ],
+            )
+            db.commit()
+            tx_id = tx.id
+
+            reversal = reverse_transaction(db, transaction_id=tx_id, created_by=None, reason="CI test correction")
+            db.commit()
+            db.refresh(tx)
+            self.assertEqual(tx.status, "reversed")
+            self.assertEqual(reversal.reversal_of_id, tx_id)
+
+            tx.description = "tampered"
+            with self.assertRaises(DBAPIError):
+                db.flush()
+            db.rollback()
 
 
 if __name__ == "__main__":
