@@ -32,6 +32,10 @@ class RoomResponse(RoomCreate):
     status: str
 
 
+class RoomStatusUpdate(BaseModel):
+    status: str = Field(pattern="^(available|reserved|occupied|dirty|out_of_order)$")
+
+
 class GuestCreate(BaseModel):
     full_name: str = Field(min_length=1, max_length=160)
     phone: str | None = None
@@ -61,3 +65,16 @@ class ReservationResponse(BaseModel):
     status: str
     room_ids: list[int]
     folio_id: int
+
+
+class DashboardResponse(BaseModel):
+    business_date: date
+    total_rooms: int
+    available_rooms: int
+    reserved_rooms: int
+    occupied_rooms: int
+    dirty_rooms: int
+    out_of_order_rooms: int
+    arrivals_today: int
+    departures_today: int
+    in_house_guests: int
