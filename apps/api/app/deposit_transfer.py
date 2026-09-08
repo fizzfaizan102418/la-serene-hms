@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -12,7 +12,7 @@ from .auth import require_roles
 from .business_date import get_current_business_date
 from .db import get_db
 from .ledger import post_transaction
-from .models import AuditLog, DepositTransaction, Folio, LedgerEntry, Reservation, User
+from .models import AuditLog, DepositTransaction, FinancialTransaction, Folio, LedgerEntry, Reservation, User
 from .pms_core import Stay
 
 router = APIRouter(prefix="/api", tags=["deposit-transfers"])
@@ -26,33 +26,45 @@ class DepositTransferCreate(BaseModel):
 
 
 def money(value: Decimal | int | float | str) -> Decimal:
-    return Decimal(str(value)).quantize(MONEY)
+    return Decimal(str(value)).quantize(MONEY, rounding=ROUND_HALF_UP)
 
 
 def stay_deposit_balance(db: Session, stay_id: int) -> Decimal:
     credits = db.scalar(
         select(func.coalesce(func.sum(LedgerEntry.amount), 0))
-        .join_from(LedgerEntry, __import__("app.models", fromlist=["FinancialTransaction"]).FinancialTransaction,
-                   LedgerEntry.transaction_id == __import__("app.models", fromlist=["FinancialTransaction"]).FinancialTransaction.id)
+        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
         .where(
             LedgerEntry.stay_id == stay_id,
             LedgerEntry.account == "Guest Deposits",
             LedgerEntry.direction == "credit",
-            __import__("app.models", fromlist=["FinancialTransaction"]).FinancialTransaction.status == "posted",
+            FinancialTransaction.status == "posted",
         )
     ) or Decimal("0.00")
     debits = db.scalar(
         select(func.coalesce(func.sum(LedgerEntry.amount), 0))
-        .join_from(LedgerEntry, __import__("app.models", fromlist=["FinancialTransaction"]).FinancialTransaction,
-                   LedgerEntry.transaction_id == __import__("app.models", fromlist=["FinancialTransaction"]).FinancialTransaction.id)
+        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
         .where(
             LedgerEntry.stay_id == stay_id,
             LedgerEntry.account == "Guest Deposits",
             LedgerEntry.direction == "debit",
-            __import__("app.models", fromlist=["FinancialTransaction"]).FinancialTransaction.status == "posted",
+            FinancialTransaction.status == "posted",
         )
     ) or Decimal("0.00")
     return money(max(Decimal("0.00"), Decimal(credits) - Decimal(debits)))
+
+
+def transfer_response(db: Session, tx: FinancialTransaction, key: str, source: Stay, destination: Stay, amount: Decimal, replayed: bool) -> dict:
+    return {
+        "transaction_id": tx.id,
+        "status": tx.status,
+        "idempotency_key": key,
+        "source_stay_id": source.id,
+        "destination_stay_id": destination.id,
+        "amount": amount,
+        "source_balance": stay_deposit_balance(db, source.id),
+        "destination_balance": stay_deposit_balance(db, destination.id),
+        "replayed": replayed,
+    }
 
 
 def audit(db: Session, user_id: int, transfer_reference: str, details: dict) -> None:
@@ -76,6 +88,23 @@ def transfer_deposit(
     if stay_id == payload.destination_stay_id:
         raise HTTPException(status_code=400, detail="Source and destination stay must be different")
 
+    existing_tx = db.scalar(select(FinancialTransaction).where(FinancialTransaction.idempotency_key == key))
+    if existing_tx is not None:
+        if existing_tx.transaction_type != "deposit_transfer" or existing_tx.reference_type != "deposit_transfer":
+            raise HTTPException(status_code=409, detail="Idempotency key is already bound to a different financial transaction")
+        source = db.get(Stay, stay_id)
+        destination = db.get(Stay, payload.destination_stay_id)
+        rows = db.scalars(select(DepositTransaction).where(DepositTransaction.reference == key).order_by(DepositTransaction.id)).all()
+        if not source or not destination or len(rows) != 2:
+            raise HTTPException(status_code=409, detail="Idempotent deposit transfer exists but its operational records are incomplete")
+        stay_ids = {row.stay_id for row in rows}
+        if stay_ids != {source.id, destination.id}:
+            raise HTTPException(status_code=409, detail="Idempotency key is bound to an incompatible deposit transfer")
+        transfer_amounts = {money(row.amount) for row in rows}
+        if len(transfer_amounts) != 1 or next(iter(transfer_amounts)) != money(payload.amount):
+            raise HTTPException(status_code=409, detail="Idempotency key is bound to different transfer parameters")
+        return transfer_response(db, existing_tx, key, source, destination, next(iter(transfer_amounts)), True)
+
     source = db.get(Stay, stay_id)
     destination = db.get(Stay, payload.destination_stay_id)
     if not source or not destination:
@@ -96,26 +125,6 @@ def transfer_deposit(
     if amount > available:
         raise HTTPException(status_code=409, detail=f"Transfer exceeds available source deposit balance of {available}")
 
-    transfer_reference = key
-    existing_tx = db.scalar(select(__import__("app.models", fromlist=["FinancialTransaction"]).FinancialTransaction).where(__import__("app.models", fromlist=["FinancialTransaction"]).FinancialTransaction.idempotency_key == key))
-    if existing_tx is not None:
-        rows = db.scalars(select(DepositTransaction).where(DepositTransaction.reference == transfer_reference).order_by(DepositTransaction.id)).all()
-        if len(rows) != 2:
-            raise HTTPException(status_code=409, detail="Idempotent deposit transfer exists but its operational records are incomplete")
-        if any(row.stay_id != source.id and row.stay_id != destination.id for row in rows):
-            raise HTTPException(status_code=409, detail="Idempotency key is bound to an incompatible deposit transfer")
-        return {
-            "transaction_id": existing_tx.id,
-            "status": existing_tx.status,
-            "idempotency_key": key,
-            "source_stay_id": source.id,
-            "destination_stay_id": destination.id,
-            "amount": amount,
-            "source_balance": stay_deposit_balance(db, source.id),
-            "destination_balance": stay_deposit_balance(db, destination.id),
-            "replayed": True,
-        }
-
     business_date = get_current_business_date(db, fallback_to_today=True)
     try:
         tx = post_transaction(
@@ -123,15 +132,15 @@ def transfer_deposit(
             transaction_type="deposit_transfer",
             description=f"Deposit transfer {source.id} → {destination.id}: {payload.reason}",
             reference_type="deposit_transfer",
-            reference_id=transfer_reference,
+            reference_id=key,
             folio_id=source_folio.id,
             reservation_id=source.reservation_id,
             created_by=user.id,
             business_date=business_date,
             idempotency_key=key,
             lines=[
-                {"account": "Guest Deposits", "direction": "debit", "amount": amount, "folio_id": source_folio.id, "stay_id": source.id},
-                {"account": "Guest Deposits", "direction": "credit", "amount": amount, "folio_id": destination_folio.id, "stay_id": destination.id},
+                {"account": "Guest Deposits", "direction": "debit", "amount": amount, "folio_id": source_folio.id, "stay_id": source.id, "reference": key},
+                {"account": "Guest Deposits", "direction": "credit", "amount": amount, "folio_id": destination_folio.id, "stay_id": destination.id, "reference": key},
             ],
         )
     except ValueError as exc:
@@ -141,19 +150,12 @@ def transfer_deposit(
         db.rollback()
         raise HTTPException(status_code=409, detail="Deposit transfer could not be committed safely; retry with the same Idempotency-Key") from exc
 
-    rows = db.scalars(select(DepositTransaction).where(DepositTransaction.reference == transfer_reference).order_by(DepositTransaction.id)).all()
-    if len(rows) == 2:
-        return {
-            "transaction_id": tx.id,
-            "status": tx.status,
-            "idempotency_key": key,
-            "source_stay_id": source.id,
-            "destination_stay_id": destination.id,
-            "amount": amount,
-            "source_balance": stay_deposit_balance(db, source.id),
-            "destination_balance": stay_deposit_balance(db, destination.id),
-            "replayed": True,
-        }
+    rows = db.scalars(select(DepositTransaction).where(DepositTransaction.reference == key).order_by(DepositTransaction.id)).all()
+    if rows:
+        if len(rows) != 2:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="Deposit transfer has incomplete operational records")
+        return transfer_response(db, tx, key, source, destination, amount, True)
 
     source_record = DepositTransaction(
         stay_id=source.id,
@@ -161,7 +163,7 @@ def transfer_deposit(
         transaction_type="transferred_out",
         amount=amount,
         payment_method=None,
-        reference=transfer_reference,
+        reference=key,
         notes=payload.reason,
         created_by=user.id,
     )
@@ -171,16 +173,15 @@ def transfer_deposit(
         transaction_type="transferred_in",
         amount=amount,
         payment_method=None,
-        reference=transfer_reference,
+        reference=key,
         notes=payload.reason,
         created_by=user.id,
     )
-    db.add(source_record)
-    db.add(destination_record)
+    db.add_all([source_record, destination_record])
     db.flush()
     source.deposit_received = stay_deposit_balance(db, source.id)
     destination.deposit_received = stay_deposit_balance(db, destination.id)
-    audit(db, user.id, transfer_reference, {
+    audit(db, user.id, key, {
         "transaction_id": tx.id,
         "source_stay_id": source.id,
         "destination_stay_id": destination.id,
@@ -189,15 +190,7 @@ def transfer_deposit(
     })
     db.commit()
     return {
-        "transaction_id": tx.id,
-        "status": tx.status,
-        "idempotency_key": key,
-        "source_stay_id": source.id,
-        "destination_stay_id": destination.id,
-        "amount": amount,
-        "source_balance": source.deposit_received,
-        "destination_balance": destination.deposit_received,
+        **transfer_response(db, tx, key, source, destination, amount, False),
         "source_transaction_id": source_record.id,
         "destination_transaction_id": destination_record.id,
-        "replayed": False,
     }
