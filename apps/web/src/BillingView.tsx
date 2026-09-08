@@ -9,6 +9,7 @@ type Receipt = { folio_id: number; reservation_id: number; status: string; guest
 type Props = { userRole: string; summaries: Summary[]; onRefresh: () => Promise<void>; api: <T>(path: string, options?: RequestInit) => Promise<T> };
 
 const money = (value: number) => Number(value || 0).toFixed(2);
+const escapeHtml = (value: string) => value.replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char] ?? char);
 
 export default function BillingView({ userRole, summaries, onRefresh, api }: Props) {
   const canOperate = userRole === 'admin' || userRole === 'reception';
@@ -73,17 +74,21 @@ export default function BillingView({ userRole, summaries, onRefresh, api }: Pro
     try {
       const id = await ensureSelected();
       const receipt = await api<Receipt>(`/api/folios/${id}/receipt`);
-      const popup = window.open('', '_blank', 'noopener,noreferrer,width=820,height=900');
-      if (!popup) throw new Error('Please allow pop-ups to print the receipt');
-      const itemRows = receipt.items.map(item => `<tr><td>${item.description}</td><td>${item.category}</td><td>${Number(item.quantity)}</td><td>${money(item.unit_price)}</td><td>${money(item.discount)}</td><td>${money(item.line_total)}</td></tr>`).join('');
-      const paymentRows = receipt.payments.map(payment => `<tr><td>${payment.method.replace('_', ' ')}</td><td>${payment.reference || '—'}</td><td>${money(payment.amount)}</td></tr>`).join('');
-      popup.document.write(`<!doctype html><html><head><title>La Serene · Folio #${receipt.folio_id}</title><style>body{font-family:Arial,sans-serif;margin:32px;color:#222}h1{margin:0 0 4px}.muted{color:#666}section{margin:24px 0}table{width:100%;border-collapse:collapse;margin-top:10px}th,td{border-bottom:1px solid #ddd;padding:8px;text-align:left}th{background:#f5f5f5}.totals{max-width:360px;margin-left:auto}.totals div{display:flex;justify-content:space-between;padding:6px 0}.grand{font-size:18px;font-weight:700;border-top:2px solid #222;margin-top:6px;padding-top:10px}.balance{font-weight:700}.footer{margin-top:36px;font-size:12px;color:#666}@media print{body{margin:12mm}}</style></head><body><h1>LA SERENE HOTEL</h1><div class="muted">Guest folio / receipt · #${receipt.folio_id}</div><section><strong>${receipt.guest.full_name}</strong><br>${receipt.guest.phone || ''}${receipt.guest.email ? ` · ${receipt.guest.email}` : ''}<br>Stay: ${receipt.stay.check_in} → ${receipt.stay.check_out} · ${receipt.stay.nights} night(s)<br>Room(s): ${receipt.rooms.map(room => room.number).join(', ') || '—'}</section><section><h3>Charges</h3><table><thead><tr><th>Description</th><th>Category</th><th>Qty</th><th>Unit</th><th>Discount</th><th>Total</th></tr></thead><tbody>${itemRows || '<tr><td colspan="6">No charges</td></tr>'}</tbody></table></section><section><h3>Payments</h3><table><thead><tr><th>Method</th><th>Reference</th><th>Amount</th></tr></thead><tbody>${paymentRows || '<tr><td colspan="3">No payments</td></tr>'}</tbody></table></section><section class="totals"><div><span>Subtotal</span><strong>${money(receipt.subtotal)}</strong></div><div><span>Discounts</span><strong>${money(receipt.discounts)}</strong></div><div class="grand"><span>Total</span><strong>${money(receipt.total)}</strong></div><div><span>Paid</span><strong>${money(receipt.paid)}</strong></div><div class="balance"><span>Balance</span><strong>${money(receipt.balance)}</strong></div></section><div class="footer">Thank you for staying with La Serene Hotel.</div><script>window.onload=()=>window.print();</script></body></html>`);
-      popup.document.close();
-      setMessage('Receipt opened in a print window.');
+      const itemRows = receipt.items.map(item => `<tr><td>${escapeHtml(item.description)}</td><td>${escapeHtml(item.category)}</td><td>${Number(item.quantity)}</td><td>${money(item.unit_price)}</td><td>${money(item.discount)}</td><td>${money(item.line_total)}</td></tr>`).join('');
+      const paymentRows = receipt.payments.map(payment => `<tr><td>${escapeHtml(payment.method.replace('_', ' '))}</td><td>${escapeHtml(payment.reference || '—')}</td><td>${money(payment.amount)}</td></tr>`).join('');
+      const roomNumbers = receipt.rooms.map(room => escapeHtml(room.number)).join(', ') || '—';
+      const guestName = escapeHtml(receipt.guest.full_name);
+      const phone = escapeHtml(receipt.guest.phone || '');
+      const email = receipt.guest.email ? ` · ${escapeHtml(receipt.guest.email)}` : '';
+      const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>La Serene Hotel · Folio #${receipt.folio_id}</title><style>body{font-family:Arial,sans-serif;margin:32px;color:#222;line-height:1.45}h1{margin:0 0 4px}.muted{color:#666}section{margin:24px 0}table{width:100%;border-collapse:collapse;margin-top:10px}th,td{border-bottom:1px solid #ddd;padding:8px;text-align:left;vertical-align:top}th{background:#f5f5f5}.totals{max-width:360px;margin-left:auto}.totals div{display:flex;justify-content:space-between;padding:6px 0}.grand{font-size:18px;font-weight:700;border-top:2px solid #222;margin-top:6px;padding-top:10px}.balance{font-weight:700}.footer{margin-top:36px;font-size:12px;color:#666}@media print{body{margin:12mm}button{display:none}}@media(max-width:700px){body{margin:16px;font-size:13px}th,td{padding:6px}}</style></head><body><h1>LA SERENE HOTEL</h1><div class="muted">Guest folio / receipt · #${receipt.folio_id}</div><section><strong>${guestName}</strong><br>${phone}${email}<br>Stay: ${escapeHtml(receipt.stay.check_in)} → ${escapeHtml(receipt.stay.check_out)} · ${receipt.stay.nights} night(s)<br>Room(s): ${roomNumbers}</section><section><h3>Charges</h3><table><thead><tr><th>Description</th><th>Category</th><th>Qty</th><th>Unit</th><th>Discount</th><th>Total</th></tr></thead><tbody>${itemRows || '<tr><td colspan="6">No charges</td></tr>'}</tbody></table></section><section><h3>Payments</h3><table><thead><tr><th>Method</th><th>Reference</th><th>Amount</th></tr></thead><tbody>${paymentRows || '<tr><td colspan="3">No payments</td></tr>'}</tbody></table></section><section class="totals"><div><span>Subtotal</span><strong>${money(receipt.subtotal)}</strong></div><div><span>Discounts</span><strong>${money(receipt.discounts)}</strong></div><div class="grand"><span>Total</span><strong>${money(receipt.total)}</strong></div><div><span>Paid</span><strong>${money(receipt.paid)}</strong></div><div class="balance"><span>Balance</span><strong>${money(receipt.balance)}</strong></div></section><div class="footer">Thank you for staying with La Serene Hotel.</div></body></html>`;
+      const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const popup = window.open(url, '_blank', 'width=820,height=900');
+      if (!popup) { URL.revokeObjectURL(url); throw new Error('Please allow pop-ups to print the receipt'); }
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      setMessage('Receipt opened. Use the browser print command to print or save it as PDF.');
     } catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to print receipt'); }
   }
-
-  const currentSummary = summaries.find(s => s.folio_id === selected);
 
   return <section className="page"><div className="page-heading"><div><p className="muted">Folios, charges, payments and balances</p><h2>Billing</h2></div><span className="room-count">{summaries.length} folios</span></div>
     {message && <p className="notice">{message}</p>}
