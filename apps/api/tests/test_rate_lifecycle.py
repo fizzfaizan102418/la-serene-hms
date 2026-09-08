@@ -44,7 +44,14 @@ class RateLifecycleTests(unittest.TestCase):
         self.db.add(stay)
         self.db.flush()
         self.db.add(StayRateSegment(stay_id=stay.id, from_date=date(2026, 9, 7), to_date=date(2026, 9, 12), rate=Decimal("120.00"), discount_percent=Decimal("10.00"), discount_amount=Decimal("12.00"), source="reservation"))
-        self.db.add(BusinessDateState(id=1, current_business_date=date(2026, 9, 8)))
+
+        business_date_state = self.db.get(BusinessDateState, 1)
+        if business_date_state is None:
+            business_date_state = BusinessDateState(id=1, current_business_date=date(2026, 9, 8))
+            self.db.add(business_date_state)
+        else:
+            business_date_state.current_business_date = date(2026, 9, 8)
+            business_date_state.last_closed_at = None
         self.db.commit()
         self.db.expire_all()
         self.user = self.db.get(User, user.id)
