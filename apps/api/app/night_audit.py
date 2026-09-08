@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 import json
@@ -50,27 +50,51 @@ class ClosingConfirm(BaseModel):
 
 
 def build_summary(db: Session, business_date: date):
-    folios = db.scalars(select(Folio)).all()
+    day_start = datetime.combine(business_date, datetime.min.time())
+    day_end = day_start + timedelta(days=1)
+
+    # End-of-day revenue is based only on folio lines posted during this business date.
+    daily_items = db.scalars(
+        select(FolioItem).where(FolioItem.created_at >= day_start, FolioItem.created_at < day_end)
+    ).all()
     room_revenue = Decimal("0.00"); other_revenue = Decimal("0.00"); food_revenue = Decimal("0.00")
-    for folio in folios:
-        items = db.scalars(select(FolioItem).where(FolioItem.folio_id == folio.id)).all()
-        for item in items:
-            net = max(Decimal("0.00"), Decimal(item.quantity) * Decimal(item.unit_price) - Decimal(item.discount))
-            category = item.category.strip().lower()
-            if category == "room": room_revenue += net
-            elif category in FOOD_CATEGORIES: food_revenue += net
-            else: other_revenue += net
+    for item in daily_items:
+        net = max(Decimal("0.00"), Decimal(item.quantity) * Decimal(item.unit_price) - Decimal(item.discount))
+        category = item.category.strip().lower()
+        if category == "room": room_revenue += net
+        elif category in FOOD_CATEGORIES: food_revenue += net
+        else: other_revenue += net
+
     service_charge = money(food_revenue * FOOD_SERVICE_CHARGE_RATE)
-    payments = db.scalars(select(Payment)).all(); payment_totals: dict[str, Decimal] = {}
-    for payment in payments: payment_totals[payment.method] = payment_totals.get(payment.method, Decimal("0.00")) + Decimal(payment.amount)
-    rooms = db.scalars(select(Room)).all(); status_counts = {s: 0 for s in ("available", "reserved", "occupied", "dirty", "out_of_order")}
+
+    # Cashier collection is limited to payments posted during this business date.
+    daily_payments = db.scalars(
+        select(Payment).where(Payment.created_at >= day_start, Payment.created_at < day_end)
+    ).all()
+    payment_totals: dict[str, Decimal] = {}
+    for payment in daily_payments:
+        payment_totals[payment.method] = payment_totals.get(payment.method, Decimal("0.00")) + Decimal(payment.amount)
+
+    rooms = db.scalars(select(Room)).all()
+    status_counts = {s: 0 for s in ("available", "reserved", "occupied", "dirty", "out_of_order")}
     for room in rooms: status_counts[room.status] = status_counts.get(room.status, 0) + 1
+
     arrivals = db.scalar(select(func.count(Reservation.id)).where(Reservation.check_in == business_date, Reservation.status.in_(("reserved", "checked_in")))) or 0
     departures = db.scalar(select(func.count(Reservation.id)).where(Reservation.check_out == business_date, Reservation.status == "checked_in")) or 0
     in_house = db.scalar(select(func.count(Reservation.id)).where(Reservation.status == "checked_in")) or 0
     no_shows = db.scalar(select(func.count(Reservation.id)).where(Reservation.check_in == business_date, Reservation.status == "no_show")) or 0
-    expenses = db.scalar(select(func.coalesce(func.sum(Expense.amount), 0))) or Decimal("0.00")
-    gross_revenue = money(room_revenue + food_revenue + service_charge + other_revenue); paid_total = money(sum(payment_totals.values(), Decimal("0.00")))
+
+    # Expenses are also limited to expenses entered on this business date.
+    expenses = db.scalar(
+        select(func.coalesce(func.sum(Expense.amount), 0)).where(Expense.created_at >= day_start, Expense.created_at < day_end)
+    ) or Decimal("0.00")
+
+    gross_revenue = money(room_revenue + food_revenue + service_charge + other_revenue)
+    paid_total = money(sum(payment_totals.values(), Decimal("0.00")))
+
+    # Outstanding is an end-of-day snapshot across all folios, not a daily transaction total.
+    # This answers: "What is still owed to the hotel when we close today?"
+    folios = db.scalars(select(Folio)).all()
     outstanding = Decimal("0.00")
     for folio in folios:
         items = db.scalars(select(FolioItem).where(FolioItem.folio_id == folio.id)).all()
@@ -79,6 +103,7 @@ def build_summary(db: Session, business_date: date):
         total += food_net * FOOD_SERVICE_CHARGE_RATE
         paid = db.scalar(select(func.coalesce(func.sum(Payment.amount), 0)).where(Payment.folio_id == folio.id)) or Decimal("0.00")
         outstanding += max(Decimal("0.00"), total - Decimal(paid))
+
     return {
         "business_date": business_date, "generated_at": datetime.utcnow(),
         "occupancy": {"total_rooms": len(rooms), "occupied_rooms": status_counts.get("occupied", 0), "reserved_rooms": status_counts.get("reserved", 0), "available_rooms": status_counts.get("available", 0), "dirty_rooms": status_counts.get("dirty", 0), "out_of_order_rooms": status_counts.get("out_of_order", 0), "in_house_reservations": in_house},
@@ -109,7 +134,7 @@ def build_xlsx(pack: Path, summary: dict, notes: str | None, closed_by: str, clo
         ("Guest Movement", [("Arrivals", summary["movement"]["arrivals"]), ("Departures", summary["movement"]["departures"]), ("No-shows", summary["movement"]["no_shows"])]),
         ("Revenue", [("Room revenue", float(summary["revenue"]["room"])), ("Food revenue", float(summary["revenue"]["food"])), ("Food service charge (10%)", float(summary["revenue"]["food_service_charge"])), ("Other revenue", float(summary["revenue"]["other"])), ("Gross revenue", float(summary["revenue"]["gross"]))]),
         ("Cashier", [(k.replace("_", " ").title(), float(v)) for k, v in summary["payments"].items()]),
-        ("Operating", [("Outstanding", float(summary["outstanding"])), ("Expenses", float(summary["expenses"])), ("Net operating", float(summary["net_operating"]))]),
+        ("Operating", [("Outstanding (end-of-day)", float(summary["outstanding"])), ("Expenses (today)", float(summary["expenses"])), ("Net operating (today)", float(summary["net_operating"]))]),
     ]; row = 7
     for title, items in sections:
         ws.cell(row, 1, title); ws.cell(row, 1).font = Font(bold=True); ws.cell(row, 1).fill = PatternFill("solid", fgColor="EDE9E0"); row += 1
@@ -129,7 +154,7 @@ def build_pdf(pack: Path, summary: dict, notes: str | None, closed_by: str, clos
     section("Guest Movement", [["Metric", "Value"], ["Arrivals", summary["movement"]["arrivals"]], ["Departures", summary["movement"]["departures"]], ["No-shows", summary["movement"]["no_shows"]]])
     section("Revenue", [["Metric", "Amount"], ["Room revenue", f"{summary['revenue']['room']:.2f}"], ["Food revenue", f"{summary['revenue']['food']:.2f}"], ["Food service charge (10%)", f"{summary['revenue']['food_service_charge']:.2f}"], ["Other revenue", f"{summary['revenue']['other']:.2f}"], ["Gross revenue", f"{summary['revenue']['gross']:.2f}"]])
     section("Cashier Collection", [["Payment Method", "Amount"]] + [[k.replace("_", " ").title(), f"{v:.2f}"] for k, v in summary["payments"].items()])
-    section("Operating", [["Metric", "Amount"], ["Outstanding", f"{summary['outstanding']:.2f}"], ["Expenses", f"{summary['expenses']:.2f}"], ["Net operating", f"{summary['net_operating']:.2f}"]])
+    section("Operating", [["Metric", "Amount"], ["Outstanding (end-of-day)", f"{summary['outstanding']:.2f}"], ["Expenses (today)", f"{summary['expenses']:.2f}"], ["Net operating (today)", f"{summary['net_operating']:.2f}"]])
     story.extend([Paragraph("Closing Notes", styles["Heading3"]), Paragraph((notes or "No closing notes recorded.").replace("\n", "<br/>"), styles["BodyText"]), Spacer(1, 9 * mm), Table([["Prepared / Closed By", "Head Office Received / Verified"], [closed_by, ""], ["Signature: __________________________", "Signature: __________________________"]], colWidths=[80 * mm, 80 * mm], style=TableStyle([("GRID", (0,0), (-1,-1), 0.5, colors.HexColor("#D0CCC3")), ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"), ("TOPPADDING", (0,0), (-1,-1), 7), ("BOTTOMPADDING", (0,0), (-1,-1), 7)]))])
     doc.build(story); return path
 
