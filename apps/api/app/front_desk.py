@@ -6,16 +6,19 @@ import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from .auth import require_roles
-from .billing import build_folio_response
 from .db import get_db
-from .models import AuditLog, Folio, Guest, Reservation, ReservationRoom, Room, RoomType, User
+from .models import AuditLog, Folio, FolioItem, Guest, Payment, Reservation, ReservationRoom, Room, RoomType, User
+from .financial_models import PaymentRefund
 from .pms_core import Stay
 
-router = APIRouter(prefix="/api/front-desk", tags=["front-desk-2"])
+router = APIRouter(prefix="/api", tags=["front-desk-2"])
+MONEY = Decimal("0.01")
+FOOD_CATEGORIES = {"food", "restaurant", "room_service", "beverage", "drink", "snack"}
+FOOD_SERVICE_CHARGE_RATE = Decimal("0.10")
 
 class WalkInRoom(BaseModel):
     room_id: int
@@ -32,11 +35,24 @@ class WalkInCreate(BaseModel):
     deposit_received: Decimal = Field(default=Decimal("0"), ge=0)
     notes: str | None = Field(default=None, max_length=1000)
 
+def money(value: Decimal) -> Decimal:
+    return Decimal(value).quantize(MONEY, rounding=ROUND_HALF_UP)
+
 def audit(db: Session, user_id: int, action: str, entity_type: str, entity_id: int | str, details: dict) -> None:
     db.add(AuditLog(user_id=user_id, action=action, entity_type=entity_type, entity_id=str(entity_id), details=json.dumps(details)))
 
-def money(value: Decimal) -> Decimal:
-    return Decimal(value).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+def item_line_total(item: FolioItem) -> Decimal:
+    gross = Decimal(item.quantity) * Decimal(item.unit_price)
+    return money(max(Decimal("0.00"), gross - Decimal(item.discount)))
+
+def folio_balance(db: Session, folio: Folio) -> Decimal:
+    items = db.scalars(select(FolioItem).where(FolioItem.folio_id == folio.id)).all()
+    payments = db.scalars(select(Payment).where(Payment.folio_id == folio.id)).all()
+    refunds = db.scalar(select(func.coalesce(func.sum(PaymentRefund.amount), 0)).where(PaymentRefund.folio_id == folio.id)) or Decimal("0.00")
+    food_net = money(sum((item_line_total(item) for item in items if item.category.strip().lower() in FOOD_CATEGORIES), Decimal("0.00")))
+    total = money(sum((item_line_total(item) for item in items), Decimal("0.00")) + money(food_net * FOOD_SERVICE_CHARGE_RATE))
+    paid = money(sum((Decimal(payment.amount) for payment in payments), Decimal("0.00")) - Decimal(refunds))
+    return money(max(Decimal("0.00"), total - paid))
 
 def available_for_walk_in(db: Session, room_id: int, business_date: date) -> bool:
     room = db.get(Room, room_id)
@@ -45,26 +61,26 @@ def available_for_walk_in(db: Session, room_id: int, business_date: date) -> boo
     conflict = db.scalar(select(ReservationRoom.id).join(Reservation, Reservation.id == ReservationRoom.reservation_id).where(ReservationRoom.room_id == room_id, Reservation.status.in_(("reserved", "checked_in")), Reservation.check_in <= business_date, Reservation.check_out > business_date).limit(1))
     return conflict is None
 
-@router.get("/search")
+@router.get("/front-desk/search")
 def universal_search(q: str = Query(min_length=1, max_length=160), db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception", "housekeeping"))):
-    pattern = f"%{q.strip()}%"
+    term = q.strip()
+    pattern = f"%{term}%"
     results: list[dict] = []
     for guest in db.scalars(select(Guest).where(or_(Guest.full_name.ilike(pattern), Guest.phone.ilike(pattern), Guest.email.ilike(pattern))).order_by(Guest.full_name).limit(20)).all():
         results.append({"type": "guest", "id": guest.id, "label": guest.full_name, "secondary": guest.phone or guest.email or "", "guest_id": guest.id})
-    for reservation, guest_name in db.execute(select(Reservation, Guest.full_name).join(Guest, Guest.id == Reservation.guest_id).where(Guest.full_name.ilike(pattern)).order_by(Reservation.id.desc()).limit(20)).all():
+    for reservation, guest_name in db.execute(select(Reservation, Guest.full_name).join(Guest, Guest.id == Reservation.guest_id).where(or_(Guest.full_name.ilike(pattern), Reservation.notes.ilike(pattern))).order_by(Reservation.id.desc()).limit(20)).all():
         results.append({"type": "reservation", "id": reservation.id, "label": f"Reservation #{reservation.id}", "secondary": f"{guest_name} · {reservation.check_in} → {reservation.check_out} · {reservation.status}", "guest_id": reservation.guest_id})
     for room in db.scalars(select(Room).where(Room.number.ilike(pattern)).order_by(Room.number).limit(20)).all():
         results.append({"type": "room", "id": room.id, "label": f"Room {room.number}", "secondary": room.status, "room_id": room.id})
-    for folio, reservation_id, guest_name in db.execute(select(Folio, Reservation.id, Guest.full_name).join(Reservation, Reservation.id == Folio.reservation_id).join(Guest, Guest.id == Reservation.guest_id).where(Guest.full_name.ilike(pattern)).order_by(Folio.id.desc()).limit(20)).all():
-        summary = build_folio_response(db, folio)
-        results.append({"type": "folio", "id": folio.id, "label": f"Folio #{folio.id}", "secondary": f"{guest_name} · balance PKR {summary.balance}", "folio_id": folio.id, "reservation_id": reservation_id})
-    return {"query": q.strip(), "results": results[:60]}
+    for folio, reservation_id, guest_name in db.execute(select(Folio, Reservation.id, Guest.full_name).join(Reservation, Reservation.id == Folio.reservation_id).join(Guest, Guest.id == Reservation.guest_id).where(or_(Guest.full_name.ilike(pattern), Reservation.id.cast(str).ilike(pattern))).order_by(Folio.id.desc()).limit(20)).all():
+        results.append({"type": "folio", "id": folio.id, "label": f"Folio #{folio.id}", "secondary": f"{guest_name} · balance PKR {folio_balance(db, folio)}", "folio_id": folio.id, "reservation_id": reservation_id})
+    return {"query": term, "results": results[:60]}
 
-@router.get("/room-rack")
+@router.get("/front-desk/room-rack")
 def room_rack(db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception", "housekeeping"))):
     return [{"room_id": room.id, "room_number": room.number, "room_type": room_type, "status": room.status} for room, room_type in db.execute(select(Room, RoomType.name).join(RoomType, RoomType.id == Room.room_type_id).order_by(Room.number)).all()]
 
-@router.post("/walk-ins", status_code=201)
+@router.post("/front-desk/walk-ins", status_code=201)
 def create_walk_in(payload: WalkInCreate, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "reception"))):
     business_date = date.today()
     if payload.check_out <= business_date:
@@ -108,3 +124,34 @@ def create_walk_in(payload: WalkInCreate, db: Session = Depends(get_db), user: U
     audit(db, user.id, "walk_in_check_in", "reservation", reservation.id, {"room_ids": room_ids, "guest_id": payload.guest_id, "deposit_received": str(payload.deposit_received)})
     db.commit()
     return {"reservation_id": reservation.id, "folio_id": folio.id, "stay_ids": [stay.id for stay in stays], "room_ids": room_ids, "guest_id": payload.guest_id, "check_in": business_date, "check_out": payload.check_out, "status": reservation.status, "estimated_total": money(estimated_total), "deposit_received": money(payload.deposit_received)}
+
+@router.post("/reservations/{reservation_id}/checkout", response_model=dict)
+def atomic_checkout(reservation_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "reception"))):
+    reservation = db.get(Reservation, reservation_id)
+    if not reservation:
+        raise HTTPException(status_code=404, detail="Reservation not found")
+    if reservation.status != "checked_in":
+        raise HTTPException(status_code=409, detail="Reservation is not checked in")
+    folio = db.scalar(select(Folio).where(Folio.reservation_id == reservation.id).order_by(Folio.id).limit(1))
+    if not folio:
+        raise HTTPException(status_code=409, detail="Reservation has no folio")
+    if folio.status != "open":
+        raise HTTPException(status_code=409, detail="Folio is already closed")
+    balance = folio_balance(db, folio)
+    if balance != 0:
+        raise HTTPException(status_code=409, detail=f"Guest must settle the folio before checkout; outstanding balance is {balance}")
+
+    room_ids = db.scalars(select(ReservationRoom.room_id).where(ReservationRoom.reservation_id == reservation.id)).all()
+    checkout_at = datetime.utcnow()
+    folio.status = "closed"
+    reservation.status = "checked_out"
+    for stay in db.scalars(select(Stay).where(Stay.reservation_id == reservation.id)).all():
+        stay.status = "completed"
+        stay.actual_check_out = stay.actual_check_out or checkout_at
+    for room_id in room_ids:
+        room = db.get(Room, room_id)
+        if room and room.status == "occupied":
+            room.status = "dirty"
+    audit(db, user.id, "atomic_checkout", "reservation", reservation.id, {"folio_id": folio.id, "room_ids": room_ids, "checked_out_at": checkout_at.isoformat()})
+    db.commit()
+    return {"reservation_id": reservation.id, "folio_id": folio.id, "status": reservation.status, "folio_status": folio.status, "room_ids": room_ids, "room_status": "dirty"}
