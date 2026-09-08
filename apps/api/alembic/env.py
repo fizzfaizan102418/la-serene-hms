@@ -7,6 +7,7 @@ from sqlalchemy import engine_from_config, pool
 from app.db import Base
 import app.models  # noqa: F401
 import app.pms_core  # noqa: F401 - registers legacy/core PMS tables on metadata
+import app.phase_a_completion  # noqa: F401 - registers Phase A routing table
 
 config = context.config
 if config.config_file_name is not None:
@@ -24,7 +25,7 @@ def run_migrations_offline() -> None:
     url = config.get_main_option("sqlalchemy.url")
     if not url:
         raise RuntimeError("HMS_DATABASE_URL must be set for PostgreSQL migrations")
-    context.configure(url=url, target_metadata=target_metadata, literal_binds=True, dialect_opts={"paramstyle": "named"}, compare_type=True)
+    context.configure(url=url, target_metadata=target_metadata, literal_binds=True, dialect_opts={"paramstyle": "named"})
     with context.begin_transaction():
         context.run_migrations()
 
