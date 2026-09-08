@@ -16,6 +16,7 @@ export default function CheckoutView({ folioId, guestName, reservationId, onComp
   const [busy, setBusy] = useState(false);
 
   async function load() {
+    await api(`/api/folios/${folioId}/room-charges`, { method: 'POST' });
     setFolio(await api<Folio>(`/api/folios/${folioId}`));
   }
   useEffect(() => { void load().catch(e => setMessage(e instanceof Error ? e.message : 'Unable to load folio')); }, [folioId]);
@@ -37,6 +38,7 @@ export default function CheckoutView({ folioId, guestName, reservationId, onComp
     if (!window.confirm(`Complete checkout for ${guestName}?`)) return;
     setBusy(true); setMessage('');
     try {
+      await api(`/api/folios/${folio.id}/close`, { method: 'POST' });
       await api(`/api/reservations/${reservationId}/check-out`, { method: 'POST' });
       setMessage('Checkout completed.');
       await printFolio();
@@ -56,7 +58,7 @@ export default function CheckoutView({ folioId, guestName, reservationId, onComp
     popup.document.close();
   }
 
-  if (!folio) return <section className="panel"><div className="panel-head"><h2>Checkout · {guestName}</h2><button className="link-button" onClick={onClose}>Close</button></div><p className="muted">Loading folio…</p></section>;
+  if (!folio) return <section className="panel"><div className="panel-head"><h2>Checkout · {guestName}</h2><button className="link-button" onClick={onClose}>Close</button></div><p className="muted">Loading folio and current room charges…</p></section>;
   return <section className="panel checkout-panel">
     <div className="panel-head"><div><p className="muted">Final settlement</p><h2>Checkout · {guestName}</h2></div><button className="link-button" onClick={onClose}>Back</button></div>
     {message && <p className="notice">{message}</p>}
