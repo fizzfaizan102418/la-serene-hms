@@ -58,6 +58,8 @@ class Reservation(TimestampMixin, Base):
     guest_id: Mapped[int] = mapped_column(ForeignKey("guests.id"))
     check_in: Mapped[date] = mapped_column(Date)
     check_out: Mapped[date] = mapped_column(Date)
+    checked_in_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    checked_out_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(30), default="reserved", index=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
