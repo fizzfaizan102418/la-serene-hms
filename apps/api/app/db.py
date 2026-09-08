@@ -49,6 +49,21 @@ def ensure_schema_compatibility() -> None:
                 connection.execute(text("ALTER TABLE folio_items ADD COLUMN stay_id INTEGER"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS idx_folio_items_stay ON folio_items(stay_id)"))
 
+            # Upgrade legacy room charges where the old description convention lets
+            # us unambiguously match a folio line to its room-level stay.
+            if "stays" in tables and "rooms" in tables:
+                connection.execute(text(
+                    "UPDATE folio_items "
+                    "SET stay_id = (SELECT s.id FROM stays s "
+                    "JOIN folios f ON f.id = folio_items.folio_id "
+                    "JOIN rooms r ON r.id = s.room_id "
+                    "WHERE s.reservation_id = f.reservation_id "
+                    "AND folio_items.category = 'room' "
+                    "AND folio_items.description LIKE 'Room ' || r.number || ' ·%' "
+                    "LIMIT 1) "
+                    "WHERE folio_items.category = 'room' AND folio_items.stay_id IS NULL"
+                ))
+
 
 def get_db():
     db = SessionLocal()
