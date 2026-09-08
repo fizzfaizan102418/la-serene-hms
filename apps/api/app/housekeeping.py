@@ -6,10 +6,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .auth import require_roles
+from .backup import router as backup_router
 from .db import get_db
 from .models import AuditLog, Reservation, ReservationRoom, Room, RoomType, User
 
 router = APIRouter(prefix="", tags=["housekeeping"])
+router.include_router(backup_router)
 
 
 @router.get("/housekeeping")
