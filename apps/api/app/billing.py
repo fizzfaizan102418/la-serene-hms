@@ -69,6 +69,48 @@ def reservation_folio(reservation_id: int, db: Session = Depends(get_db), _: Use
     return build_folio_response(db, folio)
 
 
+@router.get("/folios/{folio_id}/receipt")
+def get_receipt(folio_id: int, db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception"))):
+    folio = db.get(Folio, folio_id)
+    if not folio: raise HTTPException(status_code=404, detail="Folio not found")
+    reservation = db.get(Reservation, folio.reservation_id)
+    if not reservation: raise HTTPException(status_code=404, detail="Reservation not found")
+    guest = db.get(Guest, reservation.guest_id)
+    if not guest: raise HTTPException(status_code=404, detail="Guest not found")
+    summary = build_folio_response(db, folio)
+    room_ids = db.scalars(select(ReservationRoom.room_id).where(ReservationRoom.reservation_id == reservation.id)).all()
+    rooms = [db.get(Room, room_id) for room_id in room_ids]
+    return {
+        "folio_id": folio.id,
+        "reservation_id": reservation.id,
+        "status": folio.status,
+        "guest": {"full_name": guest.full_name, "phone": guest.phone, "email": guest.email, "address": guest.address},
+        "stay": {"check_in": reservation.check_in, "check_out": reservation.check_out, "nights": (reservation.check_out - reservation.check_in).days},
+        "rooms": [{"id": room.id, "number": room.number, "room_type_id": room.room_type_id} for room in rooms if room],
+        "items": [
+            {
+                "id": item.id,
+                "description": item.description,
+                "category": item.category,
+                "quantity": float(item.quantity),
+                "unit_price": float(item.unit_price),
+                "discount": float(item.discount),
+                "line_total": float(item.line_total),
+            }
+            for item in summary.items
+        ],
+        "payments": [
+            {"id": payment.id, "amount": float(payment.amount), "method": payment.method, "reference": payment.reference}
+            for payment in summary.payments
+        ],
+        "subtotal": float(summary.subtotal),
+        "discounts": float(summary.discounts),
+        "total": float(summary.total),
+        "paid": float(summary.paid),
+        "balance": float(summary.balance),
+    }
+
+
 @router.post("/folios/{folio_id}/room-charges", response_model=FolioResponse)
 def add_room_charges(folio_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "reception"))):
     folio = db.get(Folio, folio_id)
