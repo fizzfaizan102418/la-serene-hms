@@ -10,8 +10,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .auth import require_roles
-from .business_date import get_current_business_date
 from .db import get_db
+from .financial_authority import folio_ledger_summary
 from .financial_models import FolioItemWindow, Invoice, InvoiceSequence, PaymentRefund
 from .ledger import post_deposit_received, post_transaction
 from .models import AuditLog, BusinessDateState, DepositTransaction, FinancialTransaction, Folio, FolioItem, Guest, LedgerEntry, Payment, Reservation, ReservationRoom, Room, User
@@ -70,7 +70,7 @@ def food_service_charge(items: list[FolioItem]) -> Decimal:
 
 
 def folio_balance(db: Session, folio: Folio) -> tuple[Decimal, Decimal, Decimal]:
-    summary = __import__("app.financial_authority", fromlist=["folio_ledger_summary"]).folio_ledger_summary(db, folio.id)
+    summary = folio_ledger_summary(db, folio.id)
     return summary.total, summary.paid, summary.balance
 
 
@@ -308,7 +308,7 @@ def issue_invoice(folio_id: int, db: Session = Depends(get_db), user: User = Dep
     sequence.last_number += 1
     invoice = Invoice(invoice_no=f"INV-{business_date.year}-{sequence.last_number:06d}", folio_id=folio.id, reservation_id=folio.reservation_id, business_date=business_date, total=total, currency="PKR", status="issued", issued_by=user.id)
     db.add(invoice); db.flush(); audit(db, user.id, "issue", "invoice", invoice.id, {"invoice_no": invoice.invoice_no, "folio_id": folio_id, "total": str(total)}); db.commit(); db.refresh(invoice)
-    return {"id": invoice.id, "invoice_no": invoice.invoice_no, "folio_id": invoice.folio_id, "reservation_id": invoice.reservation_id, "business_date": invoice.business_date, "total": invoice.total, "currency": invoice.currency, "status": invoice.status, "issued_at": invoice.issued_at}
+    return {"id": invoice.id, "invoice_no": invoice.invoice_no, "folio_id": folio.id, "reservation_id": invoice.reservation_id, "business_date": invoice.business_date, "total": invoice.total, "currency": invoice.currency, "status": invoice.status, "issued_at": invoice.issued_at}
 
 
 @router.get("/ledger/reconciliation")
@@ -317,32 +317,19 @@ def ledger_reconciliation(business_date: date | None = None, db: Session = Depen
     transactions = db.scalars(select(FinancialTransaction).where(FinancialTransaction.business_date == target_date, FinancialTransaction.status == "posted")).all()
     transaction_ids = [tx.id for tx in transactions]
     entry_rows = db.scalars(select(LedgerEntry).where(LedgerEntry.transaction_id.in_(transaction_ids))).all() if transaction_ids else []
+    tx_types = {tx.id: tx.transaction_type for tx in transactions}
     debits = money(sum((e.amount for e in entry_rows if e.direction == "debit"), Decimal("0.00")))
     credits = money(sum((e.amount for e in entry_rows if e.direction == "credit"), Decimal("0.00")))
-    ledger_revenue = money(
-        sum((e.amount for e in entry_rows if e.direction == "credit" and e.account.startswith("Revenue -")), Decimal("0.00"))
-        - sum((e.amount for e in entry_rows if e.direction == "debit" and e.account.startswith("Revenue -")), Decimal("0.00"))
-    )
-    charge_receivable = money(
-        sum((e.amount for e in entry_rows if e.account == "Guest Receivables" and e.direction == "debit" and next((tx.transaction_type for tx in transactions if tx.id == e.transaction_id), None) in {"folio_charge", "service_charge"}), Decimal("0.00"))
-        - sum((e.amount for e in entry_rows if e.account == "Guest Receivables" and e.direction == "credit" and next((tx.transaction_type for tx in transactions if tx.id == e.transaction_id), None) == "folio_discount"), Decimal("0.00"))
-    )
-    payment_cash = money(sum((e.amount for e in entry_rows if e.account in CASH_ACCOUNTS and e.direction == "debit" and next((tx.transaction_type for tx in transactions if tx.id == e.transaction_id), None) == "folio_payment"), Decimal("0.00")))
-    refund_cash = money(sum((e.amount for e in entry_rows if e.account in CASH_ACCOUNTS and e.direction == "credit" and next((tx.transaction_type for tx in transactions if tx.id == e.transaction_id), None) == "payment_refund"), Decimal("0.00")))
-    settlement_receivable = money(
-        sum((e.amount for e in entry_rows if e.account == "Guest Receivables" and e.direction == "credit" and next((tx.transaction_type for tx in transactions if tx.id == e.transaction_id), None) in {"folio_payment", "deposit_applied"}), Decimal("0.00"))
-        - sum((e.amount for e in entry_rows if e.account == "Guest Receivables" and e.direction == "debit" and next((tx.transaction_type for tx in transactions if tx.id == e.transaction_id), None) == "payment_refund"), Decimal("0.00"))
-    )
+    ledger_revenue = money(sum((e.amount for e in entry_rows if e.direction == "credit" and e.account.startswith("Revenue -")), Decimal("0.00")) - sum((e.amount for e in entry_rows if e.direction == "debit" and e.account.startswith("Revenue -")), Decimal("0.00")))
+    charge_receivable = money(sum((e.amount for e in entry_rows if e.account == "Guest Receivables" and e.direction == "debit" and tx_types.get(e.transaction_id) in {"folio_charge", "service_charge"}), Decimal("0.00")) - sum((e.amount for e in entry_rows if e.account == "Guest Receivables" and e.direction == "credit" and tx_types.get(e.transaction_id) == "folio_discount"), Decimal("0.00")))
+    payment_cash = money(sum((e.amount for e in entry_rows if e.account in CASH_ACCOUNTS and e.direction == "debit" and tx_types.get(e.transaction_id) == "folio_payment"), Decimal("0.00")))
+    refund_cash = money(sum((e.amount for e in entry_rows if e.account in CASH_ACCOUNTS and e.direction == "credit" and tx_types.get(e.transaction_id) == "payment_refund"), Decimal("0.00")))
+    settlement_receivable = money(sum((e.amount for e in entry_rows if e.account == "Guest Receivables" and e.direction == "credit" and tx_types.get(e.transaction_id) in {"folio_payment", "deposit_applied"}), Decimal("0.00")) - sum((e.amount for e in entry_rows if e.account == "Guest Receivables" and e.direction == "debit" and tx_types.get(e.transaction_id) == "payment_refund"), Decimal("0.00")))
     net_cash = money(payment_cash - refund_cash)
     charge_difference = money(ledger_revenue - charge_receivable)
     settlement_difference = money(net_cash - settlement_receivable)
     status = "balanced" if debits == credits and charge_difference == Decimal("0.00") and settlement_difference == Decimal("0.00") else "review"
-    return {
-        "business_date": target_date,
-        "ledger": {"transactions": len(transactions), "debits": debits, "credits": credits, "balanced": debits == credits, "revenue_credits": ledger_revenue, "cash_debits": payment_cash, "cash_credits": refund_cash, "net_cash": net_cash},
-        "authority": {"folio_charges": charge_receivable, "payments": payment_cash, "refunds": refund_cash, "net_cash": net_cash},
-        "reconciliation": {"charge_difference": charge_difference, "settlement_difference": settlement_difference, "status": status},
-    }
+    return {"business_date": target_date, "ledger": {"transactions": len(transactions), "debits": debits, "credits": credits, "balanced": debits == credits, "revenue_credits": ledger_revenue, "cash_debits": payment_cash, "cash_credits": refund_cash, "net_cash": net_cash}, "authority": {"folio_charges": charge_receivable, "payments": payment_cash, "refunds": refund_cash, "net_cash": net_cash}, "reconciliation": {"charge_difference": charge_difference, "settlement_difference": settlement_difference, "status": status}}
 
 
 @router.get("/night-audit/reconciliation")
@@ -426,7 +413,7 @@ def create_deposit_with_ledger(
         if transaction_type == "received":
             tx = post_deposit_received(db, stay_id=stay.id, folio_id=folio.id if folio else None, reservation_id=stay.reservation_id, deposit_id=deposit.id, amount=amount, method=payload.get("payment_method"), created_by=user.id)
         elif transaction_type == "refunded":
-            tx = post_transaction(db, transaction_type="deposit_refunded", description=f"Deposit refund #{deposit.id}", reference_type="deposit", reference_id=str(deposit.id), folio_id=folio.id if folio else None, reservation_id=stay.reservation_id, created_by=user.id, idempotency_key=financial_key, lines=[{"account": "Guest Deposits", "direction": "debit", "amount": amount, "stay_id": stay.id}, {"account": cash_account, "direction": "credit", "amount": amount, "stay_id": stay.id, "payment_method": payload.get("payment_method")}])
+            tx = post_transaction(db, transaction_type="deposit_refund", description=f"Deposit refund #{deposit.id}", reference_type="deposit", reference_id=str(deposit.id), folio_id=folio.id if folio else None, reservation_id=stay.reservation_id, created_by=user.id, idempotency_key=financial_key, lines=[{"account": "Guest Deposits", "direction": "debit", "amount": amount, "stay_id": stay.id}, {"account": cash_account, "direction": "credit", "amount": amount, "stay_id": stay.id, "payment_method": payload.get("payment_method")}])
         elif transaction_type == "applied":
             tx = post_transaction(db, transaction_type="deposit_applied", description=f"Deposit applied #{deposit.id}", reference_type="deposit", reference_id=str(deposit.id), folio_id=folio.id if folio else None, reservation_id=stay.reservation_id, created_by=user.id, idempotency_key=financial_key, lines=[{"account": "Guest Deposits", "direction": "debit", "amount": amount, "stay_id": stay.id}, {"account": "Guest Receivables", "direction": "credit", "amount": amount, "folio_id": folio.id if folio else None, "stay_id": stay.id}])
         else:
