@@ -134,23 +134,25 @@ class FinancialControlsRegressionTests(unittest.TestCase):
         return stay
 
     def test_full_and_partial_refund_limits_are_enforced(self):
-        first = PaymentRefund(
-            payment_id=self.payment.id,
-            folio_id=self.folio_a.id,
-            amount=30,
-            method="cash",
-            reason="Partial refund",
-            created_by=self.user.id,
-        )
-        self.db.add(first)
-        self.db.commit()
+        first_payload = type(
+            "RefundPayload",
+            (),
+            {
+                "payment_id": self.payment.id,
+                "amount": Decimal("30.00"),
+                "method": "cash",
+                "reference": None,
+                "reason": "Partial refund",
+            },
+        )()
+        first = refund_payment(self.folio_a.id, first_payload, "regression-refund-1", self.db, self.user)
 
         total, paid, balance = folio_balance(self.db, self.folio_a)
         self.assertEqual(total, Decimal("100.00"))
         self.assertEqual(paid, Decimal("70.00"))
         self.assertEqual(balance, Decimal("30.00"))
 
-        over_refund = Decimal(self.payment.amount) - Decimal(first.amount) + Decimal("0.01")
+        over_refund = Decimal(self.payment.amount) - Decimal(first["amount"]) + Decimal("0.01")
         payload = type(
             "RefundPayload",
             (),
@@ -163,7 +165,7 @@ class FinancialControlsRegressionTests(unittest.TestCase):
             },
         )()
         with self.assertRaises(HTTPException):
-            refund_payment(self.folio_a.id, payload, self.db, self.user)
+            refund_payment(self.folio_a.id, payload, "regression-refund-2", self.db, self.user)
 
     def test_reversal_is_immutable_and_cannot_be_reversed_twice(self):
         tx = post_transaction(
