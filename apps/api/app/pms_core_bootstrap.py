@@ -1,9 +1,7 @@
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from .db import engine
-from .pms_core import Stay
-from .models import Reservation, ReservationRoom
+from .db import IS_SQLITE, engine
 
 
 TRIGGER_SQL = """
@@ -36,9 +34,9 @@ END;
 
 
 def ensure_pms_core_schema() -> None:
-    """Idempotently prepare PMS Core 2 tables, history, and lifecycle triggers."""
-    # The app uses create_all for compatibility with existing local SQLite installs.
-    # Importing the models registers the new tables before create_all executes.
+    """Prepare legacy SQLite lifecycle synchronization during the migration period."""
+    if not IS_SQLITE:
+        return
     with engine.begin() as connection:
         connection.exec_driver_sql(
             "INSERT INTO stays (reservation_id, room_id, guest_id, status, check_in, check_out, actual_check_in, actual_check_out, agreed_rate, discount_percent, discount_amount, payment_due_policy, deposit_required, deposit_received, notes, created_at, updated_at) "
@@ -53,7 +51,4 @@ def ensure_pms_core_schema() -> None:
 
 
 def sync_existing_stays(db: Session) -> None:
-    """Ensure ORM-visible data is available after a restore or manual database copy."""
-    # This is intentionally a lightweight consistency check; the database triggers
-    # remain the primary source of lifecycle synchronization.
     db.execute(text("SELECT 1 FROM stays LIMIT 1"))
