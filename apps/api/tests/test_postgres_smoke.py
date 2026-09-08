@@ -1,4 +1,3 @@
-import os
 import unittest
 from datetime import date
 from decimal import Decimal
@@ -7,6 +6,9 @@ from sqlalchemy import inspect, select
 from sqlalchemy.orm import Session
 
 from app.db import engine
+# Register the full PMS model metadata before exercising ledger ORM mappers.
+# Stay lives in pms_core.py rather than models.py and LedgerEntry references it.
+from app.pms_core import Stay  # noqa: F401
 from app.ledger import post_transaction
 from app.models import BusinessDateState, FinancialTransaction, LedgerEntry
 
