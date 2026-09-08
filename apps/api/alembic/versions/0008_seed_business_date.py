@@ -13,10 +13,14 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Raw migration SQL does not invoke SQLAlchemy ORM defaults. SQLite also
+    # cannot rely on the model's Python-side default for this INSERT, so every
+    # required timestamp column is supplied explicitly.
     op.execute(
         sa.text(
-            "INSERT INTO business_date_state (id, current_business_date, opened_at) "
-            "SELECT 1, CURRENT_DATE, CURRENT_TIMESTAMP "
+            "INSERT INTO business_date_state "
+            "(id, current_business_date, opened_at, updated_at) "
+            "SELECT 1, CURRENT_DATE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP "
             "WHERE NOT EXISTS (SELECT 1 FROM business_date_state)"
         )
     )
