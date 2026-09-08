@@ -18,6 +18,8 @@ Offline-first Hotel Management System (PMS/HMS) for La Serene Hotel.
 - Front desk arrivals, departures and in-house workflow
 - Check-in, check-out and room-transfer transactions
 - Automatic folio creation for reservations
+- Billing, folios, payments and printable receipts
+- Dedicated housekeeping operations board
 - Audit logging for important operational mutations
 - Offline-first deployment target
 
@@ -78,6 +80,29 @@ Availability is date-aware: a room can have a future reservation without being i
 
 The lifecycle deliberately keeps business state transitions in FastAPI rather than in React. The frontend only requests an operation and renders the API result.
 
+## Billing & folio workflow
+
+1. Open **Billing** as `admin` or `reception`.
+2. Select a folio created automatically with a reservation.
+3. Add room charges once the stay details are known; the API calculates room charges from the reservation nights and room type rate.
+4. Add additional services, food and beverage, adjustments or other charges as required.
+5. Record cash, card or bank-transfer payments. The API prevents payments from exceeding the outstanding balance.
+6. Close a folio only when the outstanding balance is zero.
+7. Use **Print receipt** for a print-ready guest folio containing charges, payments and totals.
+
+All financial totals are calculated server-side with decimal currency rounding. The frontend renders API results and does not own financial business rules.
+
+## Housekeeping workflow
+
+1. Open **Housekeeping** as `admin`, `reception` or `housekeeping`.
+2. The board highlights rooms needing cleaning and shows their operational priority.
+3. A housekeeping user can mark a `dirty` room clean, moving it to `available`.
+4. An admin can take a non-occupied/non-reserved room out of order for maintenance or other operational exceptions.
+5. An admin can release an `out_of_order` room back to `available`.
+6. Housekeeping actions are written to the audit log and the board can be refreshed without leaving the module.
+
+The dedicated housekeeping board is role-aware. Billing navigation and billing refresh calls are hidden from housekeeping users so a restricted financial endpoint cannot disrupt the rest of the application.
+
 ## Architecture
 The frontend never owns financial/business calculations. Business rules live in the API/domain layer and database writes are transactional.
 
@@ -103,7 +128,23 @@ Housekeeping
 Room available
 ```
 
-Billing, folio finalization, payment capture and daily closing will be added as the next financial milestone. Those calculations will remain server-side and transactional.
+Billing follows the stay lifecycle in parallel:
+
+```text
+Reservation
+   ↓
+Open folio
+   ↓
+Room + service charges
+   ↓
+Payments
+   ↓
+Balance = 0
+   ↓
+Close folio
+   ↓
+Print receipt
+```
 
 ## Product direction
 This system starts with a clean operational database. Existing Excel files are reference material for workflow and validation design; historical spreadsheet data is not imported into the operational database.
