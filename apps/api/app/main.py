@@ -11,6 +11,7 @@ from .db import Base, engine, get_db
 from .housekeeping import router as housekeeping_router
 from .models import AuditLog, Folio, Guest, Reservation, ReservationRoom, Role, Room, RoomType, User
 from .pms_core import router as pms_core_router
+from .phase_a_workflows import router as phase_a_workflows_router
 from .pms_core_bootstrap import ensure_pms_core_schema
 from .reservation_workflows import router as reservation_workflows_router
 from .schemas import (
@@ -27,6 +28,7 @@ app.include_router(billing_router)
 app.include_router(housekeeping_router)
 app.include_router(pms_core_router)
 app.include_router(reservation_workflows_router)
+app.include_router(phase_a_workflows_router)
 
 
 def write_audit(db: Session, action: str, entity_type: str, entity_id: int | None = None, details: dict | None = None, user_id: int | None = None):
