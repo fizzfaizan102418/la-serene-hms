@@ -12,26 +12,34 @@ from .auth import require_roles
 from .db import get_db
 from .financial_models import PaymentRefund
 from .ledger import post_transaction
-from .models import BusinessDateState, FinancialTransaction, Folio, FolioItem, LedgerEntry, Payment, User
+from .models import AuditLog, BusinessDateState, DepositTransaction, FinancialTransaction, Folio, FolioItem, LedgerEntry, Payment, Reservation, Stay, User
 from .pms_core import FolioWindow
 
 router = APIRouter(prefix="/finance", tags=["finance-controls"])
 MONEY = Decimal("0.01")
+CASH_ACCOUNTS = {"cash": "Cash", "card": "Card Clearing", "bank_transfer": "Bank", "other": "Other Payment"}
 
 
 def money(value: Decimal | int | float | str) -> Decimal:
     return Decimal(str(value)).quantize(MONEY, rounding=ROUND_HALF_UP)
 
 
-def require_open_business_date(db: Session, business_date: date | None = None) -> date:
+def current_business_date(db: Session) -> date:
+    state = db.get(BusinessDateState, 1)
+    return state.current_business_date if state else date.today()
+
+
+def require_open_business_date(db: Session) -> date:
     state = db.get(BusinessDateState, 1)
     current = state.current_business_date if state else date.today()
-    target = business_date or current
-    if target != current:
-        raise HTTPException(status_code=409, detail=f"Business date {current.isoformat()} is open; financial postings cannot be backdated or future-dated")
-    if state and state.last_closed_at is not None:
-        raise HTTPException(status_code=409, detail="Current business date is closed")
+    if state and state.last_closed_at is not None and state.last_closed_at.date() >= current:
+        raise HTTPException(status_code=409, detail=f"Business date {current.isoformat()} is closed for posting")
     return current
+
+
+def audit(db: Session, user_id: int, action: str, entity_type: str, entity_id: int | str, details: dict) -> None:
+    import json
+    db.add(AuditLog(user_id=user_id, action=action, entity_type=entity_type, entity_id=str(entity_id), details=json.dumps(details)))
 
 
 class FolioTransferCreate(BaseModel):
@@ -40,15 +48,20 @@ class FolioTransferCreate(BaseModel):
     reason: str = Field(min_length=1, max_length=300)
 
 
+class DepositPostCreate(BaseModel):
+    transaction_type: str = Field(pattern="^(received|applied|refunded)$")
+    amount: Decimal = Field(gt=0)
+    payment_method: str | None = Field(default=None, max_length=30)
+    reference: str | None = Field(default=None, max_length=100)
+    notes: str | None = None
+
+
 @router.get("/period")
 def period_status(db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception"))):
     state = db.get(BusinessDateState, 1)
-    return {
-        "business_date": state.current_business_date if state else date.today(),
-        "opened_at": state.opened_at if state else None,
-        "last_closed_at": state.last_closed_at if state else None,
-        "posting_open": not bool(state and state.last_closed_at),
-    }
+    current = state.current_business_date if state else date.today()
+    closed = bool(state and state.last_closed_at and state.last_closed_at.date() >= current)
+    return {"business_date": current, "opened_at": state.opened_at if state else None, "last_closed_at": state.last_closed_at if state else None, "posting_open": not closed}
 
 
 @router.post("/folio-transfers", status_code=201)
@@ -65,105 +78,113 @@ def transfer_folio_item(payload: FolioTransferCreate, db: Session = Depends(get_
         raise HTTPException(status_code=400, detail="Source and destination folios must be different")
     if source.status != "open" or destination.status != "open":
         raise HTTPException(status_code=409, detail="Both source and destination folios must be open")
-
     amount = money(max(Decimal("0.00"), Decimal(item.quantity) * Decimal(item.unit_price) - Decimal(item.discount)))
-    reservation_source = db.get(type(destination.reservation), source.reservation_id) if False else None
-    source_reservation_id = source.reservation_id
-    destination_reservation_id = destination.reservation_id
-
-    item.folio_id = destination.id
+    source_id, destination_id = source.id, destination.id
+    item.folio_id = destination_id
     db.flush()
-    post_transaction(
-        db,
-        transaction_type="folio_transfer",
-        description=f"Transfer folio item #{item.id}: {source.id} -> {destination.id}",
-        reference_type="folio_item",
-        reference_id=str(item.id),
-        folio_id=destination.id,
-        reservation_id=destination_reservation_id,
-        created_by=user.id,
-        lines=[
-            {"account": "Guest Receivables", "direction": "debit", "amount": amount, "folio_id": destination.id},
-            {"account": "Guest Receivables", "direction": "credit", "amount": amount, "folio_id": source.id},
-        ],
-    )
-    from .models import AuditLog
-    import json
-    db.add(AuditLog(user_id=user.id, action="transfer", entity_type="folio_item", entity_id=str(item.id), details=json.dumps({"from_folio_id": source.id, "to_folio_id": destination.id, "amount": str(amount), "reason": payload.reason})))
+    post_transaction(db, transaction_type="folio_transfer", description=f"Transfer folio item #{item.id}: {source_id} -> {destination_id}", reference_type="folio_item", reference_id=str(item.id), folio_id=destination_id, reservation_id=destination.reservation_id, created_by=user.id, lines=[{"account": "Guest Receivables", "direction": "debit", "amount": amount, "folio_id": destination_id}, {"account": "Guest Receivables", "direction": "credit", "amount": amount, "folio_id": source_id}])
+    audit(db, user.id, "transfer", "folio_item", item.id, {"from_folio_id": source_id, "to_folio_id": destination_id, "amount": str(amount), "reason": payload.reason})
     db.commit()
-    return {"item_id": item.id, "from_folio_id": source.id, "to_folio_id": destination.id, "amount": amount, "reason": payload.reason}
+    return {"item_id": item.id, "from_folio_id": source_id, "to_folio_id": destination_id, "amount": amount, "reason": payload.reason}
+
+
+@router.post("/stays/{stay_id}/deposit-transactions", status_code=201)
+def post_deposit(stay_id: int, payload: DepositPostCreate, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "reception"))):
+    business_date = require_open_business_date(db)
+    stay = db.get(Stay, stay_id)
+    if not stay:
+        raise HTTPException(status_code=404, detail="Stay not found")
+    folio = db.scalar(select(Folio).where(Folio.reservation_id == stay.reservation_id))
+    reservation = db.get(Reservation, stay.reservation_id)
+    current = Decimal("0.00")
+    rows = db.scalars(select(DepositTransaction).where(DepositTransaction.stay_id == stay_id)).all()
+    for row in rows:
+        current += row.amount if row.transaction_type == "received" else -row.amount if row.transaction_type in {"applied", "refunded"} else row.amount
+    if payload.transaction_type == "received":
+        new_balance = money(current + payload.amount)
+        if stay.deposit_required > 0 and new_balance > stay.deposit_required:
+            raise HTTPException(status_code=409, detail="Deposit received exceeds required deposit")
+    else:
+        new_balance = money(current - payload.amount)
+        if new_balance < 0:
+            raise HTTPException(status_code=409, detail="Deposit transaction exceeds available deposit balance")
+    tx = DepositTransaction(stay_id=stay_id, folio_id=folio.id if folio else None, transaction_type=payload.transaction_type, amount=money(payload.amount), payment_method=payload.payment_method, reference=payload.reference, notes=payload.notes, created_by=user.id)
+    db.add(tx); db.flush()
+    if payload.transaction_type == "received":
+        cash_account = CASH_ACCOUNTS.get(payload.payment_method or "other", "Other Payment")
+        lines = [{"account": cash_account, "direction": "debit", "amount": tx.amount, "folio_id": tx.folio_id, "stay_id": stay_id, "payment_method": payload.payment_method}, {"account": "Guest Deposits", "direction": "credit", "amount": tx.amount, "folio_id": tx.folio_id, "stay_id": stay_id, "payment_method": payload.payment_method}]
+    elif payload.transaction_type == "applied":
+        lines = [{"account": "Guest Deposits", "direction": "debit", "amount": tx.amount, "folio_id": tx.folio_id, "stay_id": stay_id}, {"account": "Guest Receivables", "direction": "credit", "amount": tx.amount, "folio_id": tx.folio_id, "stay_id": stay_id}]
+    else:
+        cash_account = CASH_ACCOUNTS.get(payload.payment_method or "other", "Other Payment")
+        lines = [{"account": "Guest Deposits", "direction": "debit", "amount": tx.amount, "folio_id": tx.folio_id, "stay_id": stay_id}, {"account": cash_account, "direction": "credit", "amount": tx.amount, "folio_id": tx.folio_id, "stay_id": stay_id, "payment_method": payload.payment_method}]
+    post_transaction(db, transaction_type=f"deposit_{payload.transaction_type}", description=f"Deposit {payload.transaction_type} #{tx.id}", reference_type="deposit", reference_id=str(tx.id), folio_id=tx.folio_id, reservation_id=reservation.id if reservation else None, created_by=user.id, business_date=business_date, lines=lines)
+    stay.deposit_received = new_balance
+    audit(db, user.id, "deposit", "stay", stay_id, {"deposit_id": tx.id, "transaction_type": payload.transaction_type, "amount": str(tx.amount), "new_balance": str(new_balance)})
+    db.commit(); db.refresh(tx)
+    return {"id": tx.id, "stay_id": stay_id, "transaction_type": tx.transaction_type, "amount": tx.amount, "balance": new_balance}
+
+
+@router.get("/stays/{stay_id}/deposit-ledger")
+def deposit_ledger(stay_id: int, db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception"))):
+    if not db.get(Stay, stay_id):
+        raise HTTPException(status_code=404, detail="Stay not found")
+    rows = db.scalars(select(DepositTransaction).where(DepositTransaction.stay_id == stay_id).order_by(DepositTransaction.created_at, DepositTransaction.id)).all()
+    balance = Decimal("0.00"); result = []
+    for row in rows:
+        balance += row.amount if row.transaction_type == "received" else -row.amount if row.transaction_type in {"applied", "refunded"} else row.amount
+        result.append({"id": row.id, "transaction_type": row.transaction_type, "amount": row.amount, "payment_method": row.payment_method, "reference": row.reference, "notes": row.notes, "created_at": row.created_at, "balance": money(balance)})
+    return {"stay_id": stay_id, "balance": money(balance), "transactions": result}
 
 
 @router.get("/reports/trial-balance")
 def trial_balance(business_date: date | None = None, db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception"))):
-    state = db.get(BusinessDateState, 1)
-    target = business_date or (state.current_business_date if state else date.today())
-    rows = db.execute(
-        select(LedgerEntry.account, LedgerEntry.direction, func.coalesce(func.sum(LedgerEntry.amount), 0))
-        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
-        .where(FinancialTransaction.business_date == target, FinancialTransaction.status.in_(("posted", "reversed")))
-        .group_by(LedgerEntry.account, LedgerEntry.direction)
-        .order_by(LedgerEntry.account, LedgerEntry.direction)
-    ).all()
+    target = business_date or current_business_date(db)
+    rows = db.execute(select(LedgerEntry.account, LedgerEntry.direction, func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(FinancialTransaction.business_date == target, FinancialTransaction.status.in_(("posted", "reversed"))).group_by(LedgerEntry.account, LedgerEntry.direction).order_by(LedgerEntry.account, LedgerEntry.direction)).all()
     accounts: dict[str, dict[str, Decimal]] = {}
     for account, direction, amount in rows:
         accounts.setdefault(account, {"debit": Decimal("0.00"), "credit": Decimal("0.00")})[direction] = money(amount)
-    result = []
-    total_debit = Decimal("0.00")
-    total_credit = Decimal("0.00")
+    result = []; total_debit = Decimal("0.00"); total_credit = Decimal("0.00")
     for account, values in accounts.items():
-        total_debit += values["debit"]
-        total_credit += values["credit"]
+        total_debit += values["debit"]; total_credit += values["credit"]
         result.append({"account": account, "debit": money(values["debit"]), "credit": money(values["credit"]), "net": money(values["debit"] - values["credit"])})
     return {"business_date": target, "balanced": money(total_debit) == money(total_credit), "total_debit": money(total_debit), "total_credit": money(total_credit), "accounts": result}
 
 
 @router.get("/reports/payment-reconciliation")
 def payment_reconciliation(business_date: date | None = None, db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception"))):
-    state = db.get(BusinessDateState, 1)
-    target = business_date or (state.current_business_date if state else date.today())
+    target = business_date or current_business_date(db)
     transactions = db.scalars(select(FinancialTransaction).where(FinancialTransaction.business_date == target, FinancialTransaction.status == "posted", FinancialTransaction.transaction_type.in_(("folio_payment", "payment_refund")))).all()
-    received: dict[str, Decimal] = {}
-    refunded: dict[str, Decimal] = {}
+    received: dict[str, Decimal] = {}; refunded: dict[str, Decimal] = {}
     for tx in transactions:
         entries = db.scalars(select(LedgerEntry).where(LedgerEntry.transaction_id == tx.id)).all()
-        cash_entries = [e for e in entries if e.account in {"Cash", "Card Clearing", "Bank", "Other Payment"}]
-        amount = money(sum((e.amount for e in cash_entries), Decimal("0.00")))
-        method = next((e.payment_method for e in cash_entries if e.payment_method), "other")
-        target_map = refunded if tx.transaction_type == "payment_refund" else received
-        target_map[method] = target_map.get(method, Decimal("0.00")) + amount
+        cash_entries = [entry for entry in entries if entry.account in {"Cash", "Card Clearing", "Bank", "Other Payment"}]
+        amount = money(sum((entry.amount for entry in cash_entries), Decimal("0.00")))
+        method = next((entry.payment_method for entry in cash_entries if entry.payment_method), "other")
+        destination = refunded if tx.transaction_type == "payment_refund" else received
+        destination[method] = destination.get(method, Decimal("0.00")) + amount
     methods = sorted(set(received) | set(refunded))
-    rows = [{"method": m, "received": money(received.get(m, 0)), "refunded": money(refunded.get(m, 0)), "net": money(received.get(m, 0) - refunded.get(m, 0))} for m in methods]
+    rows = [{"method": method, "received": money(received.get(method, 0)), "refunded": money(refunded.get(method, 0)), "net": money(received.get(method, 0) - refunded.get(method, 0))} for method in methods]
     return {"business_date": target, "methods": rows, "received_total": money(sum(received.values(), Decimal("0.00"))), "refunded_total": money(sum(refunded.values(), Decimal("0.00"))), "net_total": money(sum(received.values(), Decimal("0.00")) - sum(refunded.values(), Decimal("0.00")))}
 
 
 @router.get("/reports/revenue")
 def revenue_report(business_date: date | None = None, db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception"))):
-    state = db.get(BusinessDateState, 1)
-    target = business_date or (state.current_business_date if state else date.today())
-    rows = db.execute(
-        select(LedgerEntry.account, func.coalesce(func.sum(LedgerEntry.amount), 0))
-        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
-        .where(FinancialTransaction.business_date == target, FinancialTransaction.status == "posted", LedgerEntry.direction == "credit", LedgerEntry.account.like("Revenue - %"))
-        .group_by(LedgerEntry.account)
-        .order_by(LedgerEntry.account)
-    ).all()
+    target = business_date or current_business_date(db)
+    rows = db.execute(select(LedgerEntry.account, func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(FinancialTransaction.business_date == target, FinancialTransaction.status == "posted", LedgerEntry.direction == "credit", LedgerEntry.account.like("Revenue - %")).group_by(LedgerEntry.account).order_by(LedgerEntry.account)).all()
     lines = [{"account": account, "amount": money(amount)} for account, amount in rows]
-    return {"business_date": target, "revenue": lines, "total": money(sum((row["amount"] for row in lines), Decimal("0.00")))}
+    return {"business_date": target, "revenue": lines, "total": money(sum((line["amount"] for line in lines), Decimal("0.00")))}
 
 
 @router.get("/reports/accounts-receivable")
 def accounts_receivable(db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception"))):
-    folios = db.scalars(select(Folio)).all()
-    result = []
-    total = Decimal("0.00")
+    folios = db.scalars(select(Folio)).all(); result = []; total = Decimal("0.00")
     for folio in folios:
         charges = db.scalar(select(func.coalesce(func.sum(FolioItem.quantity * FolioItem.unit_price - FolioItem.discount), 0)).where(FolioItem.folio_id == folio.id)) or 0
         payments = db.scalar(select(func.coalesce(func.sum(Payment.amount), 0)).where(Payment.folio_id == folio.id)) or 0
         refunds = db.scalar(select(func.coalesce(func.sum(PaymentRefund.amount), 0)).where(PaymentRefund.folio_id == folio.id)) or 0
         balance = money(max(Decimal("0.00"), Decimal(charges) - Decimal(payments) + Decimal(refunds)))
         if balance > 0:
-            total += balance
-            result.append({"folio_id": folio.id, "reservation_id": folio.reservation_id, "balance": balance, "status": folio.status})
+            total += balance; result.append({"folio_id": folio.id, "reservation_id": folio.reservation_id, "balance": balance, "status": folio.status})
     result.sort(key=lambda row: row["balance"], reverse=True)
     return {"total_outstanding": money(total), "folios": result}
