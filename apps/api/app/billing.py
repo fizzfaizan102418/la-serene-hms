@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from .auth import require_roles
 from .db import get_db
 from .housekeeping import router as housekeeping_router
+from .ledger import post_folio_charge, post_folio_payment, router as ledger_router
 from .models import AuditLog, Folio, FolioItem, Guest, Payment, Reservation, ReservationRoom, Room, User
 from .night_audit import router as night_audit_router
 from .pms_core import Stay
@@ -23,6 +24,7 @@ router.include_router(housekeeping_router)
 router.include_router(reports_router)
 router.include_router(night_audit_router)
 router.include_router(pms_domain_router)
+router.include_router(ledger_router)
 
 
 def money(value: Decimal) -> Decimal:
@@ -113,7 +115,9 @@ def add_room_charges(folio_id: int, db: Session = Depends(get_db), user: User = 
         if delta_nights <= 0: continue
         room = db.get(Room, stay.room_id)
         if not room: raise HTTPException(status_code=409, detail=f"Stay {stay.id} references an invalid room")
-        db.add(FolioItem(folio_id=folio.id, stay_id=stay.id, description=f"Room {room.number} · stay #{stay.id} · {int(delta_nights)} night(s)", category="room", quantity=delta_nights, unit_price=money(stay.agreed_rate), discount=Decimal("0.00")))
+        item = FolioItem(folio_id=folio.id, stay_id=stay.id, description=f"Room {room.number} · stay #{stay.id} · {int(delta_nights)} night(s)", category="room", quantity=delta_nights, unit_price=money(stay.agreed_rate), discount=Decimal("0.00"))
+        db.add(item); db.flush()
+        post_folio_charge(db, folio_id=folio.id, reservation_id=reservation.id, item_id=item.id, amount=item_line_total(item), stay_id=stay.id, category=item.category, created_by=user.id)
         posted += 1
     if posted:
         audit(db, user.id, "add_room_charges", "folio", folio.id, {"reservation_id": reservation.id, "stay_ids": [stay.id for stay in stays], "room_charges_posted": posted}); db.commit(); db.refresh(folio)
@@ -127,7 +131,10 @@ def add_folio_item(folio_id: int, payload: FolioItemCreate, db: Session = Depend
     if folio.status != "open": raise HTTPException(status_code=409, detail="Folio is already closed")
     gross = money(payload.quantity * payload.unit_price)
     if payload.discount > gross: raise HTTPException(status_code=400, detail="Discount cannot exceed the line amount")
-    item = FolioItem(folio_id=folio_id, **payload.model_dump()); db.add(item); db.flush(); audit(db, user.id, "add", "folio_item", item.id, {"folio_id": folio_id, "description": item.description, "amount": str(item_line_total(item)), "category": item.category}); db.commit(); db.refresh(item)
+    item = FolioItem(folio_id=folio_id, **payload.model_dump()); db.add(item); db.flush()
+    reservation = db.get(Reservation, folio.reservation_id)
+    post_folio_charge(db, folio_id=folio_id, reservation_id=reservation.id if reservation else 0, item_id=item.id, amount=item_line_total(item), stay_id=item.stay_id, category=item.category, created_by=user.id)
+    audit(db, user.id, "add", "folio_item", item.id, {"folio_id": folio_id, "description": item.description, "amount": str(item_line_total(item)), "category": item.category}); db.commit(); db.refresh(item)
     return FolioItemResponse(id=item.id, description=item.description, category=item.category, quantity=item.quantity, unit_price=item.unit_price, discount=item.discount, line_total=item_line_total(item))
 
 
@@ -161,7 +168,10 @@ def add_payment(folio_id: int, payload: PaymentCreate, db: Session = Depends(get
     if folio.status != "open": raise HTTPException(status_code=409, detail="Folio is already closed")
     summary = build_folio_response(db, folio)
     if payload.amount > summary.balance: raise HTTPException(status_code=400, detail=f"Payment exceeds outstanding balance of {summary.balance}")
-    payment = Payment(folio_id=folio_id, amount=money(payload.amount), method=payload.method, reference=payload.reference); db.add(payment); db.flush(); audit(db, user.id, "payment", "folio", folio_id, {"amount": str(payment.amount), "method": payment.method, "reference": payment.reference}); db.commit(); db.refresh(payment); return payment
+    reservation = db.get(Reservation, folio.reservation_id)
+    payment = Payment(folio_id=folio_id, amount=money(payload.amount), method=payload.method, reference=payload.reference); db.add(payment); db.flush()
+    post_folio_payment(db, folio_id=folio_id, reservation_id=reservation.id if reservation else 0, payment_id=payment.id, amount=payment.amount, method=payment.method, created_by=user.id)
+    audit(db, user.id, "payment", "folio", folio_id, {"amount": str(payment.amount), "method": payment.method, "reference": payment.reference}); db.commit(); db.refresh(payment); return payment
 
 
 @router.post("/folios/{folio_id}/close", response_model=FolioResponse)
