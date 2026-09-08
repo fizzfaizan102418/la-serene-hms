@@ -6,7 +6,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.db import Base
-from app.models import BusinessDateState, DepositTransaction, FinancialTransaction, Folio, Guest, Payment, Reservation, ReservationRoom, Role, Room, RoomType, StayOccupant, User
+from app.models import BusinessDateState, DepositTransaction, FinancialTransaction, Folio, FolioItem, Guest, Payment, Reservation, ReservationRoom, Role, Room, RoomType, StayOccupant, User
 from app.phase_a_completion import (
     DepositApplyCreate,
     DepositRefundCreate,
@@ -26,7 +26,6 @@ from app.phase_a_completion import (
 )
 from app.pms_core import Stay
 from app.stay_lifecycle import StayFolioWindow
-from app.models import FolioItem
 
 
 class PhaseACompletionTests(unittest.TestCase):
@@ -41,6 +40,9 @@ class PhaseACompletionTests(unittest.TestCase):
         self.db.add(role)
         self.db.flush()
         self.user = User(username=f"phase-a-{id(self)}", password_hash="test", role_id=role.id)
+        self.db.add(self.user)
+        self.db.flush()
+
         guests = [Guest(full_name="Booking Guest"), Guest(full_name="Ahmed"), Guest(full_name="Bilal"), Guest(full_name="Usman")]
         self.db.add_all(guests)
         self.db.flush()
@@ -65,7 +67,6 @@ class PhaseACompletionTests(unittest.TestCase):
         self.db.add(window)
         self.db.add(DepositTransaction(stay_id=stay.id, transaction_type="received", amount=Decimal("200.00"), payment_method="cash", reference="DEP-SEED", created_by=self.user.id))
         self.db.add(BusinessDateState(id=1, current_business_date=date(2026, 9, 8)))
-        self.db.add(self.user)
         self.db.commit()
         self.db.expire_all()
         self.reservation = self.db.get(Reservation, reservation.id)
@@ -77,6 +78,7 @@ class PhaseACompletionTests(unittest.TestCase):
         self.guest_ahmed = self.db.get(Guest, guests[1].id)
         self.guest_bilal = self.db.get(Guest, guests[2].id)
         self.guest_usman = self.db.get(Guest, guests[3].id)
+        self.user = self.db.get(User, self.user.id)
 
     def tearDown(self):
         self.db.rollback()
