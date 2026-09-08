@@ -10,7 +10,7 @@ from .db import get_db
 from .housekeeping import router as housekeeping_router
 from .models import AuditLog, Folio, FolioItem, Guest, Payment, Reservation, ReservationRoom, Room, RoomType, User
 from .reports import router as reports_router
-from .schemas import BillingSummaryResponse, FolioItemCreate, FolioItemResponse, FolioResponse, PaymentCreate, PaymentResponse
+from .schemas import BillingSummaryResponse, FolioItemCreate, FolioItemResponse, FolioItemUpdate, FolioResponse, PaymentCreate, PaymentResponse
 
 router = APIRouter(prefix="/api", tags=["billing"])
 MONEY = Decimal("0.01")
@@ -138,6 +138,25 @@ def add_folio_item(folio_id: int, payload: FolioItemCreate, db: Session = Depend
     if payload.discount > gross: raise HTTPException(status_code=400, detail="Discount cannot exceed the line amount")
     item = FolioItem(folio_id=folio_id, **payload.model_dump()); db.add(item); db.flush()
     audit(db, user.id, "add", "folio_item", item.id, {"folio_id": folio_id, "description": item.description, "amount": str(item_line_total(item)), "category": item.category})
+    db.commit(); db.refresh(item)
+    return FolioItemResponse(id=item.id, description=item.description, category=item.category, quantity=item.quantity, unit_price=item.unit_price, discount=item.discount, line_total=item_line_total(item))
+
+
+@router.patch("/folios/{folio_id}/items/{item_id}", response_model=FolioItemResponse)
+def update_folio_item(folio_id: int, item_id: int, payload: FolioItemUpdate, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "reception"))):
+    folio = db.get(Folio, folio_id)
+    item = db.get(FolioItem, item_id)
+    if not folio or not item or item.folio_id != folio_id: raise HTTPException(status_code=404, detail="Folio item not found")
+    if folio.status != "open": raise HTTPException(status_code=409, detail="Folio is already closed")
+    gross = money(payload.quantity * payload.unit_price)
+    if payload.discount > gross: raise HTTPException(status_code=400, detail="Discount cannot exceed the line amount")
+    old = {"description": item.description, "category": item.category, "quantity": str(item.quantity), "unit_price": str(item.unit_price), "discount": str(item.discount)}
+    item.description = payload.description
+    item.category = payload.category
+    item.quantity = payload.quantity
+    item.unit_price = payload.unit_price
+    item.discount = payload.discount
+    audit(db, user.id, "update", "folio_item", item.id, {"folio_id": folio_id, "from": old, "to": payload.model_dump(mode="json")})
     db.commit(); db.refresh(item)
     return FolioItemResponse(id=item.id, description=item.description, category=item.category, quantity=item.quantity, unit_price=item.unit_price, discount=item.discount, line_total=item_line_total(item))
 
