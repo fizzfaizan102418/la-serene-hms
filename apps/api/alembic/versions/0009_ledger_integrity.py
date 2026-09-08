@@ -90,7 +90,6 @@ def upgrade() -> None:
                    OR NEW.created_by IS DISTINCT FROM OLD.created_by
                    OR NEW.reversal_of_id IS DISTINCT FROM OLD.reversal_of_id
                    OR NEW.created_at <> OLD.created_at
-                   OR NEW.updated_at <> OLD.updated_at
                 THEN
                     RAISE EXCEPTION 'Financial transaction fields are immutable';
                 END IF;
