@@ -11,8 +11,8 @@ from .financial_models import PaymentRefund
 from .financial_ops import router as financial_ops_router
 from .front_desk import router as front_desk_router
 from .housekeeping import router as housekeeping_router
-from .financial_authority import folio_ledger_summary, has_posted_folio_item_transaction
-from .ledger import post_folio_charge, post_folio_payment, router as ledger_router
+from .financial_authority import folio_ledger_summary, has_posted_folio_item_transaction, post_folio_charge_authoritative
+from .ledger import post_folio_payment, router as ledger_router
 from .models import AuditLog, Folio, FolioItem, Guest, Payment, Reservation, ReservationRoom, Room, StayRateSegment, User
 from .night_audit import router as night_audit_router
 from .pms_core import Stay
@@ -91,8 +91,7 @@ def reservation_folio(reservation_id: int, db: Session = Depends(get_db), _: Use
     if not db.get(Reservation, reservation_id): raise HTTPException(status_code=404, detail="Reservation not found")
     folio = db.scalar(select(Folio.id).where(Folio.reservation_id == reservation_id))
     if not folio: raise HTTPException(status_code=404, detail="Folio not found")
-    folio_obj = db.get(Folio, folio)
-    return build_folio_response(db, folio_obj)
+    return build_folio_response(db, db.get(Folio, folio))
 
 
 @router.get("/folios/{folio_id}/receipt")
@@ -143,7 +142,7 @@ def add_room_charges(folio_id: int, db: Session = Depends(get_db), user: User = 
             discount_total = money(Decimal(segment.discount_amount) * billable)
             item = FolioItem(folio_id=folio.id, stay_id=stay.id, description=f"Room {room.number} · stay #{stay.id} · {int(billable)} night(s) · {segment.from_date}→{segment.to_date}", category="room", quantity=billable, unit_price=gross_rate, discount=discount_total)
             db.add(item); db.flush()
-            post_folio_charge(db, folio_id=folio.id, reservation_id=reservation.id, item_id=item.id, amount=item_line_total(item), stay_id=stay.id, category=item.category, created_by=user.id, gross_amount=money(gross_rate * billable), discount_amount=discount_total)
+            post_folio_charge_authoritative(db, folio_id=folio.id, reservation_id=reservation.id, item_id=item.id, amount=item_line_total(item), stay_id=stay.id, category=item.category, created_by=user.id, gross_amount=money(gross_rate * billable), discount_amount=discount_total)
             posted += 1
             remaining_nights -= billable
             if remaining_nights <= 0: break
@@ -161,7 +160,7 @@ def add_folio_item(folio_id: int, payload: FolioItemCreate, db: Session = Depend
     if payload.discount > gross: raise HTTPException(status_code=400, detail="Discount cannot exceed the line amount")
     item = FolioItem(folio_id=folio_id, **payload.model_dump()); db.add(item); db.flush()
     reservation = db.get(Reservation, folio.reservation_id)
-    post_folio_charge(db, folio_id=folio_id, reservation_id=reservation.id if reservation else 0, item_id=item.id, amount=item_line_total(item), stay_id=item.stay_id, category=item.category, created_by=user.id, gross_amount=gross, discount_amount=money(payload.discount))
+    post_folio_charge_authoritative(db, folio_id=folio_id, reservation_id=reservation.id if reservation else 0, item_id=item.id, amount=item_line_total(item), stay_id=item.stay_id, category=item.category, created_by=user.id, gross_amount=gross, discount_amount=money(payload.discount))
     audit(db, user.id, "add", "folio_item", item.id, {"folio_id": folio_id, "description": item.description, "amount": str(item_line_total(item)), "category": item.category}); db.commit(); db.refresh(item)
     return FolioItemResponse(id=item.id, description=item.description, category=item.category, quantity=item.quantity, unit_price=item.unit_price, discount=item.discount, line_total=item_line_total(item))
 
@@ -171,8 +170,7 @@ def update_folio_item(folio_id: int, item_id: int, payload: FolioItemUpdate, db:
     folio = db.get(Folio, folio_id); item = db.get(FolioItem, item_id)
     if not folio or not item or item.folio_id != folio_id: raise HTTPException(status_code=404, detail="Folio item not found")
     if folio.status != "open": raise HTTPException(status_code=409, detail="Folio is already closed")
-    if has_posted_folio_item_transaction(db, item.id):
-        raise HTTPException(status_code=409, detail="Posted folio charges are immutable; use a ledger adjustment or reversal")
+    if has_posted_folio_item_transaction(db, item.id): raise HTTPException(status_code=409, detail="Posted folio charges are immutable; use a ledger adjustment or reversal")
     if item.stay_id is not None: raise HTTPException(status_code=409, detail="Stay-generated room charges cannot be manually edited")
     gross = money(payload.quantity * payload.unit_price)
     if payload.discount > gross: raise HTTPException(status_code=400, detail="Discount cannot exceed the line amount")
@@ -186,8 +184,7 @@ def remove_folio_item(folio_id: int, item_id: int, db: Session = Depends(get_db)
     folio = db.get(Folio, folio_id); item = db.get(FolioItem, item_id)
     if not folio or not item or item.folio_id != folio_id: raise HTTPException(status_code=404, detail="Folio item not found")
     if folio.status != "open": raise HTTPException(status_code=409, detail="Folio is already closed")
-    if has_posted_folio_item_transaction(db, item.id):
-        raise HTTPException(status_code=409, detail="Posted folio charges are immutable; use a ledger adjustment or reversal")
+    if has_posted_folio_item_transaction(db, item.id): raise HTTPException(status_code=409, detail="Posted folio charges are immutable; use a ledger adjustment or reversal")
     if item.stay_id is not None: raise HTTPException(status_code=409, detail="Stay-generated room charges cannot be manually removed")
     db.delete(item); audit(db, user.id, "remove", "folio_item", item_id, {"folio_id": folio_id}); db.commit()
 
@@ -201,8 +198,7 @@ def add_payment(folio_id: int, payload: PaymentCreate, idempotency_key: str | No
         from .models import FinancialTransaction
         existing = db.scalar(select(FinancialTransaction).where(FinancialTransaction.idempotency_key == idempotency_key))
         if existing:
-            if existing.transaction_type != "folio_payment" or existing.folio_id != folio_id:
-                raise HTTPException(status_code=409, detail="Idempotency key is already bound to another financial operation")
+            if existing.transaction_type != "folio_payment" or existing.folio_id != folio_id: raise HTTPException(status_code=409, detail="Idempotency key is already bound to another financial operation")
             payment = db.get(Payment, int(existing.reference_id)) if existing.reference_id else None
             if not payment: raise HTTPException(status_code=409, detail="Idempotent payment record is missing")
             return payment
@@ -211,8 +207,7 @@ def add_payment(folio_id: int, payload: PaymentCreate, idempotency_key: str | No
     reservation = db.get(Reservation, folio.reservation_id)
     payment = Payment(folio_id=folio_id, amount=payload.amount, method=payload.method, reference=payload.reference); db.add(payment); db.flush()
     tx = post_folio_payment(db, folio_id=folio.id, reservation_id=reservation.id if reservation else 0, payment_id=payment.id, amount=payload.amount, method=payload.method, created_by=user.id)
-    if idempotency_key and tx.idempotency_key != idempotency_key:
-        raise HTTPException(status_code=409, detail="Financial idempotency key was not applied")
+    if idempotency_key and tx.idempotency_key != idempotency_key: raise HTTPException(status_code=409, detail="Financial idempotency key was not applied")
     audit(db, user.id, "payment", "folio", folio_id, {"amount": str(payload.amount), "method": payload.method, "reference": payload.reference}); db.commit(); db.refresh(payment)
     return payment
 
