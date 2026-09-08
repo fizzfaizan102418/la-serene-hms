@@ -17,6 +17,7 @@ type Props = { reservationId: number; rooms: Room[]; api: Api; onRefresh: () => 
 
 const money = (value: string | number | undefined) => Number(value ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const nights = (a: string, b: string) => Math.max(0, Math.round((new Date(`${b}T00:00:00`).getTime() - new Date(`${a}T00:00:00`).getTime()) / 86400000));
+const latestSegment = (segments: RateSegment[]) => segments.length ? segments[segments.length - 1] : undefined;
 
 export default function StayLifecyclePanel({ reservationId, rooms, api, onRefresh }: Props) {
  const [overview, setOverview] = useState<Overview | null>(null);
@@ -39,7 +40,7 @@ export default function StayLifecyclePanel({ reservationId, rooms, api, onRefres
  useEffect(() => { void load(); }, [reservationId]);
 
  const availableRooms = useMemo(() => rooms.filter(room => room.status === 'available'), [rooms]);
- const canSplit = overview && overview.stays.length > 1 && overview.stays.some(stay => stay.status === 'reserved');
+ const canSplit = Boolean(overview && overview.stays.length > 1 && overview.stays.some(stay => stay.status === 'reserved'));
 
  async function run(action: () => Promise<void>, success: string) {
   setBusy(true); setError(''); setMessage('');
@@ -134,7 +135,7 @@ export default function StayLifecyclePanel({ reservationId, rooms, api, onRefres
    {overview.stays.map(stay => <article key={stay.id} style={{ border: '1px solid #dedbd2', borderRadius: 12, padding: 14, background: '#fbfaf7' }}>
     <div style={{ display: 'flex', gap: 10, justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap' }}>
      <div><strong>Stay #{stay.id} · Room {stay.room_number ?? stay.room_id}</strong><div className="muted">{stay.check_in} → {stay.check_out} · {nights(stay.check_in, stay.check_out)} night(s) · {stay.status}</div></div>
-     <div style={{ textAlign: 'right' }}><div><strong>PKR {money(stay.rate_segments.at(-1)?.net_rate ?? stay.agreed_rate)}</strong> / night</div><small className="muted">Deposit {money(stay.deposit_received)} / {money(stay.deposit_required)}</small></div>
+     <div style={{ textAlign: 'right' }}><div><strong>PKR {money((latestSegment(stay.rate_segments)?.net_rate) ?? stay.agreed_rate)}</strong> / night</div><small className="muted">Deposit {money(stay.deposit_received)} / {money(stay.deposit_required)}</small></div>
     </div>
 
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 12, marginTop: 12 }}>
@@ -150,6 +151,7 @@ export default function StayLifecyclePanel({ reservationId, rooms, api, onRefres
     <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
      <input value={windowNames[stay.id] || ''} onChange={e => setWindowNames(prev => ({ ...prev, [stay.id]: e.target.value }))} placeholder="New folio window name"/><button className="secondary-button small-button" disabled={busy || !windowNames[stay.id]} onClick={() => void createWindow(stay)}>Add folio window</button>
     </div>
+    {stay.folio_windows && <div style={{ marginTop: 8 }}><small className="muted">Folio windows: {stay.folio_windows.map(window => `${window.name} (${window.status})`).join(' · ') || 'None'}</small></div>}
    </article>)}
   </div>
 
