@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from .auth import require_roles
 from .db import get_db
+from .financial_authority import folio_ledger_summary
 from .financial_models import PaymentRefund
 from .models import AuditLog, BusinessDateState, DepositTransaction, FinancialTransaction, Folio, FolioItem, LedgerEntry, Payment, Reservation, User
 from .pms_core import FolioWindow, Stay
@@ -91,9 +92,7 @@ def post_deposit(stay_id: int, payload: DepositPostCreate, db: Session = Depends
     stay = db.get(Stay, stay_id)
     if not stay: raise HTTPException(status_code=404, detail="Stay not found")
     folio = db.scalar(select(Folio).where(Folio.reservation_id == stay.reservation_id)); reservation = db.get(Reservation, stay.reservation_id)
-    current = Decimal("0.00")
-    for row in db.scalars(select(DepositTransaction).where(DepositTransaction.stay_id == stay_id)).all():
-        current += row.amount if row.transaction_type in {"received", "adjusted"} else -row.amount
+    current = _stay_deposit_ledger_balance(db, stay_id)
     if payload.transaction_type == "received":
         new_balance = money(current + payload.amount)
         if stay.deposit_required > 0 and new_balance > stay.deposit_required: raise HTTPException(status_code=409, detail="Deposit received exceeds required deposit")
@@ -111,10 +110,10 @@ def post_deposit(stay_id: int, payload: DepositPostCreate, db: Session = Depends
         account = CASH_ACCOUNTS.get(payload.payment_method or "other", "Other Payment")
         lines = [{"account": "Guest Deposits", "direction": "debit", "amount": tx.amount, "folio_id": tx.folio_id, "stay_id": stay_id}, {"account": account, "direction": "credit", "amount": tx.amount, "folio_id": tx.folio_id, "stay_id": stay_id, "payment_method": payload.payment_method}]
     post_to_ledger(db, transaction_type=f"deposit_{payload.transaction_type}", description=f"Deposit {payload.transaction_type} #{tx.id}", reference_type="deposit", reference_id=str(tx.id), folio_id=tx.folio_id, reservation_id=reservation.id if reservation else None, created_by=user.id, business_date=business_date, lines=lines)
-    stay.deposit_received = new_balance
-    audit(db, user.id, "deposit", "stay", stay_id, {"deposit_id": tx.id, "transaction_type": payload.transaction_type, "amount": str(tx.amount), "new_balance": str(new_balance)})
+    stay.deposit_received = _stay_deposit_ledger_balance(db, stay_id)
+    audit(db, user.id, "deposit", "stay", stay_id, {"deposit_id": tx.id, "transaction_type": payload.transaction_type, "amount": str(tx.amount), "new_balance": str(stay.deposit_received)})
     db.commit(); db.refresh(tx)
-    return {"id": tx.id, "stay_id": stay_id, "transaction_type": tx.transaction_type, "amount": tx.amount, "balance": new_balance}
+    return {"id": tx.id, "stay_id": stay_id, "transaction_type": tx.transaction_type, "amount": tx.amount, "balance": stay.deposit_received}
 
 
 @router.get("/stays/{stay_id}/deposit-ledger")
@@ -125,7 +124,13 @@ def deposit_ledger(stay_id: int, db: Session = Depends(get_db), _: User = Depend
     for row in rows:
         balance += row.amount if row.transaction_type in {"received", "adjusted"} else -row.amount
         result.append({"id": row.id, "transaction_type": row.transaction_type, "amount": row.amount, "payment_method": row.payment_method, "reference": row.reference, "notes": row.notes, "created_at": row.created_at, "balance": money(balance)})
-    return {"stay_id": stay_id, "balance": money(balance), "transactions": result}
+    return {"stay_id": stay_id, "balance": _stay_deposit_ledger_balance(db, stay_id), "transactions": result}
+
+
+def _stay_deposit_ledger_balance(db: Session, stay_id: int) -> Decimal:
+    credits = db.scalar(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(LedgerEntry.stay_id == stay_id, LedgerEntry.account == "Guest Deposits", LedgerEntry.direction == "credit", FinancialTransaction.status == "posted")) or Decimal("0.00")
+    debits = db.scalar(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(LedgerEntry.stay_id == stay_id, LedgerEntry.account == "Guest Deposits", LedgerEntry.direction == "debit", FinancialTransaction.status == "posted")) or Decimal("0.00")
+    return money(max(Decimal("0.00"), Decimal(credits) - Decimal(debits)))
 
 
 @router.get("/reports/trial-balance")
@@ -163,10 +168,9 @@ def revenue_report(business_date: date | None = None, db: Session = Depends(get_
 def accounts_receivable(db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception"))):
     folios = db.scalars(select(Folio)).all(); result = []; total = Decimal("0.00")
     for folio in folios:
-        charges = db.scalar(select(func.coalesce(func.sum(FolioItem.quantity * FolioItem.unit_price - FolioItem.discount), 0)).where(FolioItem.folio_id == folio.id)) or 0
-        payments = db.scalar(select(func.coalesce(func.sum(Payment.amount), 0)).where(Payment.folio_id == folio.id)) or 0
-        refunds = db.scalar(select(func.coalesce(func.sum(PaymentRefund.amount), 0)).where(PaymentRefund.folio_id == folio.id)) or 0
-        balance = money(max(Decimal("0.00"), Decimal(charges) - Decimal(payments) + Decimal(refunds)))
-        if balance > 0: total += balance; result.append({"folio_id": folio.id, "reservation_id": folio.reservation_id, "balance": balance, "status": folio.status})
+        balance = folio_ledger_summary(db, folio.id).balance
+        if balance > 0:
+            total += balance
+            result.append({"folio_id": folio.id, "reservation_id": folio.reservation_id, "balance": balance, "status": folio.status})
     result.sort(key=lambda row: row["balance"], reverse=True)
     return {"total_outstanding": money(total), "folios": result}
