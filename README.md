@@ -13,7 +13,9 @@ Offline-first Hotel Management System (PMS/HMS) for La Serene Hotel.
 - Room inventory management
 - Operational room statuses: available, reserved, occupied, dirty and out of order
 - Visual room map with status filtering and housekeeping controls
-- Guest and reservation foundation with automatic folio creation
+- Guest records with search by name, phone or email
+- Reservation register with date-aware room availability
+- Automatic folio creation for reservations
 - Audit logging for important operational mutations
 - Offline-first deployment target
 
@@ -54,10 +56,21 @@ On a new database, open the web app and create the first administrator account. 
 
 Room status changes are audited. A reserved room cannot be manually returned to `available` while it is still linked to an active reservation.
 
+## Guests & Reservations workflow
+
+1. Open **Guests** and create a guest record.
+2. Search guests by name, phone or email before creating duplicates.
+3. Open **Reservations** and enter check-in/check-out dates.
+4. Use **Check availability** to retrieve rooms that are operationally usable and do not overlap another active reservation.
+5. Select one or more rooms and create the reservation.
+6. The API creates the reservation, room links and an open folio in one database transaction and records an audit event.
+
+Availability is date-aware: a room can have a future reservation without being incorrectly treated as unavailable for every other date range. `dirty` and `out_of_order` rooms are excluded from new bookings.
+
 ## Architecture
 The frontend never owns financial/business calculations. Business rules live in the API/domain layer and database writes are transactional.
 
 Authentication is enforced server-side. The frontend stores the short-lived bearer token locally only to maintain the current local session; API permissions are determined by the authenticated user's role.
 
 ## Product direction
-This system starts with a clean database. Existing Excel files are reference material only; historical spreadsheet data is not imported into the operational database.
+This system starts with a clean operational database. Existing Excel files are reference material for workflow and validation design; historical spreadsheet data is not imported into the operational database.
