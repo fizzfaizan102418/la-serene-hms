@@ -52,6 +52,89 @@ def ensure_default_rate_segment(db: Session, stay: Stay) -> list[StayRateSegment
     return [segment]
 
 
+def replace_rate_segment(db: Session, stay: Stay, payload: "RateSegmentCreate", user_id: int) -> StayRateSegment:
+    """Insert a rate interval and split any existing intervals it replaces.
+
+    Intervals are treated as half-open: [from_date, to_date). This allows
+    adjacent segments such as 8-10 and 10-12 without overlap.
+    """
+    overlapping = db.scalars(
+        select(StayRateSegment)
+        .where(
+            StayRateSegment.stay_id == stay.id,
+            StayRateSegment.from_date < payload.to_date,
+            StayRateSegment.to_date > payload.from_date,
+        )
+        .order_by(StayRateSegment.from_date, StayRateSegment.id)
+    ).all()
+
+    for existing in overlapping:
+        left_from = existing.from_date
+        left_to = min(existing.to_date, payload.from_date)
+        right_from = max(existing.from_date, payload.to_date)
+        right_to = existing.to_date
+
+        old_values = {
+            "rate": existing.rate,
+            "discount_percent": existing.discount_percent,
+            "discount_amount": existing.discount_amount,
+            "rate_plan": existing.rate_plan,
+            "source": existing.source,
+            "notes": existing.notes,
+        }
+        db.delete(existing)
+        db.flush()
+
+        if left_from < left_to:
+            db.add(
+                StayRateSegment(
+                    stay_id=stay.id,
+                    from_date=left_from,
+                    to_date=left_to,
+                    **old_values,
+                )
+            )
+        if right_from < right_to:
+            db.add(
+                StayRateSegment(
+                    stay_id=stay.id,
+                    from_date=right_from,
+                    to_date=right_to,
+                    **old_values,
+                )
+            )
+
+    discount = money(payload.rate * payload.discount_percent / Decimal("100")) if payload.discount_percent else money(payload.discount_amount)
+    discount = min(discount, money(payload.rate))
+    segment = StayRateSegment(
+        stay_id=stay.id,
+        from_date=payload.from_date,
+        to_date=payload.to_date,
+        rate=money(payload.rate),
+        discount_percent=payload.discount_percent,
+        discount_amount=discount,
+        rate_plan=payload.rate_plan,
+        source=payload.source,
+        notes=payload.notes,
+    )
+    db.add(segment)
+    db.flush()
+    audit(
+        db,
+        user_id,
+        "replace",
+        "stay_rate_segment",
+        segment.id,
+        {
+            "stay_id": stay.id,
+            "from_date": str(payload.from_date),
+            "to_date": str(payload.to_date),
+            "rate": str(payload.rate),
+        },
+    )
+    return segment
+
+
 class OccupantCreate(BaseModel):
     guest_id: int
     role: str = Field(default="occupant", max_length=30)
@@ -135,11 +218,8 @@ def create_rate_segment(stay_id: int, payload: RateSegmentCreate, db: Session = 
     if not stay: raise HTTPException(status_code=404, detail="Stay not found")
     if payload.to_date <= payload.from_date or payload.from_date < stay.check_in or payload.to_date > stay.check_out: raise HTTPException(status_code=400, detail="Rate segment dates must be within the stay")
     if payload.discount_percent and payload.discount_amount: raise HTTPException(status_code=400, detail="Use either percentage or fixed discount")
-    if db.scalar(select(StayRateSegment.id).where(StayRateSegment.stay_id == stay_id, StayRateSegment.from_date < payload.to_date, StayRateSegment.to_date > payload.from_date)): raise HTTPException(status_code=409, detail="Rate segment overlaps an existing segment")
-    discount = money(payload.rate * payload.discount_percent / Decimal("100")) if payload.discount_percent else money(payload.discount_amount)
-    discount = min(discount, money(payload.rate))
-    segment = StayRateSegment(stay_id=stay_id, from_date=payload.from_date, to_date=payload.to_date, rate=money(payload.rate), discount_percent=payload.discount_percent, discount_amount=discount, rate_plan=payload.rate_plan, source=payload.source, notes=payload.notes)
-    db.add(segment); db.flush(); audit(db, user.id, "create", "stay_rate_segment", segment.id, {"stay_id": stay_id}); db.commit()
+    segment = replace_rate_segment(db, stay, payload, user.id)
+    db.commit()
     return {"id": segment.id, "stay_id": segment.stay_id, "from_date": segment.from_date, "to_date": segment.to_date, "rate": segment.rate, "discount_percent": segment.discount_percent, "discount_amount": segment.discount_amount, "rate_plan": segment.rate_plan, "source": segment.source, "notes": segment.notes}
 
 
