@@ -15,7 +15,7 @@ from .models import AuditLog, Folio, FolioItem, Guest, Payment, Reservation, Res
 from .financial_models import PaymentRefund
 from .pms_core import Stay
 
-router = APIRouter(prefix="/api", tags=["front-desk-2"])
+router = APIRouter(tags=["front-desk-2"])
 MONEY = Decimal("0.01")
 FOOD_CATEGORIES = {"food", "restaurant", "room_service", "beverage", "drink", "snack"}
 FOOD_SERVICE_CHARGE_RATE = Decimal("0.10")
@@ -72,7 +72,7 @@ def universal_search(q: str = Query(min_length=1, max_length=160), db: Session =
         results.append({"type": "reservation", "id": reservation.id, "label": f"Reservation #{reservation.id}", "secondary": f"{guest_name} · {reservation.check_in} → {reservation.check_out} · {reservation.status}", "guest_id": reservation.guest_id})
     for room in db.scalars(select(Room).where(Room.number.ilike(pattern)).order_by(Room.number).limit(20)).all():
         results.append({"type": "room", "id": room.id, "label": f"Room {room.number}", "secondary": room.status, "room_id": room.id})
-    for folio, reservation_id, guest_name in db.execute(select(Folio, Reservation.id, Guest.full_name).join(Reservation, Reservation.id == Folio.reservation_id).join(Guest, Guest.id == Reservation.guest_id).where(or_(Guest.full_name.ilike(pattern), Reservation.id.cast(str).ilike(pattern))).order_by(Folio.id.desc()).limit(20)).all():
+    for folio, reservation_id, guest_name in db.execute(select(Folio, Reservation.id, Guest.full_name).join(Reservation, Reservation.id == Folio.reservation_id).join(Guest, Guest.id == Reservation.guest_id).where(Guest.full_name.ilike(pattern)).order_by(Folio.id.desc()).limit(20)).all():
         results.append({"type": "folio", "id": folio.id, "label": f"Folio #{folio.id}", "secondary": f"{guest_name} · balance PKR {folio_balance(db, folio)}", "folio_id": folio.id, "reservation_id": reservation_id})
     return {"query": term, "results": results[:60]}
 
@@ -140,7 +140,6 @@ def atomic_checkout(reservation_id: int, db: Session = Depends(get_db), user: Us
     balance = folio_balance(db, folio)
     if balance != 0:
         raise HTTPException(status_code=409, detail=f"Guest must settle the folio before checkout; outstanding balance is {balance}")
-
     room_ids = db.scalars(select(ReservationRoom.room_id).where(ReservationRoom.reservation_id == reservation.id)).all()
     checkout_at = datetime.utcnow()
     folio.status = "closed"
