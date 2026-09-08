@@ -7,13 +7,12 @@ from sqlalchemy.orm import Session
 
 from .auth import create_access_token, get_current_user, hash_password, require_roles, verify_password
 from .billing import router as billing_router
-from .db import Base, engine, get_db
-from .housekeeping import router as housekeeping_router
+from .db import engine, get_db
 from .models import AuditLog, Folio, Guest, Reservation, ReservationRoom, Role, Room, RoomType, User
-from .pms_core import router as pms_core_router
 from .phase_a_workflows import router as phase_a_workflows_router
 from .pms_core_bootstrap import ensure_pms_core_schema
 from .reservation_workflows import router as reservation_workflows_router
+from .business_date import get_current_business_date
 from .schemas import (
     AvailabilityResponse, BootstrapAdminRequest, CheckInResponse, CheckOutResponse,
     DashboardResponse, FrontDeskResponse, GuestCreate, GuestResponse, HealthResponse,
@@ -22,7 +21,6 @@ from .schemas import (
     RoomTypeCreate, RoomTypeResponse, RoomTypeUpdate, RoomUpdate, SetupStatusResponse,
 )
 
-Base.metadata.create_all(bind=engine)
 app = FastAPI(title="La Serene HMS API", version="0.9.1")
 app.include_router(billing_router)
 app.include_router(reservation_workflows_router)
@@ -118,7 +116,7 @@ def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
 
 @app.get("/api/dashboard", response_model=DashboardResponse)
 def dashboard(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    today = date.today(); statuses = ("available", "reserved", "occupied", "dirty", "out_of_order")
+    today = get_current_business_date(db, fallback_to_today=True); statuses = ("available", "reserved", "occupied", "dirty", "out_of_order")
     counts = {name: 0 for name in statuses}
     for room_status, count in db.execute(select(Room.status, func.count(Room.id)).group_by(Room.status)):
         if room_status in counts: counts[room_status] = count
@@ -227,7 +225,7 @@ def list_reservations(status_filter: str | None = Query(default=None, alias="sta
 
 @app.get("/api/front-desk", response_model=FrontDeskResponse)
 def front_desk(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    today = date.today()
+    today = get_current_business_date(db, fallback_to_today=True)
     arrivals = db.execute(select(Reservation, Guest.full_name).join(Guest, Guest.id == Reservation.guest_id).where(Reservation.check_in == today, Reservation.status == "reserved").order_by(Reservation.id)).all()
     departures = db.execute(select(Reservation, Guest.full_name).join(Guest, Guest.id == Reservation.guest_id).where(Reservation.check_out == today, Reservation.status == "checked_in").order_by(Reservation.id)).all()
     in_house = db.execute(select(Reservation, Guest.full_name).join(Guest, Guest.id == Reservation.guest_id).where(Reservation.status == "checked_in").order_by(Reservation.check_out, Reservation.id)).all()
