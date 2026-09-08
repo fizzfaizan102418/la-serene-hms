@@ -13,7 +13,11 @@ from .auth import require_roles
 from .db import get_db
 from .models import AuditLog, Expense, Folio, FolioItem, Payment, Reservation, Room, User
 
-router = APIRouter(prefix="/api", tags=["night-audit"])
+# This router is mounted by billing.py under the API prefix.
+# Keep this module's prefix relative so the final endpoints are:
+#   /api/night-audit/preview
+#   /api/night-audit/close
+router = APIRouter(prefix="/night-audit", tags=["night-audit"])
 MONEY = Decimal("0.01")
 FOOD_CATEGORIES = {"food", "restaurant", "room_service", "beverage", "drink", "snack"}
 
@@ -78,12 +82,12 @@ def build_summary(db: Session, business_date: date):
     }
 
 
-@router.get("/night-audit/preview")
+@router.get("/preview")
 def preview(db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception"))):
     return build_summary(db, date.today())
 
 
-@router.post("/night-audit/close")
+@router.post("/close")
 def close_day(payload: ClosingConfirm | None = None, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
     today = date.today()
     existing = db.scalar(select(AuditLog.id).where(AuditLog.entity_type == "night_audit", AuditLog.entity_id == str(today), AuditLog.action == "daily_close").limit(1))
