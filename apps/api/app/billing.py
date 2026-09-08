@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 from .auth import require_roles
 from .db import get_db
 from .housekeeping import router as housekeeping_router
-from .models import AuditLog, Folio, FolioItem, Guest, Payment, Reservation, ReservationRoom, Room, RoomType, User
+from .models import AuditLog, Folio, FolioItem, Guest, Payment, Reservation, ReservationRoom, Room, User
+from .pms_core import Stay
 from .reports import router as reports_router
 from .schemas import BillingSummaryResponse, FolioItemCreate, FolioItemResponse, FolioItemUpdate, FolioResponse, PaymentCreate, PaymentResponse
 
@@ -110,22 +111,39 @@ def add_room_charges(folio_id: int, db: Session = Depends(get_db), user: User = 
     folio = db.get(Folio, folio_id)
     if not folio: raise HTTPException(status_code=404, detail="Folio not found")
     if folio.status != "open": raise HTTPException(status_code=409, detail="Folio is already closed")
-    existing = db.scalar(select(FolioItem.id).where(FolioItem.folio_id == folio_id, FolioItem.category == "room").limit(1))
-    if existing: return build_folio_response(db, folio)
     reservation = db.get(Reservation, folio.reservation_id)
     if not reservation: raise HTTPException(status_code=404, detail="Reservation not found")
-    nights = (reservation.check_out - reservation.check_in).days
-    if nights <= 0: raise HTTPException(status_code=400, detail="Reservation must have at least one night")
-    room_ids = db.scalars(select(ReservationRoom.room_id).where(ReservationRoom.reservation_id == reservation.id)).all()
-    if not room_ids: raise HTTPException(status_code=409, detail="Reservation has no assigned rooms")
-    rooms = [db.get(Room, rid) for rid in room_ids]
-    for room in rooms:
-        if not room: raise HTTPException(status_code=409, detail="Reservation has an invalid room assignment")
-        room_type = db.get(RoomType, room.room_type_id)
-        if not room_type: raise HTTPException(status_code=409, detail=f"Room {room.number} has no room type")
-        db.add(FolioItem(folio_id=folio.id, description=f"Room {room.number} · {nights} night(s)", category="room", quantity=Decimal(nights), unit_price=money(room_type.base_rate), discount=Decimal("0.00")))
-    audit(db, user.id, "add_room_charges", "folio", folio.id, {"reservation_id": reservation.id, "nights": nights, "room_ids": room_ids})
-    db.commit(); db.refresh(folio)
+    stays = db.scalars(select(Stay).where(Stay.reservation_id == reservation.id).order_by(Stay.id)).all()
+    if not stays:
+        raise HTTPException(status_code=409, detail="Reservation has no room-level stays")
+
+    posted = 0
+    for stay in stays:
+        nights = max(0, (stay.check_out - stay.check_in).days)
+        if nights <= 0:
+            continue
+        charged = db.scalar(select(FolioItem.quantity).where(FolioItem.folio_id == folio.id, FolioItem.stay_id == stay.id, FolioItem.category == "room"))
+        charged_nights = Decimal(charged or 0)
+        delta_nights = Decimal(nights) - charged_nights
+        if delta_nights <= 0:
+            continue
+        room = db.get(Room, stay.room_id)
+        if not room:
+            raise HTTPException(status_code=409, detail=f"Stay {stay.id} references an invalid room")
+        db.add(FolioItem(
+            folio_id=folio.id,
+            stay_id=stay.id,
+            description=f"Room {room.number} · stay #{stay.id} · {int(delta_nights)} night(s)",
+            category="room",
+            quantity=delta_nights,
+            unit_price=money(stay.agreed_rate),
+            discount=Decimal("0.00"),
+        ))
+        posted += 1
+
+    if posted:
+        audit(db, user.id, "add_room_charges", "folio", folio.id, {"reservation_id": reservation.id, "stay_ids": [stay.id for stay in stays], "room_charges_posted": posted})
+        db.commit(); db.refresh(folio)
     return build_folio_response(db, folio)
 
 
@@ -144,18 +162,14 @@ def add_folio_item(folio_id: int, payload: FolioItemCreate, db: Session = Depend
 
 @router.patch("/folios/{folio_id}/items/{item_id}", response_model=FolioItemResponse)
 def update_folio_item(folio_id: int, item_id: int, payload: FolioItemUpdate, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "reception"))):
-    folio = db.get(Folio, folio_id)
-    item = db.get(FolioItem, item_id)
+    folio = db.get(Folio, folio_id); item = db.get(FolioItem, item_id)
     if not folio or not item or item.folio_id != folio_id: raise HTTPException(status_code=404, detail="Folio item not found")
     if folio.status != "open": raise HTTPException(status_code=409, detail="Folio is already closed")
+    if item.stay_id is not None: raise HTTPException(status_code=409, detail="Stay-generated room charges cannot be manually edited")
     gross = money(payload.quantity * payload.unit_price)
     if payload.discount > gross: raise HTTPException(status_code=400, detail="Discount cannot exceed the line amount")
     old = {"description": item.description, "category": item.category, "quantity": str(item.quantity), "unit_price": str(item.unit_price), "discount": str(item.discount)}
-    item.description = payload.description
-    item.category = payload.category
-    item.quantity = payload.quantity
-    item.unit_price = payload.unit_price
-    item.discount = payload.discount
+    item.description = payload.description; item.category = payload.category; item.quantity = payload.quantity; item.unit_price = payload.unit_price; item.discount = payload.discount
     audit(db, user.id, "update", "folio_item", item.id, {"folio_id": folio_id, "from": old, "to": payload.model_dump(mode="json")})
     db.commit(); db.refresh(item)
     return FolioItemResponse(id=item.id, description=item.description, category=item.category, quantity=item.quantity, unit_price=item.unit_price, discount=item.discount, line_total=item_line_total(item))
@@ -166,6 +180,7 @@ def remove_folio_item(folio_id: int, item_id: int, db: Session = Depends(get_db)
     folio = db.get(Folio, folio_id); item = db.get(FolioItem, item_id)
     if not folio or not item or item.folio_id != folio_id: raise HTTPException(status_code=404, detail="Folio item not found")
     if folio.status != "open": raise HTTPException(status_code=409, detail="Folio is already closed")
+    if item.stay_id is not None: raise HTTPException(status_code=409, detail="Stay-generated room charges cannot be manually removed")
     db.delete(item); audit(db, user.id, "remove", "folio_item", item_id, {"folio_id": folio_id}); db.commit()
 
 
