@@ -40,6 +40,15 @@ def ensure_schema_compatibility() -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS idx_reservations_checked_in_at ON reservations(checked_in_at)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS idx_reservations_checked_out_at ON reservations(checked_out_at)"))
 
+        # Financial Ledger 2.0: keep older installations compatible with the new
+        # stay-linked room charge source. SQLite accepts the nullable integer column
+        # before the newer ORM metadata references stays as a foreign key.
+        if "folio_items" in tables:
+            folio_columns = {column["name"] for column in inspect(connection).get_columns("folio_items")}
+            if "stay_id" not in folio_columns:
+                connection.execute(text("ALTER TABLE folio_items ADD COLUMN stay_id INTEGER"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS idx_folio_items_stay ON folio_items(stay_id)"))
+
 
 def get_db():
     db = SessionLocal()
