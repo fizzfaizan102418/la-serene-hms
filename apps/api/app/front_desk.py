@@ -6,20 +6,20 @@ import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from .auth import require_roles
 from .db import get_db
 from .business_date import get_current_business_date
-from .models import AuditLog, Folio, FolioItem, Guest, Payment, Reservation, ReservationRoom, Room, RoomType, User
-from .financial_models import PaymentRefund
+from .financial_authority import folio_ledger_summary
+from .ledger import post_deposit_received
+from .models import AuditLog, Folio, FolioItem, Guest, Reservation, ReservationRoom, Room, RoomType, User
 from .pms_core import Stay
 
 router = APIRouter(tags=["front-desk-2"])
 MONEY = Decimal("0.01")
-FOOD_CATEGORIES = {"food", "restaurant", "room_service", "beverage", "drink", "snack"}
-FOOD_SERVICE_CHARGE_RATE = Decimal("0.10")
+
 
 class WalkInRoom(BaseModel):
     room_id: int
@@ -28,32 +28,28 @@ class WalkInRoom(BaseModel):
     discount_percent: Decimal = Field(default=Decimal("0"), ge=0, le=100)
     fixed_discount: Decimal = Field(default=Decimal("0"), ge=0)
 
+
 class WalkInCreate(BaseModel):
     guest_id: int
     rooms: list[WalkInRoom] = Field(min_length=1)
     check_out: date
     payment_policy: str = Field(default="at_checkout", pattern="^(at_checkin|at_checkout|partial)$")
     deposit_received: Decimal = Field(default=Decimal("0"), ge=0)
+    deposit_method: str = Field(default="cash", max_length=30)
     notes: str | None = Field(default=None, max_length=1000)
+
 
 def money(value: Decimal) -> Decimal:
     return Decimal(value).quantize(MONEY, rounding=ROUND_HALF_UP)
 
+
 def audit(db: Session, user_id: int, action: str, entity_type: str, entity_id: int | str, details: dict) -> None:
     db.add(AuditLog(user_id=user_id, action=action, entity_type=entity_type, entity_id=str(entity_id), details=json.dumps(details)))
 
-def item_line_total(item: FolioItem) -> Decimal:
-    gross = Decimal(item.quantity) * Decimal(item.unit_price)
-    return money(max(Decimal("0.00"), gross - Decimal(item.discount)))
 
 def folio_balance(db: Session, folio: Folio) -> Decimal:
-    items = db.scalars(select(FolioItem).where(FolioItem.folio_id == folio.id)).all()
-    payments = db.scalars(select(Payment).where(Payment.folio_id == folio.id)).all()
-    refunds = db.scalar(select(func.coalesce(func.sum(PaymentRefund.amount), 0)).where(PaymentRefund.folio_id == folio.id)) or Decimal("0.00")
-    food_net = money(sum((item_line_total(item) for item in items if item.category.strip().lower() in FOOD_CATEGORIES), Decimal("0.00")))
-    total = money(sum((item_line_total(item) for item in items), Decimal("0.00")) + money(food_net * FOOD_SERVICE_CHARGE_RATE))
-    paid = money(sum((Decimal(payment.amount) for payment in payments), Decimal("0.00")) - Decimal(refunds))
-    return money(max(Decimal("0.00"), total - paid))
+    return folio_ledger_summary(db, folio.id).balance
+
 
 def available_for_walk_in(db: Session, room_id: int, business_date: date) -> bool:
     room = db.get(Room, room_id)
@@ -61,6 +57,7 @@ def available_for_walk_in(db: Session, room_id: int, business_date: date) -> boo
         return False
     conflict = db.scalar(select(ReservationRoom.reservation_id).join(Reservation, Reservation.id == ReservationRoom.reservation_id).where(ReservationRoom.room_id == room_id, Reservation.status.in_(("reserved", "checked_in")), Reservation.check_in <= business_date, Reservation.check_out > business_date).limit(1))
     return conflict is None
+
 
 @router.get("/front-desk/search")
 def universal_search(q: str = Query(min_length=1, max_length=160), db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception", "housekeeping"))):
@@ -77,9 +74,11 @@ def universal_search(q: str = Query(min_length=1, max_length=160), db: Session =
         results.append({"type": "folio", "id": folio.id, "label": f"Folio #{folio.id}", "secondary": f"{guest_name} · balance PKR {folio_balance(db, folio)}", "folio_id": folio.id, "reservation_id": reservation_id})
     return {"query": term, "results": results[:60]}
 
+
 @router.get("/front-desk/room-rack")
 def room_rack(db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception", "housekeeping"))):
     return [{"room_id": room.id, "room_number": room.number, "room_type": room_type, "status": room.status} for room, room_type in db.execute(select(Room, RoomType.name).join(RoomType, RoomType.id == Room.room_type_id).order_by(Room.number)).all()]
+
 
 @router.post("/front-desk/walk-ins", status_code=201)
 def create_walk_in(payload: WalkInCreate, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "reception"))):
@@ -122,9 +121,15 @@ def create_walk_in(payload: WalkInCreate, db: Session = Depends(get_db), user: U
         db.add(stay); db.flush(); stays.append(stay)
         room = db.get(Room, item.room_id)
         if room: room.status = "occupied"
-    audit(db, user.id, "walk_in_check_in", "reservation", reservation.id, {"room_ids": room_ids, "guest_id": payload.guest_id, "deposit_received": str(payload.deposit_received)})
+        assigned_deposit = min(per_room_deposit, money(net * nights))
+        if assigned_deposit > 0:
+            deposit = __import__("app.models", fromlist=["DepositTransaction"]).DepositTransaction(stay_id=stay.id, folio_id=folio.id, transaction_type="received", amount=assigned_deposit, payment_method=payload.deposit_method, reference=f"WALKIN-{reservation.id}-{stay.id}", notes="Walk-in deposit received", created_by=user.id)
+            db.add(deposit); db.flush()
+            post_deposit_received(db, stay_id=stay.id, folio_id=folio.id, reservation_id=reservation.id, deposit_id=deposit.id, amount=assigned_deposit, method=payload.deposit_method, created_by=user.id)
+    audit(db, user.id, "walk_in_check_in", "reservation", reservation.id, {"room_ids": room_ids, "guest_id": payload.guest_id, "deposit_received": str(payload.deposit_received), "deposit_method": payload.deposit_method})
     db.commit()
-    return {"reservation_id": reservation.id, "folio_id": folio.id, "stay_ids": [stay.id for stay in stays], "room_ids": room_ids, "guest_id": payload.guest_id, "check_in": business_date, "check_out": payload.check_out, "status": reservation.status, "estimated_total": money(estimated_total), "deposit_received": money(payload.deposit_received)}
+    return {"reservation_id": reservation.id, "folio_id": folio.id, "stay_ids": [stay.id for stay in stays], "room_ids": room_ids, "guest_id": payload.guest_id, "check_in": business_date, "check_out": payload.check_out, "status": reservation.status, "estimated_total": money(estimated_total), "deposit_received": money(payload.deposit_received), "deposit_method": payload.deposit_method}
+
 
 @router.post("/reservations/{reservation_id}/checkout", response_model=dict)
 def atomic_checkout(reservation_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "reception"))):
