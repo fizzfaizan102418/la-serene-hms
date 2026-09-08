@@ -8,10 +8,13 @@ from sqlalchemy.orm import Session
 from .auth import require_roles
 from .backup import router as backup_router
 from .db import get_db
+from . import pms_core as _pms_core_models
+from .pms_core import router as pms_core_router
 from .models import AuditLog, Reservation, ReservationRoom, Room, RoomType, User
 
 router = APIRouter(prefix="", tags=["housekeeping"])
 router.include_router(backup_router)
+router.include_router(pms_core_router)
 
 
 @router.get("/housekeeping")
