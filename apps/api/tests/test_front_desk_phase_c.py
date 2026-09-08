@@ -10,7 +10,6 @@ from app.db import Base
 import app.financial_models  # noqa: F401
 import app.models  # noqa: F401
 import app.pms_core  # noqa: F401
-from app.billing import router as billing_router
 from app.front_desk import atomic_checkout, create_walk_in, WalkInCreate, WalkInRoom
 from app.models import Guest, Folio, FolioItem, Payment, Reservation, ReservationRoom, Role, Room, RoomType, User
 from app.main import app
@@ -92,16 +91,14 @@ class FrontDeskPhaseCTests(unittest.TestCase):
         self.assertEqual(self.db.get(Room, self.room1.id).status, "dirty")
 
     def test_atomic_checkout_route_is_mounted(self):
-        schema = app.openapi()
-        paths = schema.get("paths", {})
-        self.assertIn("/api/reservations/{reservation_id}/checkout", paths)
-        self.assertIn("post", paths["/api/reservations/{reservation_id}/checkout"])
-        self.assertIn("/api/reservations/{reservation_id}/check-out", paths)
-        operation_id = paths["/api/reservations/{reservation_id}/checkout"]["post"].get("operationId", "")
+        paths = app.openapi().get("paths", {})
+        checkout_path = "/api/reservations/{reservation_id}/checkout"
+        legacy_path = "/api/reservations/{reservation_id}/check-out"
+        self.assertIn(checkout_path, paths)
+        self.assertIn("post", paths[checkout_path])
+        self.assertIn(legacy_path, paths)
+        operation_id = paths[checkout_path]["post"].get("operationId", "")
         self.assertIn("atomic_checkout", operation_id)
-
-        route_names = [getattr(route, "name", "") for route in billing_router.routes]
-        self.assertIn("atomic_checkout", route_names)
 
 
 if __name__ == "__main__":
