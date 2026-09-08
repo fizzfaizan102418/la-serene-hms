@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
+from hashlib import sha256
+import json
 from secrets import token_hex
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .auth import require_roles
@@ -56,40 +59,160 @@ def new_transaction_no(business_date: date) -> str:
     return f"TX-{business_date.strftime('%Y%m%d')}-{token_hex(5).upper()}"
 
 
-def post_transaction(db: Session, *, transaction_type: str, description: str, lines: list[LedgerLine | dict], created_by: int | None = None, business_date: date | None = None, reference_type: str | None = None, reference_id: str | None = None, folio_id: int | None = None, reservation_id: int | None = None, reversal_of_id: int | None = None, idempotency_key: str | None = None) -> FinancialTransaction:
-    if idempotency_key:
-        existing = db.scalar(select(FinancialTransaction).where(FinancialTransaction.idempotency_key == idempotency_key))
-        if existing is not None:
-            if existing.transaction_type != transaction_type or existing.description != description:
-                raise ValueError("Idempotency key is already bound to a different financial transaction")
-            return existing
+def normalize_idempotency_key(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if len(normalized) > 100:
+        raise ValueError("Idempotency key must be 100 characters or fewer")
+    return normalized
+
+
+def idempotency_fingerprint(*, transaction_type: str, description: str, lines: list[dict], reference_type: str | None, reference_id: str | None, folio_id: int | None, reservation_id: int | None, reversal_of_id: int | None) -> str:
+    payload = {
+        "transaction_type": transaction_type,
+        "description": description,
+        "reference_type": reference_type,
+        "reference_id": reference_id,
+        "folio_id": folio_id,
+        "reservation_id": reservation_id,
+        "reversal_of_id": reversal_of_id,
+        "lines": lines,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def post_transaction(
+    db: Session,
+    *,
+    transaction_type: str,
+    description: str,
+    lines: list[LedgerLine | dict],
+    created_by: int | None = None,
+    business_date: date | None = None,
+    reference_type: str | None = None,
+    reference_id: str | None = None,
+    folio_id: int | None = None,
+    reservation_id: int | None = None,
+    reversal_of_id: int | None = None,
+    idempotency_key: str | None = None,
+) -> FinancialTransaction:
+    key = normalize_idempotency_key(idempotency_key)
     if len(lines) < 2:
         raise ValueError("A financial transaction requires at least two ledger lines")
+
     normalized: list[dict] = []
-    debits = Decimal("0.00"); credits = Decimal("0.00"); currency_set: set[str] = set()
+    debits = Decimal("0.00")
+    credits = Decimal("0.00")
+    currency_set: set[str] = set()
     for raw in lines:
         line = raw.model_dump() if isinstance(raw, LedgerLine) else dict(raw)
         amount = money(line["amount"])
-        if amount <= 0: raise ValueError("Ledger amounts must be greater than zero")
+        if amount <= 0:
+            raise ValueError("Ledger amounts must be greater than zero")
         direction = line["direction"]
-        if direction not in {"debit", "credit"}: raise ValueError("Ledger direction must be debit or credit")
-        currency = str(line.get("currency", "PKR")).upper(); currency_set.add(currency)
-        normalized.append({**line, "amount": amount, "currency": currency})
-        if direction == "debit": debits += amount
-        else: credits += amount
-    if len(currency_set) != 1: raise ValueError("A transaction must use one currency")
-    if money(debits) != money(credits): raise ValueError(f"Unbalanced ledger transaction: debit={money(debits)} credit={money(credits)}")
+        if direction not in {"debit", "credit"}:
+            raise ValueError("Ledger direction must be debit or credit")
+        currency = str(line.get("currency", "PKR")).upper()
+        currency_set.add(currency)
+        clean_line = {
+            "account": str(line["account"]),
+            "direction": direction,
+            "amount": str(amount),
+            "currency": currency,
+            "folio_id": line.get("folio_id"),
+            "stay_id": line.get("stay_id"),
+            "payment_method": line.get("payment_method"),
+            "reference": line.get("reference"),
+        }
+        normalized.append(clean_line)
+        if direction == "debit":
+            debits += amount
+        else:
+            credits += amount
+
+    if len(currency_set) != 1:
+        raise ValueError("A transaction must use one currency")
+    if money(debits) != money(credits):
+        raise ValueError(f"Unbalanced ledger transaction: debit={money(debits)} credit={money(credits)}")
+
+    fingerprint = idempotency_fingerprint(
+        transaction_type=transaction_type,
+        description=description,
+        lines=normalized,
+        reference_type=reference_type,
+        reference_id=reference_id,
+        folio_id=folio_id,
+        reservation_id=reservation_id,
+        reversal_of_id=reversal_of_id,
+    )
+
+    if key:
+        existing = db.scalar(select(FinancialTransaction).where(FinancialTransaction.idempotency_key == key))
+        if existing is not None:
+            if existing.idempotency_fingerprint:
+                if existing.idempotency_fingerprint != fingerprint:
+                    raise ValueError("Idempotency key is already bound to a different financial transaction")
+            elif existing.transaction_type != transaction_type or existing.description != description:
+                raise ValueError("Idempotency key is already bound to a different financial transaction")
+            return existing
+
     tx_date = business_date or current_business_date(db)
     state = db.get(BusinessDateState, 1)
     if business_date is not None and tx_date != current_business_date(db):
         raise ValueError(f"Financial posting date {tx_date.isoformat()} is not the current business date")
     if state is not None and state.last_closed_at is not None and state.last_closed_at.date() >= tx_date:
         raise ValueError(f"Business date {tx_date.isoformat()} is closed for financial posting")
-    transaction = FinancialTransaction(transaction_no=new_transaction_no(tx_date), idempotency_key=idempotency_key, business_date=tx_date, transaction_type=transaction_type, status="posted", reference_type=reference_type, reference_id=reference_id, folio_id=folio_id, reservation_id=reservation_id, description=description, created_by=created_by, reversal_of_id=reversal_of_id)
-    db.add(transaction); db.flush()
-    for line in normalized:
-        db.add(LedgerEntry(transaction_id=transaction.id, account=line["account"], direction=line["direction"], amount=line["amount"], currency=line["currency"], folio_id=line.get("folio_id") or folio_id, stay_id=line.get("stay_id"), payment_method=line.get("payment_method"), reference=line.get("reference")))
-    db.flush()
+
+    transaction = FinancialTransaction(
+        transaction_no=new_transaction_no(tx_date),
+        idempotency_key=key,
+        idempotency_fingerprint=fingerprint if key else None,
+        business_date=tx_date,
+        transaction_type=transaction_type,
+        status="posted",
+        reference_type=reference_type,
+        reference_id=reference_id,
+        folio_id=folio_id,
+        reservation_id=reservation_id,
+        description=description,
+        created_by=created_by,
+        reversal_of_id=reversal_of_id,
+    )
+
+    try:
+        # A savepoint keeps a concurrent idempotency-key conflict from rolling
+        # back the caller's larger business transaction.
+        with db.begin_nested():
+            db.add(transaction)
+            db.flush()
+            for line in normalized:
+                db.add(
+                    LedgerEntry(
+                        transaction_id=transaction.id,
+                        account=line["account"],
+                        direction=line["direction"],
+                        amount=Decimal(line["amount"]),
+                        currency=line["currency"],
+                        folio_id=line.get("folio_id") or folio_id,
+                        stay_id=line.get("stay_id"),
+                        payment_method=line.get("payment_method"),
+                        reference=line.get("reference"),
+                    )
+                )
+            db.flush()
+    except IntegrityError:
+        if key:
+            existing = db.scalar(select(FinancialTransaction).where(FinancialTransaction.idempotency_key == key))
+            if existing is not None:
+                if existing.idempotency_fingerprint and existing.idempotency_fingerprint != fingerprint:
+                    raise ValueError("Idempotency key is already bound to a different financial transaction")
+                return existing
+        raise
+
     return transaction
 
 
@@ -114,14 +237,20 @@ def post_deposit_received(db: Session, *, stay_id: int, folio_id: int | None, re
 
 def reverse_transaction(db: Session, *, transaction_id: int, created_by: int, reason: str) -> FinancialTransaction:
     original = db.get(FinancialTransaction, transaction_id)
-    if original is None: raise ValueError("Financial transaction not found")
-    if original.status != "posted": raise ValueError("Only posted transactions can be reversed")
-    if db.scalar(select(FinancialTransaction.id).where(FinancialTransaction.reversal_of_id == transaction_id)): raise ValueError("Transaction has already been reversed")
+    if original is None:
+        raise ValueError("Financial transaction not found")
+    if original.status != "posted":
+        raise ValueError("Only posted transactions can be reversed")
+    if db.scalar(select(FinancialTransaction.id).where(FinancialTransaction.reversal_of_id == transaction_id)):
+        raise ValueError("Transaction has already been reversed")
     source_lines = db.scalars(select(LedgerEntry).where(LedgerEntry.transaction_id == transaction_id).order_by(LedgerEntry.id)).all()
-    if not source_lines: raise ValueError("Cannot reverse a transaction without ledger entries")
+    if not source_lines:
+        raise ValueError("Cannot reverse a transaction without ledger entries")
     reversed_lines = [{"account": line.account, "direction": "credit" if line.direction == "debit" else "debit", "amount": line.amount, "currency": line.currency, "folio_id": line.folio_id, "stay_id": line.stay_id, "payment_method": line.payment_method, "reference": line.reference} for line in source_lines]
     reversal = post_transaction(db, transaction_type="reversal", description=f"Reversal of {original.transaction_no}: {reason}", reference_type="financial_transaction", reference_id=str(original.id), folio_id=original.folio_id, reservation_id=original.reservation_id, created_by=created_by, reversal_of_id=original.id, idempotency_key=f"reversal:{original.id}", lines=reversed_lines)
-    original.status = "reversed"; db.flush(); return reversal
+    original.status = "reversed"
+    db.flush()
+    return reversal
 
 
 @router.get("/transactions")
@@ -139,7 +268,7 @@ def create_ledger_transaction(payload: LedgerTransactionCreate, idempotency_key:
         tx = post_transaction(db, transaction_type=payload.transaction_type, description=payload.description, reference_type=payload.reference_type, reference_id=payload.reference_id, folio_id=payload.folio_id, reservation_id=payload.reservation_id, created_by=user.id, idempotency_key=idempotency_key, lines=payload.lines)
         db.commit(); db.refresh(tx)
         return {"id": tx.id, "transaction_no": tx.transaction_no, "idempotency_key": tx.idempotency_key, "business_date": tx.business_date, "status": tx.status}
-    except ValueError as exc:
+    except (ValueError, IntegrityError) as exc:
         db.rollback(); raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
@@ -148,7 +277,7 @@ def reverse_transaction_endpoint(transaction_id: int, reason: str = "Correction"
     try:
         reversal = reverse_transaction(db, transaction_id=transaction_id, created_by=user.id, reason=reason); db.commit(); db.refresh(reversal)
         return {"id": reversal.id, "transaction_no": reversal.transaction_no, "reversal_of_id": reversal.reversal_of_id, "status": reversal.status}
-    except ValueError as exc:
+    except (ValueError, IntegrityError) as exc:
         db.rollback(); raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
