@@ -44,12 +44,23 @@ class RoomTypeCreate(BaseModel):
     description: str | None = None
 
 
+class RoomTypeUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    base_rate: Decimal = Field(ge=0)
+    description: str | None = None
+
+
 class RoomTypeResponse(RoomTypeCreate):
     model_config = ConfigDict(from_attributes=True)
     id: int
 
 
 class RoomCreate(BaseModel):
+    number: str = Field(min_length=1, max_length=20)
+    room_type_id: int
+
+
+class RoomUpdate(BaseModel):
     number: str = Field(min_length=1, max_length=20)
     room_type_id: int
 
