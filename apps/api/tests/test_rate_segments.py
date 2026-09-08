@@ -5,9 +5,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.db import Base
-from app.models import Guest, Role, Room, RoomType, StayRateSegment, User
+from app.models import Guest, Role, Room, RoomType, StayRateSegment, User, Reservation
 from app.pms_core import Stay
-from app.models import Reservation
 from app.pms_domain import RateSegmentCreate, replace_rate_segment
 
 
@@ -103,15 +102,21 @@ class RateSegmentReplacementTests(unittest.TestCase):
         self.assertEqual(rows[0].rate, 125)
         self.assertEqual(rows[0].discount_amount, 5)
 
-    def test_adjacent_range_does_not_overlap(self):
+    def test_boundary_replacement_creates_adjacent_segments(self):
         payload = RateSegmentCreate(
-            from_date=date(2026, 9, 13),
+            from_date=date(2026, 9, 10),
             to_date=date(2026, 9, 13),
             rate=140,
             source="manual",
         )
-        with self.assertRaises(Exception):
-            replace_rate_segment(self.db, self.stay, payload, self.user.id)
+        replace_rate_segment(self.db, self.stay, payload, self.user.id)
+        self.db.commit()
+
+        rows = self.db.query(StayRateSegment).filter(StayRateSegment.stay_id == self.stay.id).order_by(StayRateSegment.from_date).all()
+        self.assertEqual([(r.from_date, r.to_date, r.rate) for r in rows], [
+            (date(2026, 9, 8), date(2026, 9, 10), 100),
+            (date(2026, 9, 10), date(2026, 9, 13), 140),
+        ])
 
 
 if __name__ == "__main__":
