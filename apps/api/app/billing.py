@@ -9,11 +9,13 @@ from .auth import require_roles
 from .db import get_db
 from .housekeeping import router as housekeeping_router
 from .models import AuditLog, Folio, FolioItem, Guest, Payment, Reservation, ReservationRoom, Room, RoomType, User
+from .reports import router as reports_router
 from .schemas import BillingSummaryResponse, FolioItemCreate, FolioItemResponse, FolioResponse, PaymentCreate, PaymentResponse
 
 router = APIRouter(prefix="/api", tags=["billing"])
 MONEY = Decimal("0.01")
 router.include_router(housekeeping_router)
+router.include_router(reports_router)
 
 
 def money(value: Decimal) -> Decimal:
