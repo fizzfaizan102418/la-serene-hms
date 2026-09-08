@@ -26,7 +26,6 @@ def money(value: Decimal | int | float | str) -> Decimal:
 
 
 def folio_ledger_summary(db: Session, folio_id: int) -> FolioLedgerSummary:
-    """Return the folio financial position from posted Guest Receivables ledger entries."""
     debit_total = db.scalar(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(LedgerEntry.folio_id == folio_id, LedgerEntry.account == "Guest Receivables", LedgerEntry.direction == "debit", FinancialTransaction.status == "posted")) or Decimal("0.00")
     credit_total = db.scalar(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(LedgerEntry.folio_id == folio_id, LedgerEntry.account == "Guest Receivables", LedgerEntry.direction == "credit", FinancialTransaction.status == "posted")) or Decimal("0.00")
     settlement_credits = db.scalar(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(LedgerEntry.folio_id == folio_id, LedgerEntry.account == "Guest Receivables", LedgerEntry.direction == "credit", FinancialTransaction.status == "posted", FinancialTransaction.transaction_type.in_(("folio_payment", "deposit_applied")))) or Decimal("0.00")
@@ -39,9 +38,7 @@ def folio_ledger_summary(db: Session, folio_id: int) -> FolioLedgerSummary:
 
 
 def post_folio_charge_authoritative(db: Session, *, folio_id: int, reservation_id: int, item_id: int, amount: Decimal, stay_id: int | None, category: str, created_by: int, gross_amount: Decimal | None = None, discount_amount: Decimal | None = None) -> FinancialTransaction:
-    """Post gross charge, explicit discount, and food service charge to the ledger."""
     from .ledger import post_transaction
-
     net_amount = money(amount)
     gross = money(gross_amount if gross_amount is not None else net_amount)
     discount = money(discount_amount if discount_amount is not None else max(Decimal("0.00"), gross - net_amount))
@@ -123,12 +120,11 @@ def _guard_concurrent_posting(connection, target: FinancialTransaction) -> None:
             stay_id = connection.execute(select(DepositTransaction.stay_id).where(DepositTransaction.id == deposit_id)).scalar_one_or_none()
             if stay_id is not None:
                 from .pms_core import Stay
+                connection.execute(select(Stay.id).where(Stay.id == stay_id).with_for_update()).scalar_one_or_none()
                 remaining, has_history = _posted_deposit_balance(connection, stay_id)
-                if has_history:
-                    connection.execute(select(Stay.id).where(Stay.id == stay_id).with_for_update()).scalar_one_or_none()
-                    deposit_amount = connection.execute(select(DepositTransaction.amount).where(DepositTransaction.id == deposit_id)).scalar_one_or_none() or Decimal("0.00")
-                    if money(deposit_amount) > remaining:
-                        raise HTTPException(status_code=409, detail="Deposit transaction exceeds the remaining authoritative deposit balance")
+                deposit_amount = connection.execute(select(DepositTransaction.amount).where(DepositTransaction.id == deposit_id)).scalar_one_or_none() or Decimal("0.00")
+                if has_history and money(deposit_amount) > remaining:
+                    raise HTTPException(status_code=409, detail="Deposit transaction exceeds the remaining authoritative deposit balance")
 
 
 @event.listens_for(FinancialTransaction, "before_insert")
