@@ -12,7 +12,7 @@ import app.models  # noqa: F401
 import app.pms_core  # noqa: F401
 from app.finance_controls import post_deposit, require_open_business_date, transfer_folio_item
 from app.financial_ops import folio_balance, refund_payment
-from app.financial_models import Invoice, InvoiceSequence, PaymentRefund
+from app.financial_models import Invoice, InvoiceSequence
 from app.ledger import post_transaction, reverse_transaction
 from app.models import (
     BusinessDateState,
@@ -106,12 +106,47 @@ class FinancialControlsRegressionTests(unittest.TestCase):
         self.db.add(InvoiceSequence(id=1, last_number=0))
         self.db.commit()
 
+        # Seed authoritative ledger state for the legacy regression fixture.
+        # Production reads switch to the posted ledger once a folio transaction exists.
+        post_transaction(
+            self.db,
+            transaction_type="folio_charge",
+            description=f"Folio charge #{item_a.id}: room",
+            reference_type="folio_item",
+            reference_id=str(item_a.id),
+            folio_id=folio_a.id,
+            reservation_id=res_a.id,
+            created_by=self.user.id,
+            idempotency_key=f"regression-folio-charge:{item_a.id}",
+            lines=[
+                {"account": "Guest Receivables", "direction": "debit", "amount": Decimal("100.00"), "folio_id": folio_a.id},
+                {"account": "Revenue - room", "direction": "credit", "amount": Decimal("100.00"), "folio_id": folio_a.id},
+            ],
+        )
+        post_transaction(
+            self.db,
+            transaction_type="folio_payment",
+            description=f"Payment #{payment.id}",
+            reference_type="payment",
+            reference_id=str(payment.id),
+            folio_id=folio_a.id,
+            reservation_id=res_a.id,
+            created_by=self.user.id,
+            idempotency_key=f"regression-folio-payment:{payment.id}",
+            lines=[
+                {"account": "Cash", "direction": "debit", "amount": Decimal("100.00"), "folio_id": folio_a.id, "payment_method": "cash"},
+                {"account": "Guest Receivables", "direction": "credit", "amount": Decimal("100.00"), "folio_id": folio_a.id, "payment_method": "cash"},
+            ],
+        )
+        self.db.commit()
+
         self.res_a = res_a
         self.res_b = res_b
         self.folio_a = folio_a
         self.folio_b = folio_b
         self.payment = payment
         self.item_a = item_a
+        self.item_b = item_b
         self.room_a = room_a
 
     def tearDown(self):
@@ -134,23 +169,25 @@ class FinancialControlsRegressionTests(unittest.TestCase):
         return stay
 
     def test_full_and_partial_refund_limits_are_enforced(self):
-        first = PaymentRefund(
-            payment_id=self.payment.id,
-            folio_id=self.folio_a.id,
-            amount=30,
-            method="cash",
-            reason="Partial refund",
-            created_by=self.user.id,
-        )
-        self.db.add(first)
-        self.db.commit()
+        first_payload = type(
+            "RefundPayload",
+            (),
+            {
+                "payment_id": self.payment.id,
+                "amount": Decimal("30.00"),
+                "method": "cash",
+                "reference": None,
+                "reason": "Partial refund",
+            },
+        )()
+        first = refund_payment(self.folio_a.id, first_payload, "regression-refund-1", self.db, self.user)
 
         total, paid, balance = folio_balance(self.db, self.folio_a)
         self.assertEqual(total, Decimal("100.00"))
         self.assertEqual(paid, Decimal("70.00"))
         self.assertEqual(balance, Decimal("30.00"))
 
-        over_refund = Decimal(self.payment.amount) - Decimal(first.amount) + Decimal("0.01")
+        over_refund = Decimal(self.payment.amount) - Decimal(first["amount"]) + Decimal("0.01")
         payload = type(
             "RefundPayload",
             (),
@@ -163,7 +200,7 @@ class FinancialControlsRegressionTests(unittest.TestCase):
             },
         )()
         with self.assertRaises(HTTPException):
-            refund_payment(self.folio_a.id, payload, self.db, self.user)
+            refund_payment(self.folio_a.id, payload, "regression-refund-2", self.db, self.user)
 
     def test_reversal_is_immutable_and_cannot_be_reversed_twice(self):
         tx = post_transaction(
@@ -209,33 +246,27 @@ class FinancialControlsRegressionTests(unittest.TestCase):
                 reason="Duplicate reversal",
             )
 
-    def test_folio_transfer_moves_item_and_creates_balanced_financial_transfer(self):
+    def test_folio_transfer_rejects_mutating_posted_charge(self):
         payload = type(
             "TransferPayload",
             (),
             {"item_id": self.item_a.id, "to_folio_id": self.folio_b.id, "reason": "Group routing"},
         )()
-        result = transfer_folio_item(payload, self.db, self.user)
 
-        self.assertEqual(result["from_folio_id"], self.folio_a.id)
-        self.assertEqual(result["to_folio_id"], self.folio_b.id)
+        with self.assertRaises(ValueError):
+            transfer_folio_item(payload, self.db, self.user)
+
+        self.db.rollback()
         self.db.expire_all()
-        moved = self.db.get(FolioItem, self.item_a.id)
-        self.assertEqual(moved.folio_id, self.folio_b.id)
+        unchanged = self.db.get(FolioItem, self.item_a.id)
+        self.assertEqual(unchanged.folio_id, self.folio_a.id)
 
         tx = self.db.scalar(
             select(FinancialTransaction).where(
                 FinancialTransaction.transaction_type == "folio_transfer"
             )
         )
-        self.assertIsNotNone(tx)
-        entries = self.db.scalars(
-            select(LedgerEntry).where(LedgerEntry.transaction_id == tx.id)
-        ).all()
-        self.assertEqual(
-            sum(entry.amount for entry in entries if entry.direction == "debit"),
-            sum(entry.amount for entry in entries if entry.direction == "credit"),
-        )
+        self.assertIsNone(tx)
 
     def test_invoice_sequence_is_monotonic_without_reuse(self):
         sequence = self.db.get(InvoiceSequence, 1)

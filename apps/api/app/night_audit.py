@@ -95,7 +95,7 @@ def finance_snapshot(db: Session, business_date: date) -> dict:
         },
         "revenue_reconciliation": {
             "ledger_total": reconciliation["ledger"]["revenue_credits"],
-            "operational_total": reconciliation["operational"]["folio_charges"],
+            "operational_total": reconciliation["authority"]["folio_charges"],
             "difference": reconciliation["reconciliation"]["charge_difference"],
             "accounts": revenue["revenue"],
             "total": revenue["total"],
