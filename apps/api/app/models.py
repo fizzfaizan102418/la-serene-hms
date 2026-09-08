@@ -199,6 +199,7 @@ class FinancialTransaction(TimestampMixin, Base):
     __tablename__ = "financial_transactions"
     id: Mapped[int] = mapped_column(primary_key=True)
     transaction_no: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(100), unique=True, index=True, nullable=True)
     business_date: Mapped[date] = mapped_column(Date, index=True)
     transaction_type: Mapped[str] = mapped_column(String(40), index=True)
     status: Mapped[str] = mapped_column(String(20), default="posted", index=True)
