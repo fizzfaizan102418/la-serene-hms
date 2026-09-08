@@ -10,11 +10,17 @@ from .backup import router as backup_router
 from .db import get_db
 from . import pms_core as _pms_core_models
 from .pms_core import router as pms_core_router
+from .pms_core_bootstrap import ensure_pms_core_schema
 from .models import AuditLog, Reservation, ReservationRoom, Room, RoomType, User
 
 router = APIRouter(prefix="", tags=["housekeeping"])
 router.include_router(backup_router)
 router.include_router(pms_core_router)
+
+
+@router.on_event("startup")
+def initialize_pms_core():
+    ensure_pms_core_schema()
 
 
 @router.get("/housekeeping")
