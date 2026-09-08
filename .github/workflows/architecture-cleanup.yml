@@ -1,0 +1,68 @@
+name: One-time architecture cleanup
+
+on:
+  push:
+    branches:
+      - phase-a-architecture-hardening
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: ${{ !contains(github.event.head_commit.message, 'complete architecture cleanup') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Apply runtime architecture cleanup
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          main = Path('apps/api/app/main.py')
+          text = main.read_text(encoding='utf-8')
+          text = text.replace('from .housekeeping import router as housekeeping_router\n', '')
+          text = text.replace('from .pms_core import router as pms_core_router\n', '')
+          text = text.replace('from .db import Base, engine, get_db\n', 'from .db import engine, get_db\n')
+          text = text.replace('Base.metadata.create_all(bind=engine)\n', '')
+          text = text.replace('from .reservation_workflows import router as reservation_workflows_router\n', 'from .reservation_workflows import router as reservation_workflows_router\nfrom .business_date import get_current_business_date\n')
+          text = text.replace('today = date.today(); statuses =', 'today = get_current_business_date(db, fallback_to_today=True); statuses =', 1)
+          text = text.replace('today = date.today()\n    arrivals =', 'today = get_current_business_date(db, fallback_to_today=True)\n    arrivals =', 1)
+          main.write_text(text, encoding='utf-8')
+
+          front = Path('apps/api/app/front_desk.py')
+          text = front.read_text(encoding='utf-8')
+          text = text.replace('from .db import get_db\n', 'from .db import get_db\nfrom .business_date import get_current_business_date\n')
+          text = text.replace('business_date = date.today()', 'business_date = get_current_business_date(db, fallback_to_today=True)')
+          front.write_text(text, encoding='utf-8')
+
+          audit = Path('apps/api/app/night_audit.py')
+          text = audit.read_text(encoding='utf-8')
+          text = text.replace('from .models import AuditLog, BusinessDateState, Expense, Folio, FolioItem, Payment, Reservation, Room, User\n', 'from .models import AuditLog, BusinessDateState, Expense, Folio, FolioItem, Payment, Reservation, Room, User\nfrom .business_date import get_current_business_date\n')
+          start = text.index('def get_business_date(db: Session) -> date:\n')
+          end = text.index('\n\ndef audit(', start)
+          replacement = 'def get_business_date(db: Session) -> date:\n    return get_current_business_date(db, fallback_to_today=True)\n'
+          text = text[:start] + replacement + text[end:]
+          audit.write_text(text, encoding='utf-8')
+
+          test = Path('apps/api/tests/test_business_date_architecture.py')
+          test.write_text('''import unittest\nfrom datetime import date, timedelta\n\nfrom sqlalchemy import create_engine, select\nfrom sqlalchemy.orm import Session\n\nfrom app.db import Base\nimport app.models  # noqa: F401\nfrom app.business_date import get_current_business_date\nfrom app.models import BusinessDateState\n\n\nclass BusinessDateArchitectureTests(unittest.TestCase):\n    def setUp(self):\n        self.engine = create_engine("sqlite:///:memory:")\n        Base.metadata.create_all(self.engine)\n\n    def tearDown(self):\n        self.engine.dispose()\n\n    def test_business_date_reads_state_not_system_date(self):\n        with Session(self.engine) as db:\n            expected = date.today() + timedelta(days=7)\n            db.add(BusinessDateState(id=1, current_business_date=expected))\n            db.commit()\n            self.assertEqual(get_current_business_date(db), expected)\n\n    def test_missing_state_requires_initialization_unless_fallback_requested(self):\n        with Session(self.engine) as db:\n            with self.assertRaises(Exception):\n                get_current_business_date(db)\n            self.assertEqual(get_current_business_date(db, fallback_to_today=True), date.today())\n\n\nif __name__ == "__main__":\n    unittest.main()\n''', encoding='utf-8')
+          PY
+
+      - name: Remove one-time workflow
+        run: rm .github/workflows/architecture-cleanup.yml
+
+      - name: Commit complete architecture cleanup
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/api/app/main.py apps/api/app/front_desk.py apps/api/app/night_audit.py apps/api/tests/test_business_date_architecture.py .github/workflows/architecture-cleanup.yml
+          git commit -m "fix: complete architecture cleanup"
+          git push origin HEAD:phase-a-architecture-hardening
