@@ -74,7 +74,7 @@ def _posted_receivable_balance(connection, folio_id: int) -> tuple[Decimal, bool
 
 
 def _posted_deposit_balance(connection, stay_id: int) -> tuple[Decimal, bool]:
-    has_history = connection.execute(select(FinancialTransaction.id).join(LedgerEntry, LedgerEntry.transaction_id == FinancialTransaction.id).where(LedgerEntry.stay_id == stay_id, LedgerEntry.account == "Guest Deposits", FinancialTransaction.status == "posted").limit(1)).scalar_one_or_none() is not None
+    has_history = connection.execute(select(FinancialTransaction.id).join(LedgerEntry, LedgerEntry.transaction_id == FinancialTransaction.id).where(LedgerEntry.stay_id == stay_id, LedgerEntry.account == "Guest Deposits", LedgerEntry.direction == "credit", FinancialTransaction.status == "posted").limit(1)).scalar_one_or_none() is not None
     credits = connection.execute(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(LedgerEntry.stay_id == stay_id, LedgerEntry.account == "Guest Deposits", LedgerEntry.direction == "credit", FinancialTransaction.status == "posted")).scalar_one() or Decimal("0.00")
     debits = connection.execute(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(LedgerEntry.stay_id == stay_id, LedgerEntry.account == "Guest Deposits", LedgerEntry.direction == "debit", FinancialTransaction.status == "posted")).scalar_one() or Decimal("0.00")
     return money(max(Decimal("0.00"), Decimal(credits) - Decimal(debits))), has_history
@@ -82,8 +82,7 @@ def _posted_deposit_balance(connection, stay_id: int) -> tuple[Decimal, bool]:
 
 def _posted_payment_refunds(connection, payment_id: int) -> Decimal:
     refund_ids = connection.execute(select(PaymentRefund.id).where(PaymentRefund.payment_id == payment_id)).scalars().all()
-    if not refund_ids:
-        return Decimal("0.00")
+    if not refund_ids: return Decimal("0.00")
     value = connection.execute(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(FinancialTransaction.transaction_type == "payment_refund", FinancialTransaction.status == "posted", FinancialTransaction.reference_type == "payment_refund", FinancialTransaction.reference_id.in_([str(refund_id) for refund_id in refund_ids]), LedgerEntry.account == "Guest Receivables", LedgerEntry.direction == "debit")).scalar_one() or Decimal("0.00")
     return money(value)
 
@@ -134,47 +133,35 @@ def guard_concurrent_financial_posting(mapper, connection, target: FinancialTran
 
 @event.listens_for(FolioItem, "before_update")
 def prevent_posted_folio_item_update(mapper, connection, target: FolioItem) -> None:
-    if _has_transaction(connection, "folio_item", target.id):
-        raise ValueError("Posted folio charges are immutable; use a ledger adjustment or reversal")
-
+    if _has_transaction(connection, "folio_item", target.id): raise ValueError("Posted folio charges are immutable; use a ledger adjustment or reversal")
 
 @event.listens_for(FolioItem, "before_delete")
 def prevent_posted_folio_item_delete(mapper, connection, target: FolioItem) -> None:
-    if _has_transaction(connection, "folio_item", target.id):
-        raise ValueError("Posted folio charges are immutable; use a ledger adjustment or reversal")
-
+    if _has_transaction(connection, "folio_item", target.id): raise ValueError("Posted folio charges are immutable; use a ledger adjustment or reversal")
 
 @event.listens_for(Payment, "before_update")
 @event.listens_for(Payment, "before_delete")
 def prevent_payment_mutation(mapper, connection, target: Payment) -> None:
-    if _has_transaction(connection, "payment", target.id):
-        raise ValueError("Posted payments are immutable; post a refund instead")
-
+    if _has_transaction(connection, "payment", target.id): raise ValueError("Posted payments are immutable; post a refund instead")
 
 @event.listens_for(PaymentRefund, "before_update")
 @event.listens_for(PaymentRefund, "before_delete")
 def prevent_refund_mutation(mapper, connection, target: PaymentRefund) -> None:
-    if _has_transaction(connection, "payment_refund", target.id):
-        raise ValueError("Posted refunds are immutable")
-
+    if _has_transaction(connection, "payment_refund", target.id): raise ValueError("Posted refunds are immutable")
 
 @event.listens_for(DepositTransaction, "before_update")
 @event.listens_for(DepositTransaction, "before_delete")
 def prevent_deposit_mutation(mapper, connection, target: DepositTransaction) -> None:
-    if _has_deposit_transaction(connection, target):
-        raise ValueError("Posted deposit transactions are immutable; use a new deposit transaction")
-
+    if _has_deposit_transaction(connection, target): raise ValueError("Posted deposit transactions are immutable; use a new deposit transaction")
 
 @event.listens_for(Invoice, "before_insert")
 def derive_invoice_total_from_ledger(mapper, connection, target: Invoice) -> None:
-    if target.folio_id is None:
-        return
+    if target.folio_id is None: return
     debit_total = _receivable_sum(connection, folio_id=target.folio_id, direction="debit")
     credit_total = _receivable_sum(connection, folio_id=target.folio_id, direction="credit")
     settlement_credits = connection.execute(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(LedgerEntry.folio_id == target.folio_id, LedgerEntry.account == "Guest Receivables", LedgerEntry.direction == "credit", FinancialTransaction.status == "posted", FinancialTransaction.transaction_type.in_(("folio_payment", "deposit_applied")))).scalar_one() or Decimal("0.00")
     refund_debits = connection.execute(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(LedgerEntry.folio_id == target.folio_id, LedgerEntry.account == "Guest Receivables", LedgerEntry.direction == "debit", FinancialTransaction.status == "posted", FinancialTransaction.transaction_type == "payment_refund")).scalar_one() or Decimal("0.00")
     target.total = money(max(Decimal("0.00"), Decimal(debit_total) - Decimal(credit_total) + Decimal(settlement_credits) - Decimal(refund_debits)))
-
 
 def _receivable_sum(connection, *, folio_id: int, direction: str) -> Decimal:
     value = connection.execute(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(LedgerEntry.folio_id == folio_id, LedgerEntry.account == "Guest Receivables", LedgerEntry.direction == direction, FinancialTransaction.status == "posted")).scalar_one()
