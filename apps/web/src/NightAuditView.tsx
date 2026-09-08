@@ -66,9 +66,10 @@ export default function NightAuditView({ api }: { api: <T>(path: string, options
   }
 
   const money = (value: number) => Number(value || 0).toFixed(2);
-  const financeBalanced = summary.finance.status === 'balanced';
 
   if (!summary) return <section className="page"><div className="page-heading"><div><p className="muted">End-of-day controls</p><h2>Night Audit & Daily Closing</h2></div></div>{message && <p className="notice">{message}</p>}<p className="muted">Loading closing pack...</p></section>;
+
+  const financeBalanced = summary.finance.status === 'balanced';
 
   return <section className="page">
     <div className="page-heading">
