@@ -106,6 +106,16 @@ class ReservationResponse(BaseModel):
     folio_id: int
 
 
+class ReservationListResponse(ReservationResponse):
+    guest_name: str
+
+
+class AvailabilityResponse(BaseModel):
+    check_in: date
+    check_out: date
+    rooms: list[RoomResponse]
+
+
 class DashboardResponse(BaseModel):
     business_date: date
     total_rooms: int
