@@ -20,6 +20,48 @@ def upgrade() -> None:
     op.execute(
         sa.text(
             """
+            CREATE OR REPLACE FUNCTION hms_guard_folio_payment_balance()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            DECLARE
+                available_balance numeric;
+            BEGIN
+                PERFORM 1 FROM folios WHERE id = NEW.folio_id FOR UPDATE;
+
+                SELECT COALESCE(SUM(
+                    CASE WHEN le.direction = 'debit' THEN le.amount ELSE -le.amount END
+                ), 0)
+                INTO available_balance
+                FROM ledger_entries le
+                JOIN financial_transactions ft ON ft.id = le.transaction_id
+                WHERE le.folio_id = NEW.folio_id
+                  AND le.account = 'Guest Receivables'
+                  AND ft.status = 'posted';
+
+                IF NEW.amount > available_balance THEN
+                    RAISE EXCEPTION 'Payment exceeds outstanding balance of %', available_balance;
+                END IF;
+
+                RETURN NEW;
+            END;
+            $$;
+            """
+        )
+    )
+    op.execute(
+        sa.text(
+            """
+            CREATE TRIGGER trg_folio_payment_balance_guard
+            BEFORE INSERT ON payments
+            FOR EACH ROW EXECUTE FUNCTION hms_guard_folio_payment_balance();
+            """
+        )
+    )
+
+    op.execute(
+        sa.text(
+            """
             CREATE OR REPLACE FUNCTION hms_guard_payment_refund_balance()
             RETURNS trigger
             LANGUAGE plpgsql
@@ -74,8 +116,6 @@ def upgrade() -> None:
                 signed_amount numeric;
                 deposit_required numeric;
             BEGIN
-                -- Lock the stay before reading the balance so concurrent
-                -- transactions serialize on the same deposit owner row.
                 PERFORM 1 FROM stays WHERE id = NEW.stay_id FOR UPDATE;
 
                 SELECT COALESCE(SUM(
@@ -138,3 +178,5 @@ def downgrade() -> None:
     op.execute(sa.text("DROP FUNCTION IF EXISTS hms_guard_deposit_balance()"))
     op.execute(sa.text("DROP TRIGGER IF EXISTS trg_payment_refund_balance_guard ON payment_refunds"))
     op.execute(sa.text("DROP FUNCTION IF EXISTS hms_guard_payment_refund_balance()"))
+    op.execute(sa.text("DROP TRIGGER IF EXISTS trg_folio_payment_balance_guard ON payments"))
+    op.execute(sa.text("DROP FUNCTION IF EXISTS hms_guard_folio_payment_balance()"))
