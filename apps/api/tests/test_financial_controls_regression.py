@@ -12,7 +12,7 @@ import app.models  # noqa: F401
 import app.pms_core  # noqa: F401
 from app.finance_controls import post_deposit, require_open_business_date, transfer_folio_item
 from app.financial_ops import folio_balance, refund_payment
-from app.financial_models import Invoice, InvoiceSequence, PaymentRefund
+from app.financial_models import Invoice, InvoiceSequence
 from app.ledger import post_transaction, reverse_transaction
 from app.models import (
     BusinessDateState,
@@ -146,6 +146,7 @@ class FinancialControlsRegressionTests(unittest.TestCase):
         self.folio_b = folio_b
         self.payment = payment
         self.item_a = item_a
+        self.item_b = item_b
         self.room_a = room_a
 
     def tearDown(self):
@@ -245,33 +246,27 @@ class FinancialControlsRegressionTests(unittest.TestCase):
                 reason="Duplicate reversal",
             )
 
-    def test_folio_transfer_moves_item_and_creates_balanced_financial_transfer(self):
+    def test_folio_transfer_rejects_mutating_posted_charge(self):
         payload = type(
             "TransferPayload",
             (),
             {"item_id": self.item_a.id, "to_folio_id": self.folio_b.id, "reason": "Group routing"},
         )()
-        result = transfer_folio_item(payload, self.db, self.user)
 
-        self.assertEqual(result["from_folio_id"], self.folio_a.id)
-        self.assertEqual(result["to_folio_id"], self.folio_b.id)
+        with self.assertRaises(ValueError):
+            transfer_folio_item(payload, self.db, self.user)
+
+        self.db.rollback()
         self.db.expire_all()
-        moved = self.db.get(FolioItem, self.item_a.id)
-        self.assertEqual(moved.folio_id, self.folio_b.id)
+        unchanged = self.db.get(FolioItem, self.item_a.id)
+        self.assertEqual(unchanged.folio_id, self.folio_a.id)
 
         tx = self.db.scalar(
             select(FinancialTransaction).where(
                 FinancialTransaction.transaction_type == "folio_transfer"
             )
         )
-        self.assertIsNotNone(tx)
-        entries = self.db.scalars(
-            select(LedgerEntry).where(LedgerEntry.transaction_id == tx.id)
-        ).all()
-        self.assertEqual(
-            sum(entry.amount for entry in entries if entry.direction == "debit"),
-            sum(entry.amount for entry in entries if entry.direction == "credit"),
-        )
+        self.assertIsNone(tx)
 
     def test_invoice_sequence_is_monotonic_without_reuse(self):
         sequence = self.db.get(InvoiceSequence, 1)
