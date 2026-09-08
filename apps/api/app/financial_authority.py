@@ -3,10 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 
+from fastapi import HTTPException
 from sqlalchemy import event, func, or_, select
 from sqlalchemy.orm import Session
 
-from .models import DepositTransaction, FinancialTransaction, FolioItem, LedgerEntry, Payment
+from .models import DepositTransaction, FinancialTransaction, Folio, FolioItem, LedgerEntry, Payment
 from .financial_models import Invoice, PaymentRefund
 
 MONEY = Decimal("0.01")
@@ -186,6 +187,114 @@ def _has_deposit_transaction(connection, target: DepositTransaction) -> bool:
         )
         .limit(1)
     ).scalar_one_or_none() is not None
+
+
+def _posted_receivable_balance(connection, folio_id: int) -> Decimal:
+    debits = connection.execute(
+        select(func.coalesce(func.sum(LedgerEntry.amount), 0))
+        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
+        .where(
+            LedgerEntry.folio_id == folio_id,
+            LedgerEntry.account == "Guest Receivables",
+            LedgerEntry.direction == "debit",
+            FinancialTransaction.status == "posted",
+        )
+    ).scalar_one() or Decimal("0.00")
+    credits = connection.execute(
+        select(func.coalesce(func.sum(LedgerEntry.amount), 0))
+        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
+        .where(
+            LedgerEntry.folio_id == folio_id,
+            LedgerEntry.account == "Guest Receivables",
+            LedgerEntry.direction == "credit",
+            FinancialTransaction.status == "posted",
+        )
+    ).scalar_one() or Decimal("0.00")
+    return money(max(Decimal("0.00"), Decimal(debits) - Decimal(credits)))
+
+
+def _posted_deposit_balance(connection, stay_id: int) -> Decimal:
+    credits = connection.execute(
+        select(func.coalesce(func.sum(LedgerEntry.amount), 0))
+        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
+        .where(
+            LedgerEntry.stay_id == stay_id,
+            LedgerEntry.account == "Guest Deposits",
+            LedgerEntry.direction == "credit",
+            FinancialTransaction.status == "posted",
+        )
+    ).scalar_one() or Decimal("0.00")
+    debits = connection.execute(
+        select(func.coalesce(func.sum(LedgerEntry.amount), 0))
+        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
+        .where(
+            LedgerEntry.stay_id == stay_id,
+            LedgerEntry.account == "Guest Deposits",
+            LedgerEntry.direction == "debit",
+            FinancialTransaction.status == "posted",
+        )
+    ).scalar_one() or Decimal("0.00")
+    return money(max(Decimal("0.00"), Decimal(credits) - Decimal(debits)))
+
+
+def _posted_payment_refunds(connection, payment_id: int) -> Decimal:
+    refund_ids = connection.execute(
+        select(PaymentRefund.id).where(PaymentRefund.payment_id == payment_id)
+    ).scalars().all()
+    if not refund_ids:
+        return Decimal("0.00")
+    value = connection.execute(
+        select(func.coalesce(func.sum(LedgerEntry.amount), 0))
+        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
+        .where(
+            FinancialTransaction.transaction_type == "payment_refund",
+            FinancialTransaction.status == "posted",
+            FinancialTransaction.reference_type == "payment_refund",
+            FinancialTransaction.reference_id.in_([str(refund_id) for refund_id in refund_ids]),
+            LedgerEntry.account == "Guest Receivables",
+            LedgerEntry.direction == "debit",
+        )
+    ).scalar_one() or Decimal("0.00")
+    return money(value)
+
+
+def _guard_concurrent_posting(connection, target: FinancialTransaction) -> None:
+    if target.transaction_type == "folio_payment" and target.folio_id is not None:
+        connection.execute(select(Folio.id).where(Folio.id == target.folio_id).with_for_update()).scalar_one_or_none()
+        payment_id = int(target.reference_id) if target.reference_type == "payment" and target.reference_id and target.reference_id.isdigit() else None
+        if payment_id is not None:
+            amount = connection.execute(select(Payment.amount).where(Payment.id == payment_id)).scalar_one_or_none()
+            if amount is not None and money(amount) > _posted_receivable_balance(connection, target.folio_id):
+                raise HTTPException(status_code=409, detail="Payment exceeds the remaining authoritative folio balance")
+
+    if target.transaction_type == "payment_refund" and target.reference_type == "payment_refund" and target.reference_id:
+        refund_id = int(target.reference_id) if target.reference_id.isdigit() else None
+        if refund_id is not None:
+            payment_id = connection.execute(select(PaymentRefund.payment_id).where(PaymentRefund.id == refund_id)).scalar_one_or_none()
+            if payment_id is not None:
+                connection.execute(select(Payment.id).where(Payment.id == payment_id).with_for_update()).scalar_one_or_none()
+                payment_amount = connection.execute(select(Payment.amount).where(Payment.id == payment_id)).scalar_one_or_none()
+                if payment_amount is not None:
+                    refundable = money(Decimal(payment_amount) - _posted_payment_refunds(connection, payment_id))
+                    refund_amount = connection.execute(select(PaymentRefund.amount).where(PaymentRefund.id == refund_id)).scalar_one_or_none() or Decimal("0.00")
+                    if money(refund_amount) > refundable:
+                        raise HTTPException(status_code=409, detail=f"Refund exceeds refundable payment balance of {refundable}")
+
+    if target.transaction_type in {"deposit_applied", "deposit_refund"} and target.reference_type == "deposit" and target.reference_id:
+        deposit_id = int(target.reference_id) if target.reference_id.isdigit() else None
+        if deposit_id is not None:
+            stay_id = connection.execute(select(DepositTransaction.stay_id).where(DepositTransaction.id == deposit_id)).scalar_one_or_none()
+            if stay_id is not None:
+                from .pms_core import Stay
+                connection.execute(select(Stay.id).where(Stay.id == stay_id).with_for_update()).scalar_one_or_none()
+                deposit_amount = connection.execute(select(DepositTransaction.amount).where(DepositTransaction.id == deposit_id)).scalar_one_or_none() or Decimal("0.00")
+                if money(deposit_amount) > _posted_deposit_balance(connection, stay_id):
+                    raise HTTPException(status_code=409, detail="Deposit transaction exceeds the remaining authoritative deposit balance")
+
+
+@event.listens_for(FinancialTransaction, "before_insert")
+def guard_concurrent_financial_posting(mapper, connection, target: FinancialTransaction) -> None:
+    _guard_concurrent_posting(connection, target)
 
 
 @event.listens_for(FolioItem, "before_update")
