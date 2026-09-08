@@ -11,6 +11,7 @@ import app.financial_models  # noqa: F401
 import app.models  # noqa: F401
 import app.pms_core  # noqa: F401
 from app.front_desk import atomic_checkout, create_walk_in, WalkInCreate, WalkInRoom
+from app.ledger import post_transaction
 from app.models import Guest, Folio, FolioItem, Payment, Reservation, ReservationRoom, Role, Room, RoomType, User
 from app.main import app
 
@@ -76,14 +77,46 @@ class FrontDeskPhaseCTests(unittest.TestCase):
         self.db.add(ReservationRoom(reservation_id=reservation.id, room_id=self.room1.id))
         from app.pms_core import Stay
         self.db.add(Stay(reservation_id=reservation.id, room_id=self.room1.id, guest_id=self.guest.id, status="checked_in", check_in=reservation.check_in, check_out=reservation.check_out, agreed_rate=Decimal("100")))
-        self.db.add(FolioItem(folio_id=folio.id, description="Room", category="room", quantity=1, unit_price=100, discount=0))
+        item = FolioItem(folio_id=folio.id, description="Room", category="room", quantity=1, unit_price=100, discount=0)
+        self.db.add(item); self.db.flush()
+        post_transaction(
+            self.db,
+            transaction_type="folio_charge",
+            description="Room charge",
+            reference_type="folio_item",
+            reference_id=str(item.id),
+            folio_id=folio.id,
+            reservation_id=reservation.id,
+            created_by=self.user.id,
+            idempotency_key=f"test-charge:{item.id}",
+            lines=[
+                {"account": "Guest Receivables", "direction": "debit", "amount": Decimal("100.00"), "folio_id": folio.id},
+                {"account": "Revenue - Room", "direction": "credit", "amount": Decimal("100.00"), "folio_id": folio.id},
+            ],
+        )
         self.room1.status = "occupied"; self.db.commit()
         with self.assertRaises(HTTPException) as ctx:
             atomic_checkout(reservation.id, self.db, self.user)
         self.assertEqual(ctx.exception.status_code, 409)
         self.db.rollback()
         payment = Payment(folio_id=folio.id, amount=100, method="cash")
-        self.db.add(payment); self.db.commit()
+        self.db.add(payment); self.db.flush()
+        post_transaction(
+            self.db,
+            transaction_type="folio_payment",
+            description="Cash settlement",
+            reference_type="payment",
+            reference_id=str(payment.id),
+            folio_id=folio.id,
+            reservation_id=reservation.id,
+            created_by=self.user.id,
+            idempotency_key=f"test-payment:{payment.id}",
+            lines=[
+                {"account": "Cash", "direction": "debit", "amount": Decimal("100.00"), "folio_id": folio.id},
+                {"account": "Guest Receivables", "direction": "credit", "amount": Decimal("100.00"), "folio_id": folio.id},
+            ],
+        )
+        self.db.commit()
         result = atomic_checkout(reservation.id, self.db, self.user)
         self.assertEqual(result["status"], "checked_out")
         self.assertEqual(self.db.get(Reservation, reservation.id).status, "checked_out")
