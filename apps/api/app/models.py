@@ -193,3 +193,34 @@ class BusinessDateState(Base):
     opened_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     last_closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class FinancialTransaction(TimestampMixin, Base):
+    __tablename__ = "financial_transactions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    transaction_no: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    business_date: Mapped[date] = mapped_column(Date, index=True)
+    transaction_type: Mapped[str] = mapped_column(String(40), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="posted", index=True)
+    reference_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    reference_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    folio_id: Mapped[int | None] = mapped_column(ForeignKey("folios.id"), nullable=True, index=True)
+    reservation_id: Mapped[int | None] = mapped_column(ForeignKey("reservations.id"), nullable=True, index=True)
+    description: Mapped[str] = mapped_column(String(300))
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    reversal_of_id: Mapped[int | None] = mapped_column(ForeignKey("financial_transactions.id"), nullable=True, index=True)
+
+
+class LedgerEntry(Base):
+    __tablename__ = "ledger_entries"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    transaction_id: Mapped[int] = mapped_column(ForeignKey("financial_transactions.id", ondelete="RESTRICT"), index=True)
+    account: Mapped[str] = mapped_column(String(60), index=True)
+    direction: Mapped[str] = mapped_column(String(10))
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    currency: Mapped[str] = mapped_column(String(3), default="PKR")
+    folio_id: Mapped[int | None] = mapped_column(ForeignKey("folios.id"), nullable=True, index=True)
+    stay_id: Mapped[int | None] = mapped_column(ForeignKey("stays.id"), nullable=True, index=True)
+    payment_method: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    reference: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
