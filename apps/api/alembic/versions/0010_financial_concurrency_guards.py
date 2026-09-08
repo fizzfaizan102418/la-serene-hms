@@ -74,6 +74,10 @@ def upgrade() -> None:
                 signed_amount numeric;
                 deposit_required numeric;
             BEGIN
+                -- Lock the stay before reading the balance so concurrent
+                -- transactions serialize on the same deposit owner row.
+                PERFORM 1 FROM stays WHERE id = NEW.stay_id FOR UPDATE;
+
                 SELECT COALESCE(SUM(
                     CASE
                         WHEN transaction_type IN ('received', 'adjusted', 'transferred_in') THEN amount
@@ -98,8 +102,7 @@ def upgrade() -> None:
                 IF NEW.transaction_type = 'received' THEN
                     SELECT deposit_required INTO deposit_required
                     FROM stays
-                    WHERE id = NEW.stay_id
-                    FOR UPDATE;
+                    WHERE id = NEW.stay_id;
 
                     IF deposit_required IS NOT NULL
                        AND deposit_required > 0
@@ -107,8 +110,6 @@ def upgrade() -> None:
                     THEN
                         RAISE EXCEPTION 'Deposit received exceeds required deposit';
                     END IF;
-                ELSE
-                    PERFORM 1 FROM stays WHERE id = NEW.stay_id FOR UPDATE;
                 END IF;
 
                 RETURN NEW;
