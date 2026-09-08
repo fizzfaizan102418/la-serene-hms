@@ -15,6 +15,7 @@ from .models import AuditLog, Folio, FolioItem, Guest, Payment, Reservation, Res
 from .night_audit import router as night_audit_router
 from .pms_core import Stay
 from .pms_domain import router as pms_domain_router
+from .phase_a_completion import router as phase_a_completion_router
 from .rate_lifecycle import router as rate_lifecycle_router
 from .reports import router as reports_router
 from .schemas import BillingSummaryResponse, FolioItemCreate, FolioItemResponse, FolioItemUpdate, FolioResponse, PaymentCreate, PaymentResponse
@@ -33,6 +34,7 @@ router.include_router(pms_domain_router)
 router.include_router(ledger_router)
 router.include_router(stay_lifecycle_router)
 router.include_router(rate_lifecycle_router)
+router.include_router(phase_a_completion_router)
 
 
 def money(value: Decimal) -> Decimal:
@@ -194,9 +196,10 @@ def add_payment(folio_id: int, payload: PaymentCreate, db: Session = Depends(get
     summary = build_folio_response(db, folio)
     if payload.amount > summary.balance: raise HTTPException(status_code=400, detail=f"Payment exceeds outstanding balance of {summary.balance}")
     reservation = db.get(Reservation, folio.reservation_id)
-    payment = Payment(folio_id=folio_id, amount=money(payload.amount), method=payload.method, reference=payload.reference); db.add(payment); db.flush()
-    post_folio_payment(db, folio_id=folio_id, reservation_id=reservation.id if reservation else 0, payment_id=payment.id, amount=payment.amount, method=payment.method, created_by=user.id)
-    audit(db, user.id, "payment", "folio", folio_id, {"amount": str(payment.amount), "method": payment.method, "reference": payment.reference}); db.commit(); db.refresh(payment); return payment
+    payment = Payment(folio_id=folio_id, amount=payload.amount, method=payload.method, reference=payload.reference); db.add(payment); db.flush()
+    post_folio_payment(db, folio_id=folio.id, reservation_id=reservation.id if reservation else 0, payment_id=payment.id, amount=payload.amount, method=payload.method, created_by=user.id)
+    audit(db, user.id, "payment", "folio", folio_id, {"amount": str(payload.amount), "method": payload.method, "reference": payload.reference}); db.commit(); db.refresh(payment)
+    return payment
 
 
 @router.post("/folios/{folio_id}/close", response_model=FolioResponse)
@@ -205,5 +208,9 @@ def close_folio(folio_id: int, db: Session = Depends(get_db), user: User = Depen
     if not folio: raise HTTPException(status_code=404, detail="Folio not found")
     if folio.status != "open": raise HTTPException(status_code=409, detail="Folio is already closed")
     summary = build_folio_response(db, folio)
-    if summary.balance != Decimal("0.00"): raise HTTPException(status_code=409, detail=f"Cannot close folio with outstanding balance of {summary.balance}")
-    folio.status = "closed"; audit(db, user.id, "close", "folio", folio.id, {"total": str(summary.total), "paid": str(summary.paid), "food_service_charge": str(summary.food_service_charge)}); db.commit(); db.refresh(folio); return build_folio_response(db, folio)
+    if summary.balance != 0: raise HTTPException(status_code=409, detail=f"Folio cannot be closed with an outstanding balance of {summary.balance}")
+    folio.status = "closed"; audit(db, user.id, "close", "folio", folio.id, {"reservation_id": folio.reservation_id}); db.commit(); db.refresh(folio)
+    return build_folio_response(db, folio)
+
+
+# Phase B financial controls remain exposed from this billing router.
