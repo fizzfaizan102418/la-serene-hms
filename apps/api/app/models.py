@@ -89,6 +89,7 @@ class FolioItem(TimestampMixin, Base):
     __tablename__ = "folio_items"
     id: Mapped[int] = mapped_column(primary_key=True)
     folio_id: Mapped[int] = mapped_column(ForeignKey("folios.id"))
+    stay_id: Mapped[int | None] = mapped_column(ForeignKey("stays.id"), nullable=True, index=True)
     description: Mapped[str] = mapped_column(String(200))
     category: Mapped[str] = mapped_column(String(50))
     quantity: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=1)
