@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,10 +11,11 @@ from sqlalchemy.orm import Session
 
 from .auth import require_roles
 from .db import get_db
-from .models import AuditLog, BusinessDateState, DepositTransaction, Folio, FolioItem, Guest, Reservation, ReservationRoom, Room, RoomMove, StayOccupant, StayRateSegment, User
+from .models import AuditLog, BusinessDateState, DepositTransaction, Folio, Guest, Reservation, ReservationRoom, Room, RoomMove, StayOccupant, StayRateSegment, User
 from .pms_core import Stay
+from .stay_lifecycle import StayFolioWindow
 
-router = APIRouter(prefix="/api", tags=["rate-lifecycle"])
+router = APIRouter(prefix="", tags=["rate-lifecycle"])
 MONEY = Decimal("0.01")
 ACTIVE_STAY_STATUSES = ("reserved", "checked_in")
 
@@ -131,10 +132,6 @@ def append_rate_segment(
     return segment
 
 
-class StayOverviewRequest(BaseModel):
-    pass
-
-
 class RateOverride(BaseModel):
     stay_id: int
     rate: Decimal = Field(ge=0)
@@ -157,6 +154,13 @@ class RateAwareRoomMove(BaseModel):
     discount_amount: Decimal = Field(default=Decimal("0"), ge=0)
     rate_plan: str | None = Field(default=None, max_length=80)
     notes: str | None = None
+
+
+class FolioWindowCreatePayload(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    payer_type: str = Field(default="guest", max_length=30)
+    guest_id: int | None = None
+    group_id: int | None = None
 
 
 def guest_summary(db: Session, guest_id: int) -> dict:
@@ -199,6 +203,7 @@ def reservation_stay_overview(reservation_id: int, db: Session = Depends(get_db)
         segments = ensure_rate_segments(db, stay)
         deposits = db.scalars(select(DepositTransaction).where(DepositTransaction.stay_id == stay.id).order_by(DepositTransaction.created_at, DepositTransaction.id)).all()
         deposit_balance = money(sum((item.amount if item.transaction_type in {"received", "adjusted"} else -item.amount for item in deposits), Decimal("0.00")))
+        windows = db.scalars(select(StayFolioWindow).where(StayFolioWindow.stay_id == stay.id).order_by(StayFolioWindow.id)).all()
         result.append(
             {
                 "id": stay.id,
@@ -218,6 +223,7 @@ def reservation_stay_overview(reservation_id: int, db: Session = Depends(get_db)
                 "deposit_received": deposit_balance,
                 "occupants": [{"id": o.id, "guest_id": o.guest_id, "guest_name": name, "role": o.role, "is_primary": o.is_primary, "check_in": o.check_in, "check_out": o.check_out, "notes": o.notes} for o, name in occupants],
                 "rate_segments": [{"id": s.id, "from_date": s.from_date, "to_date": s.to_date, "rate": s.rate, "discount_percent": s.discount_percent, "discount_amount": s.discount_amount, "net_rate": money(s.rate - s.discount_amount), "rate_plan": s.rate_plan, "source": s.source, "notes": s.notes} for s in segments],
+                "folio_windows": [{"id": w.id, "folio_id": w.folio_id, "stay_id": w.stay_id, "name": w.name, "payer_type": w.payer_type, "guest_id": w.guest_id, "group_id": w.group_id, "status": w.status} for w in windows],
             }
         )
     db.commit()
@@ -225,6 +231,24 @@ def reservation_stay_overview(reservation_id: int, db: Session = Depends(get_db)
         "reservation": {"id": reservation.id, "guest_id": reservation.guest_id, "guest_name": guest_summary(db, reservation.guest_id)["name"], "check_in": reservation.check_in, "check_out": reservation.check_out, "status": reservation.status, "folio_id": folio.id if folio else None},
         "stays": result,
     }
+
+
+@router.post("/stays/{stay_id}/folio-windows", status_code=201)
+def create_rate_lifecycle_folio_window(stay_id: int, payload: FolioWindowCreatePayload, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "reception"))):
+    stay = db.get(Stay, stay_id)
+    if not stay:
+        raise HTTPException(status_code=404, detail="Stay not found")
+    folio_id = db.scalar(select(Folio.id).where(Folio.reservation_id == stay.reservation_id).order_by(Folio.id).limit(1))
+    if folio_id is None:
+        raise HTTPException(status_code=409, detail="No folio exists for this reservation")
+    if payload.guest_id is not None and not db.get(Guest, payload.guest_id):
+        raise HTTPException(status_code=400, detail="Window payer guest does not exist")
+    window = StayFolioWindow(folio_id=folio_id, stay_id=stay.id, name=payload.name, payer_type=payload.payer_type, guest_id=payload.guest_id, group_id=payload.group_id, status="open")
+    db.add(window)
+    db.flush()
+    audit(db, user.id, "folio_window_create", "stay_folio_window", window.id, {"stay_id": stay.id, "name": payload.name, "payer_type": payload.payer_type})
+    db.commit()
+    return {"id": window.id, "folio_id": window.folio_id, "stay_id": window.stay_id, "name": window.name, "payer_type": window.payer_type, "guest_id": window.guest_id, "group_id": window.group_id, "status": window.status}
 
 
 @router.post("/reservations/{reservation_id}/extend-rate-aware")
@@ -242,6 +266,9 @@ def extend_reservation_rate_aware(reservation_id: int, payload: RateAwareExtensi
     stays = db.scalars(select(Stay).where(Stay.reservation_id == reservation.id, Stay.status == "checked_in").order_by(Stay.id)).all()
     if not stays:
         raise HTTPException(status_code=409, detail="Reservation has no checked-in stays")
+    stay_ids = {stay.id for stay in stays}
+    if any(item.stay_id not in stay_ids for item in payload.rate_overrides):
+        raise HTTPException(status_code=400, detail="Rate override references a stay outside this reservation")
     old_checkout = reservation.check_out
     conflicts = []
     for stay in stays:
@@ -250,40 +277,16 @@ def extend_reservation_rate_aware(reservation_id: int, payload: RateAwareExtensi
             conflicts.append(room.number if room else str(stay.room_id))
     if conflicts:
         raise HTTPException(status_code=409, detail=f"Extension conflicts with room(s): {', '.join(conflicts)}")
-    if any(item.stay_id not in {stay.id for stay in stays} for item in payload.rate_overrides):
-        raise HTTPException(status_code=400, detail="Rate override references a stay outside this reservation")
 
     for stay in stays:
         ensure_rate_segments(db, stay)
-        base = active_segment(db, stay, max(old_checkout - __import__("datetime").timedelta(days=1), stay.check_in))
+        base = active_segment(db, stay, max(old_checkout - timedelta(days=1), stay.check_in))
         override = overrides.get(stay.id)
         stay.check_out = payload.new_check_out
         if override:
-            append_rate_segment(
-                db,
-                stay,
-                old_checkout,
-                payload.new_check_out,
-                override.rate,
-                override.discount_percent,
-                override.discount_amount,
-                source="extension",
-                rate_plan=override.rate_plan,
-                notes=override.notes,
-            )
+            append_rate_segment(db, stay, old_checkout, payload.new_check_out, override.rate, override.discount_percent, override.discount_amount, source="extension", rate_plan=override.rate_plan, notes=override.notes)
         else:
-            append_rate_segment(
-                db,
-                stay,
-                old_checkout,
-                payload.new_check_out,
-                base.rate,
-                base.discount_percent,
-                base.discount_amount,
-                source="extension",
-                rate_plan=base.rate_plan,
-                notes="Carried forward from prior rate segment",
-            )
+            append_rate_segment(db, stay, old_checkout, payload.new_check_out, base.rate, base.discount_percent, base.discount_amount, source="extension", rate_plan=base.rate_plan, notes="Carried forward from prior rate segment")
     reservation.check_out = payload.new_check_out
     audit(db, user.id, "extend_rate_aware", "reservation", reservation.id, {"from_check_out": str(old_checkout), "to_check_out": str(payload.new_check_out), "rate_overrides": [item.model_dump(mode="json") for item in payload.rate_overrides]})
     db.commit()
@@ -318,7 +321,6 @@ def move_stay_rate_aware(stay_id: int, payload: RateAwareRoomMove, db: Session =
     if future is None:
         future = current
     if payload.rate is not None:
-        # Keep historical pricing before the move; replace only the post-move interval.
         gross = money(payload.rate)
         discount = money(gross * payload.discount_percent / Decimal("100")) if payload.discount_percent else money(payload.discount_amount)
         discount = min(discount, gross)
