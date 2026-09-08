@@ -10,6 +10,30 @@ class HealthResponse(BaseModel):
     mode: str
 
 
+class LoginRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=80)
+    password: str = Field(min_length=1, max_length=255)
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user_id: int
+    username: str
+    role: str
+
+
+class MeResponse(BaseModel):
+    id: int
+    username: str
+    role: str
+
+
+class BootstrapAdminRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=80)
+    password: str = Field(min_length=8, max_length=255)
+
+
 class RoomTypeCreate(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     base_rate: Decimal = Field(default=0, ge=0)
