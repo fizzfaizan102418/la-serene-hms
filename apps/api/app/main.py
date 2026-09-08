@@ -11,7 +11,10 @@ from .models import AuditLog, Folio, Guest, Reservation, ReservationRoom, Role, 
 from .schemas import (
     AvailabilityResponse,
     BootstrapAdminRequest,
+    CheckInResponse,
+    CheckOutResponse,
     DashboardResponse,
+    FrontDeskResponse,
     GuestCreate,
     GuestResponse,
     HealthResponse,
@@ -24,6 +27,7 @@ from .schemas import (
     RoomCreate,
     RoomResponse,
     RoomStatusUpdate,
+    RoomTransferRequest,
     RoomTypeCreate,
     RoomTypeResponse,
     RoomTypeUpdate,
@@ -32,14 +36,14 @@ from .schemas import (
 )
 
 Base.metadata.create_all(bind=engine)
-app = FastAPI(title="La Serene HMS API", version="0.5.0")
+app = FastAPI(title="La Serene HMS API", version="0.6.0")
 
 
 def write_audit(db: Session, action: str, entity_type: str, entity_id: int | None = None, details: dict | None = None, user_id: int | None = None):
     db.add(AuditLog(user_id=user_id, action=action, entity_type=entity_type, entity_id=str(entity_id) if entity_id is not None else None, details=json.dumps(details) if details else None))
 
 
-def reservation_overlaps(room_id: int, check_in: date, check_out: date, db: Session) -> bool:
+def reservation_overlaps(room_id: int, check_in: date, check_out: date, db: Session, exclude_reservation_id: int | None = None) -> bool:
     stmt = (
         select(ReservationRoom.reservation_id)
         .join(Reservation, Reservation.id == ReservationRoom.reservation_id)
@@ -51,7 +55,20 @@ def reservation_overlaps(room_id: int, check_in: date, check_out: date, db: Sess
         )
         .limit(1)
     )
+    if exclude_reservation_id is not None:
+        stmt = stmt.where(Reservation.id != exclude_reservation_id)
     return db.scalar(stmt) is not None
+
+
+def reservation_response(db: Session, reservation: Reservation) -> ReservationResponse:
+    room_ids = db.scalars(select(ReservationRoom.room_id).where(ReservationRoom.reservation_id == reservation.id)).all()
+    folio = db.scalar(select(Folio.id).where(Folio.reservation_id == reservation.id))
+    return ReservationResponse(id=reservation.id, guest_id=reservation.guest_id, check_in=reservation.check_in, check_out=reservation.check_out, status=reservation.status, room_ids=room_ids, folio_id=folio or 0)
+
+
+def reservation_list_item(db: Session, reservation: Reservation, guest_name: str) -> ReservationListResponse:
+    item = reservation_response(db, reservation)
+    return ReservationListResponse(**item.model_dump(), guest_name=guest_name)
 
 
 @app.on_event("startup")
@@ -222,12 +239,20 @@ def list_reservations(status_filter: str | None = Query(default=None, alias="sta
     if from_date: stmt = stmt.where(Reservation.check_out > from_date)
     if to_date: stmt = stmt.where(Reservation.check_in < to_date)
     rows = db.execute(stmt.order_by(Reservation.check_in, Reservation.id)).all()
-    result = []
-    for reservation, guest_name in rows:
-        room_ids = db.scalars(select(ReservationRoom.room_id).where(ReservationRoom.reservation_id == reservation.id)).all()
-        folio = db.scalar(select(Folio.id).where(Folio.reservation_id == reservation.id))
-        result.append(ReservationListResponse(id=reservation.id, guest_id=reservation.guest_id, guest_name=guest_name, check_in=reservation.check_in, check_out=reservation.check_out, status=reservation.status, room_ids=room_ids, folio_id=folio or 0))
-    return result
+    return [reservation_list_item(db, reservation, guest_name) for reservation, guest_name in rows]
+
+
+@app.get("/api/front-desk", response_model=FrontDeskResponse)
+def front_desk(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    today = date.today()
+    arrivals_rows = db.execute(select(Reservation, Guest.full_name).join(Guest, Guest.id == Reservation.guest_id).where(Reservation.check_in == today, Reservation.status == "reserved").order_by(Reservation.id)).all()
+    departure_rows = db.execute(select(Reservation, Guest.full_name).join(Guest, Guest.id == Reservation.guest_id).where(Reservation.check_out == today, Reservation.status == "checked_in").order_by(Reservation.id)).all()
+    in_house_rows = db.execute(select(Reservation, Guest.full_name).join(Guest, Guest.id == Reservation.guest_id).where(Reservation.status == "checked_in").order_by(Reservation.check_out, Reservation.id)).all()
+    return FrontDeskResponse(
+        arrivals=[reservation_list_item(db, reservation, guest_name) for reservation, guest_name in arrivals_rows],
+        departures=[reservation_list_item(db, reservation, guest_name) for reservation, guest_name in departure_rows],
+        in_house=[reservation_list_item(db, reservation, guest_name) for reservation, guest_name in in_house_rows],
+    )
 
 
 @app.post("/api/reservations", response_model=ReservationResponse, status_code=201)
@@ -243,8 +268,72 @@ def create_reservation(payload: ReservationCreate, db: Session = Depends(get_db)
     reservation = Reservation(guest_id=payload.guest_id, check_in=payload.check_in, check_out=payload.check_out, notes=payload.notes)
     db.add(reservation); db.flush()
     for room in rooms:
-        db.add(ReservationRoom(reservation_id=reservation.id, room_id=room.id)); room.status = "reserved"
+        db.add(ReservationRoom(reservation_id=reservation.id, room_id=room.id))
+        if payload.check_in == date.today():
+            room.status = "reserved"
+        else:
+            room.status = "reserved"
     folio = Folio(reservation_id=reservation.id); db.add(folio); db.flush()
     write_audit(db, "create", "reservation", reservation.id, {"room_ids": payload.room_ids, "guest_id": payload.guest_id, "check_in": str(payload.check_in), "check_out": str(payload.check_out)}, user.id)
     db.commit(); db.refresh(reservation); db.refresh(folio)
-    return ReservationResponse(id=reservation.id, guest_id=reservation.guest_id, check_in=reservation.check_in, check_out=reservation.check_out, status=reservation.status, room_ids=payload.room_ids, folio_id=folio.id)
+    return reservation_response(db, reservation)
+
+
+@app.post("/api/reservations/{reservation_id}/check-in", response_model=CheckInResponse)
+def check_in_reservation(reservation_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "reception"))):
+    reservation = db.get(Reservation, reservation_id)
+    if not reservation: raise HTTPException(status_code=404, detail="Reservation not found")
+    if reservation.status != "reserved": raise HTTPException(status_code=409, detail="Reservation is not awaiting check-in")
+    if reservation.check_in > date.today(): raise HTTPException(status_code=409, detail="Reservation check-in date is in the future")
+    room_ids = db.scalars(select(ReservationRoom.room_id).where(ReservationRoom.reservation_id == reservation.id)).all()
+    rooms = [db.get(Room, room_id) for room_id in room_ids]
+    if not rooms or any(room is None for room in rooms): raise HTTPException(status_code=409, detail="Reservation has an invalid room assignment")
+    blocked = [room.number for room in rooms if room.status in ("dirty", "out_of_order", "occupied")]
+    if blocked: raise HTTPException(status_code=409, detail=f"Assigned room(s) cannot be checked in: {', '.join(blocked)}")
+    reservation.status = "checked_in"
+    for room in rooms: room.status = "occupied"
+    write_audit(db, "check_in", "reservation", reservation.id, {"room_ids": room_ids}, user.id)
+    for room in rooms: write_audit(db, "check_in", "room", room.id, {"reservation_id": reservation.id}, user.id)
+    db.commit(); db.refresh(reservation)
+    return CheckInResponse(**reservation_response(db, reservation).model_dump())
+
+
+@app.post("/api/reservations/{reservation_id}/check-out", response_model=CheckOutResponse)
+def check_out_reservation(reservation_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "reception"))):
+    reservation = db.get(Reservation, reservation_id)
+    if not reservation: raise HTTPException(status_code=404, detail="Reservation not found")
+    if reservation.status != "checked_in": raise HTTPException(status_code=409, detail="Reservation is not checked in")
+    room_ids = db.scalars(select(ReservationRoom.room_id).where(ReservationRoom.reservation_id == reservation.id)).all()
+    rooms = [db.get(Room, room_id) for room_id in room_ids]
+    reservation.status = "checked_out"
+    for room in rooms:
+        if room and room.status == "occupied": room.status = "dirty"
+    write_audit(db, "check_out", "reservation", reservation.id, {"room_ids": room_ids}, user.id)
+    for room in rooms:
+        if room: write_audit(db, "check_out", "room", room.id, {"reservation_id": reservation.id, "new_status": room.status}, user.id)
+    db.commit(); db.refresh(reservation)
+    return CheckOutResponse(**reservation_response(db, reservation).model_dump())
+
+
+@app.post("/api/reservations/{reservation_id}/transfer", response_model=ReservationResponse)
+def transfer_room(reservation_id: int, payload: RoomTransferRequest, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "reception"))):
+    if payload.from_room_id == payload.to_room_id: raise HTTPException(status_code=400, detail="Source and destination rooms must be different")
+    reservation = db.get(Reservation, reservation_id)
+    if not reservation: raise HTTPException(status_code=404, detail="Reservation not found")
+    if reservation.status != "checked_in": raise HTTPException(status_code=409, detail="Room transfer requires a checked-in reservation")
+    source = db.get(Room, payload.from_room_id); target = db.get(Room, payload.to_room_id)
+    if not source or not target: raise HTTPException(status_code=404, detail="Source or destination room not found")
+    link = db.scalar(select(ReservationRoom).where(ReservationRoom.reservation_id == reservation.id, ReservationRoom.room_id == source.id))
+    if not link: raise HTTPException(status_code=409, detail="Source room is not assigned to this reservation")
+    if target.status not in ("available",): raise HTTPException(status_code=409, detail="Destination room is not available")
+    if reservation_overlaps(target.id, date.today(), reservation.check_out, db, exclude_reservation_id=reservation.id):
+        raise HTTPException(status_code=409, detail="Destination room has a conflicting reservation")
+    db.delete(link)
+    db.add(ReservationRoom(reservation_id=reservation.id, room_id=target.id))
+    source.status = "dirty"
+    target.status = "occupied"
+    write_audit(db, "room_transfer", "reservation", reservation.id, {"from_room_id": source.id, "to_room_id": target.id}, user.id)
+    write_audit(db, "room_transfer", "room", source.id, {"reservation_id": reservation.id, "to_room_id": target.id, "new_status": "dirty"}, user.id)
+    write_audit(db, "room_transfer", "room", target.id, {"reservation_id": reservation.id, "from_room_id": source.id, "new_status": "occupied"}, user.id)
+    db.commit(); db.refresh(reservation)
+    return reservation_response(db, reservation)
