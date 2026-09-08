@@ -18,6 +18,7 @@ from .models import (
     Guest,
     Reservation,
     ReservationRoom,
+    ReservationSplit,
     Room,
     RoomMove,
     StayOccupant,
@@ -334,23 +335,21 @@ def split_reservation(reservation_id: int, payload: ReservationSplitRequest, db:
         )
         db.add(new_stay)
         db.flush()
-        for segment in db.scalars(select(StayRateSegment).where(StayRateSegment.stay_id == stay.id, StayRateSegment.from_date < old_check_out, StayRateSegment.to_date > payload.to_date)).all():
-            db.add(StayRateSegment(
-                stay_id=new_stay.id,
-                from_date=max(segment.from_date, payload.to_date),
-                to_date=min(segment.to_date, old_check_out),
-                rate=segment.rate,
-                discount_percent=segment.discount_percent,
-                discount_amount=segment.discount_amount,
-                rate_plan=segment.rate_plan,
-                source="reservation_split",
-                notes=segment.notes,
-            ))
+        segments = db.scalars(select(StayRateSegment).where(StayRateSegment.stay_id == stay.id, StayRateSegment.from_date < old_check_out, StayRateSegment.to_date > payload.to_date).order_by(StayRateSegment.from_date)).all()
+        for segment in segments:
+            tail_from = max(segment.from_date, payload.to_date)
+            tail_to = min(segment.to_date, old_check_out)
+            if tail_from < tail_to:
+                db.add(StayRateSegment(stay_id=new_stay.id, from_date=tail_from, to_date=tail_to, rate=segment.rate, discount_percent=segment.discount_percent, discount_amount=segment.discount_amount, rate_plan=segment.rate_plan, source="reservation_split", notes=segment.notes))
+            if segment.to_date > payload.to_date and segment.from_date < payload.to_date:
+                segment.to_date = payload.to_date
         for occupant in db.scalars(select(StayOccupant).where(StayOccupant.stay_id == stay.id)).all():
             occ_in = max(occupant.check_in or stay.check_in, payload.to_date)
             occ_out = min(occupant.check_out or old_check_out, old_check_out)
             if occ_in < occ_out:
                 db.add(StayOccupant(stay_id=new_stay.id, guest_id=occupant.guest_id, role=occupant.role, is_primary=occupant.is_primary, check_in=occ_in, check_out=occ_out, notes=occupant.notes))
+            if (occupant.check_out or old_check_out) > payload.to_date and (occupant.check_in or stay.check_in) < payload.to_date:
+                occupant.check_out = payload.to_date
         new_stays.append(new_stay)
 
     split = ReservationSplit(source_reservation_id=source.id, new_reservation_id=new_reservation.id, reason=payload.reason, split_check_in=payload.to_date, split_check_out=source.check_out, created_by=user.id)
