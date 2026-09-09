@@ -1,0 +1,1 @@
+K12 implementation is delivered through the production migration guard and controlled Windows database lifecycle script. See docs/PHASE-K12-DATABASE-LIFECYCLE.md for the operator runbook.
