@@ -134,11 +134,11 @@ def create_reservation_workflow(payload: ReservationWorkflowCreate, db: Session 
     stays: list[Stay] = []
     per_room_deposit = money(payload.deposit_received / Decimal(len(room_ids))) if room_ids else Decimal("0")
     for item, discount, net, occupant_id in stay_values:
-        db.add(ReservationRoom(reservation_id=reservation.id, room_id=item.room_id))
         stay = Stay(reservation_id=reservation.id, room_id=item.room_id, guest_id=occupant_id, status="reserved", check_in=payload.check_in, check_out=payload.check_out, agreed_rate=net, discount_percent=money(item.discount_percent), discount_amount=discount, payment_due_policy=payload.payment_policy, deposit_required=money(net * stay_days), deposit_received=min(per_room_deposit, money(net * stay_days)), notes=payload.notes)
         db.add(stay); db.flush(); stays.append(stay)
         db.add(StayOccupant(stay_id=stay.id, guest_id=occupant_id, role="primary", is_primary=True, check_in=payload.check_in, check_out=payload.check_out, notes=payload.notes))
         db.add(StayRateSegment(stay_id=stay.id, from_date=payload.check_in, to_date=payload.check_out, rate=money(item.agreed_rate), discount_percent=item.discount_percent, discount_amount=discount, source="reservation", notes=payload.notes))
+        db.add(ReservationRoom(reservation_id=reservation.id, room_id=item.room_id))
         room = db.get(Room, item.room_id)
         if room and payload.check_in <= date.today() < payload.check_out:
             room.status = "reserved"
