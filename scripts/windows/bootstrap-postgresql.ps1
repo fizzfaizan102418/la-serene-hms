@@ -62,7 +62,7 @@ try {
     & $Psql -h $Host -p $Port -U postgres -d $Database -v ON_ERROR_STOP=1 -c "REVOKE ALL ON DATABASE \"$Database\" FROM PUBLIC; GRANT CONNECT ON DATABASE \"$Database\" TO \"$AppUser\";" | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "Could not apply database access policy." }
 
-    $ConnectionUrl = "postgresql+psycopg://$AppUser:<URL_ENCODED_PASSWORD>@$Host`:$Port/$Database"
+    $ConnectionUrl = "postgresql+psycopg://${AppUser}:<URL_ENCODED_PASSWORD>@$Host`:$Port/$Database"
     Write-Host ""
     Write-Host "Bootstrap completed successfully." -ForegroundColor Green
     Write-Host "Set HMS_DATABASE_URL in the production environment to:" -ForegroundColor Cyan
