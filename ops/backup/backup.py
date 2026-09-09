@@ -4,18 +4,17 @@ import argparse
 import hashlib
 import json
 import os
-import shutil
 import subprocess
 import tempfile
 from datetime import date, datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
 
 import psycopg
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_BACKUP_DIR = PROJECT_ROOT / "backups"
+POSTGRES_PREFIXES = ("postgresql://", "postgres://", "postgresql+psycopg://")
 
 
 def utc_now() -> datetime:
@@ -24,7 +23,7 @@ def utc_now() -> datetime:
 
 def require_postgres_url() -> str:
     url = os.environ.get("HMS_DATABASE_URL", "").strip()
-    if not url.startswith(("postgresql://", "postgres://", "postgresql+psycopg://")):
+    if not url.startswith(POSTGRES_PREFIXES):
         raise RuntimeError("HMS_DATABASE_URL must point to PostgreSQL for production backup operations")
     return url
 
@@ -100,28 +99,29 @@ def prune_backups(backup_dir: Path, retain: int) -> None:
 def create_backup(output_dir: Path, retain: int = 7) -> tuple[Path, Path]:
     database_url = require_postgres_url()
     output_dir.mkdir(parents=True, exist_ok=True)
-    metadata = database_metadata(database_url)
+    metadata_before = database_metadata(database_url)
     started = utc_now()
     stamp = started.strftime("%Y%m%dT%H%M%SZ")
     dump_name = f"la_serene_hms_{stamp}.dump"
     manifest_name = f"la_serene_hms_{stamp}.manifest.json"
 
     with tempfile.TemporaryDirectory(dir=output_dir) as temp_dir_name:
-        temp_dir = Path(temp_dir_name)
-        temp_dump = temp_dir / dump_name
+        temp_dump = Path(temp_dir_name) / dump_name
         run_pg_dump(database_url, temp_dump)
+        metadata_after = database_metadata(database_url)
+        if metadata_after != metadata_before:
+            raise RuntimeError("Database business date or schema revision changed during backup; refusing artifact")
         digest = sha256_file(temp_dump)
         final_dump = output_dir / dump_name
         temp_dump.replace(final_dump)
 
-    completed = utc_now()
     manifest = {
         "format": "la-serene-hms-backup-v1",
         "backup_file": dump_name,
         "sha256": digest,
         "size_bytes": final_dump.stat().st_size,
-        "created_at": completed.isoformat(),
-        **metadata,
+        "created_at": utc_now().isoformat(),
+        **metadata_before,
     }
     write_manifest(output_dir / manifest_name, manifest)
     prune_backups(output_dir, retain)
@@ -147,12 +147,13 @@ def verify_backup(backup_file: Path, manifest_file: Path) -> dict[str, object]:
 
 def restore_and_verify(backup_file: Path, manifest_file: Path, target_database_url: str) -> dict[str, object]:
     payload = verify_backup(backup_file, manifest_file)
-    if not target_database_url.startswith(("postgresql://", "postgres://", "postgresql+psycopg://")):
+    if not target_database_url.startswith(POSTGRES_PREFIXES):
         raise RuntimeError("Target database must be PostgreSQL")
 
     with tempfile.TemporaryDirectory(prefix="la-serene-hms-restore-") as temp_dir_name:
         list_file = Path(temp_dir_name) / "restore.list"
-        subprocess.run(["pg_restore", "--list", str(backup_file)], check=True, stdout=list_file.open("w", encoding="utf-8"))
+        with list_file.open("w", encoding="utf-8") as handle:
+            subprocess.run(["pg_restore", "--list", str(backup_file)], check=True, stdout=handle)
         subprocess.run(
             [
                 "pg_restore",
@@ -184,15 +185,18 @@ def restore_and_verify(backup_file: Path, manifest_file: Path, target_database_u
             cur.execute(
                 """
                 SELECT COUNT(*)
-                FROM financial_transactions ft
-                LEFT JOIN ledger_entries le ON le.transaction_id = ft.id
-                WHERE ft.status = 'posted'
-                GROUP BY ft.id
-                HAVING COALESCE(SUM(CASE WHEN le.direction = 'debit' THEN le.amount ELSE 0 END), 0)
-                    <> COALESCE(SUM(CASE WHEN le.direction = 'credit' THEN le.amount ELSE 0 END), 0)
+                FROM (
+                    SELECT ft.id
+                    FROM financial_transactions ft
+                    LEFT JOIN ledger_entries le ON le.transaction_id = ft.id
+                    WHERE ft.status = 'posted'
+                    GROUP BY ft.id
+                    HAVING COALESCE(SUM(CASE WHEN le.direction = 'debit' THEN le.amount ELSE 0 END), 0)
+                        <> COALESCE(SUM(CASE WHEN le.direction = 'credit' THEN le.amount ELSE 0 END), 0)
+                ) broken
                 """
             )
-            if cur.fetchone() is not None:
+            if cur.fetchone()[0] != 0:
                 raise RuntimeError("Restored database contains an unbalanced posted financial transaction")
 
     return {
@@ -206,15 +210,12 @@ def restore_and_verify(backup_file: Path, manifest_file: Path, target_database_u
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Create or verify a La Serene HMS PostgreSQL backup")
     subparsers = parser.add_subparsers(dest="command", required=True)
-
     create = subparsers.add_parser("create")
     create.add_argument("--output-dir", type=Path, default=DEFAULT_BACKUP_DIR)
     create.add_argument("--retain", type=int, default=7)
-
     verify = subparsers.add_parser("verify")
     verify.add_argument("backup_file", type=Path)
     verify.add_argument("manifest_file", type=Path)
-
     restore = subparsers.add_parser("restore-verify")
     restore.add_argument("backup_file", type=Path)
     restore.add_argument("manifest_file", type=Path)
@@ -232,8 +233,7 @@ def main() -> int:
         payload = verify_backup(args.backup_file, args.manifest_file)
         print(json.dumps({"status": "verified", "backup_file": args.backup_file.name, "business_date": payload["business_date"]}))
         return 0
-    result = restore_and_verify(args.backup_file, args.manifest_file, args.target_database_url)
-    print(json.dumps(result))
+    print(json.dumps(restore_and_verify(args.backup_file, args.manifest_file, args.target_database_url)))
     return 0
 
 
