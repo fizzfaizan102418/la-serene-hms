@@ -92,7 +92,7 @@ class FrontDeskTransactionalIntegrityTests(unittest.TestCase):
         self.assertEqual(self.db.get(Room, self.room.id).status, "available")
 
     def test_checkout_posts_only_elapsed_business_date_room_nights_then_closes(self):
-        reservation, folio, _ = self.make_checked_in_reservation(date(2026, 9, 8), date(2026, 9, 10))
+        reservation, folio, _ = self.make_checked_in_reservation(date(2026, 9, 7), date(2026, 9, 10))
 
         with self.assertRaises(HTTPException) as ctx:
             atomic_checkout(reservation.id, self.db, self.user)
