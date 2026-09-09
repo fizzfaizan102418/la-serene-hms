@@ -1,13 +1,13 @@
 """Serialize Night Audit closure with financial posting.
 
 Revision ID: 0012_night_audit_closure_lock
-Revises: 0011_reservation_lifecycle_integrity
+Revises: 0011_reservation_lifecycle
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "0012_night_audit_closure_lock"
-down_revision = "0011_reservation_lifecycle_integrity"
+down_revision = "0011_reservation_lifecycle"
 branch_labels = None
 depends_on = None
 
