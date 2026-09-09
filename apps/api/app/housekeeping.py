@@ -22,6 +22,7 @@ from .housekeeping_control import (
     resolve_maintenance_block,
     router as housekeeping_control_router,
 )
+from . import housekeeping_hooks  # noqa: F401 - installs transactional dirty-room hook
 from .inventory import lock_business_date
 from .models import AuditLog, Reservation, ReservationRoom, Room, RoomType, User
 
