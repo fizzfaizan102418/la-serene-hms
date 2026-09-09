@@ -7,6 +7,7 @@ from unittest.mock import patch
 from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
 
 from app.db import Base
 import app.financial_models  # noqa: F401
@@ -19,10 +20,15 @@ from app.night_audit import ClosingConfirm, build_summary, close_day, get_busine
 class NightAuditControlTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+        cls.engine = create_engine(
+            "sqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
 
     def setUp(self):
         Base.metadata.drop_all(bind=self.engine)
+        Base.metadata.create_all(bind=self.engine)
         self.db = Session(self.engine)
         role = Role(name="admin")
         self.db.add(role)
