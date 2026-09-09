@@ -23,7 +23,7 @@ from .db import DATA_DIR, get_db
 from .financial_ops import ledger_reconciliation
 from .finance_controls import payment_reconciliation, revenue_report, trial_balance
 from .models import AuditLog, BusinessDateState, Expense, Folio, FolioItem, Payment, Reservation, Room, User
-from .business_date import get_current_business_date
+from .business_date import get_current_business_date, lock_current_business_date
 
 router = APIRouter(prefix="/night-audit", tags=["night-audit"])
 MONEY = Decimal("0.01")
@@ -53,7 +53,7 @@ def serializable(value):
 
 
 def get_business_date(db: Session) -> date:
-    return get_current_business_date(db, fallback_to_today=True)
+    return get_current_business_date(db)
 
 
 def audit(db: Session, user_id: int, action: str, business_date: date, details: dict) -> None:
@@ -308,24 +308,24 @@ def preview(db: Session = Depends(get_db), _: User = Depends(require_roles("admi
 
 @router.post("/close")
 def close_day(payload: ClosingConfirm | None = None, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
-    business_date = get_business_date(db)
-    state = db.get(BusinessDateState, 1)
-    if state and state.last_closed_at and state.last_closed_at.date() >= business_date:
+    # The business-date row is the serialization point for financial posting and
+    # Night Audit. PostgreSQL blocks a concurrent financial insert until this
+    # transaction commits or rolls back, so the reconciliation snapshot cannot
+    # race with a newly committed financial transaction for the closing date.
+    state = lock_current_business_date(db)
+    business_date = state.current_business_date
+    if state.last_closed_at and state.last_closed_at.date() >= business_date:
         raise HTTPException(status_code=409, detail=f"Business date {business_date.isoformat()} is already closed")
 
     finance = finance_snapshot(db, business_date)
     if finance["status"] != "balanced":
+        db.rollback()
         raise HTTPException(status_code=409, detail={"message": "Financial reconciliation requires review before Night Audit can close", "business_date": business_date, "finance": serializable(finance)})
 
     summary = build_summary(db, business_date, finance)
     closed_at = datetime.utcnow()
     pack = create_pack(summary, payload.notes if payload else None, user.username, closed_at)
 
-    state = db.get(BusinessDateState, 1)
-    if state is None:
-        state = BusinessDateState(id=1, current_business_date=business_date, opened_at=closed_at)
-        db.add(state)
-        db.flush()
     state.last_closed_at = closed_at
     state.current_business_date = business_date + timedelta(days=1)
     state.opened_at = closed_at
