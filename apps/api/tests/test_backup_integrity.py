@@ -1,7 +1,12 @@
 import json
+import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(REPO_ROOT))
 
 from ops.backup.backup import prune_backups, sha256_file, verify_backup
 
@@ -52,26 +57,20 @@ class BackupIntegrityTests(unittest.TestCase):
     def test_retention_removes_old_backup_and_manifest_pair(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for name in ("old", "new"):
-                dump = root / f"{name}.dump"
-                dump.write_bytes(name.encode())
-                (root / f"{name}.manifest.json").write_text(
-                    json.dumps({"backup_file": dump.name}), encoding="utf-8"
-                )
+            old_dump = root / "old.dump"
+            new_dump = root / "new.dump"
+            old_dump.write_bytes(b"old")
+            new_dump.write_bytes(b"new")
             old_manifest = root / "old.manifest.json"
             new_manifest = root / "new.manifest.json"
-            old_manifest.touch()
-            new_manifest.touch()
-            old_manifest.write_text(json.dumps({"backup_file": "old.dump"}), encoding="utf-8")
-            new_manifest.write_text(json.dumps({"backup_file": "new.dump"}), encoding="utf-8")
-            old_manifest.utime = None
-            import os
+            old_manifest.write_text(json.dumps({"backup_file": old_dump.name}), encoding="utf-8")
+            new_manifest.write_text(json.dumps({"backup_file": new_dump.name}), encoding="utf-8")
             os.utime(old_manifest, (1, 1))
             os.utime(new_manifest, (2, 2))
             prune_backups(root, retain=1)
-            self.assertFalse((root / "old.dump").exists())
+            self.assertFalse(old_dump.exists())
             self.assertFalse(old_manifest.exists())
-            self.assertTrue((root / "new.dump").exists())
+            self.assertTrue(new_dump.exists())
             self.assertTrue(new_manifest.exists())
 
 
