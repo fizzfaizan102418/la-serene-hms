@@ -25,6 +25,7 @@ from .schemas import BillingSummaryResponse, FolioItemCreate, FolioItemResponse,
 from .stay_lifecycle import router as stay_lifecycle_router
 from .restaurant_pos import router as restaurant_pos_router
 from .inventory import router as inventory_router
+from .purchasing import router as purchasing_router
 
 router = APIRouter(prefix="/api", tags=["billing"])
 MONEY = Decimal("0.01")
@@ -51,6 +52,11 @@ for inventory_route in inventory_router.routes:
     if hasattr(inventory_route, "path_format"):
         inventory_route.path_format = inventory_route.path_format.removeprefix("/api")
     router.routes.append(inventory_route)
+for purchasing_route in purchasing_router.routes:
+    purchasing_route.path = purchasing_route.path.removeprefix("/api")
+    if hasattr(purchasing_route, "path_format"):
+        purchasing_route.path_format = purchasing_route.path_format.removeprefix("/api")
+    router.routes.append(purchasing_route)
 
 
 def money(value: Decimal) -> Decimal:
