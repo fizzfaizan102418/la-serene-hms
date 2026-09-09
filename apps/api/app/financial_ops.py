@@ -143,9 +143,11 @@ def refund_payment(folio_id: int, payload: RefundCreate, idempotency_key: str | 
     already_refunded = payment_refunded_amount(db, payment.id); refundable = money(Decimal(payment.amount) - already_refunded); amount = money(payload.amount)
     if amount > refundable: raise HTTPException(status_code=409, detail=f"Refund exceeds refundable payment balance of {refundable}")
     reservation = db.get(Reservation, folio.reservation_id); method = payload.method or payment.method
-    refund = PaymentRefund(payment_id=payment.id, folio_id=folio_id, amount=amount, method=method, reference=payload.reference, reason=payload.reason, created_by=user.id); db.add(refund); db.flush()
-    cash_account = {"cash": "Cash", "card": "Card Clearing", "bank_transfer": "Bank", "other": "Other Payment"}.get(method, "Other Payment")
+    refund = PaymentRefund(payment_id=payment.id, folio_id=folio_id, amount=amount, method=method, reference=payload.reference, reason=payload.reason, created_by=user.id)
+    db.add(refund)
     try:
+        db.flush()
+        cash_account = {"cash": "Cash", "card": "Card Clearing", "bank_transfer": "Bank", "other": "Other Payment"}.get(method, "Other Payment")
         tx = post_transaction(db, transaction_type="payment_refund", description=f"Refund payment #{payment.id}", reference_type="payment_refund", reference_id=str(refund.id), folio_id=folio_id, reservation_id=reservation.id if reservation else None, created_by=user.id, idempotency_key=key, lines=[{"account": "Guest Receivables", "direction": "debit", "amount": amount, "folio_id": folio_id}, {"account": cash_account, "direction": "credit", "amount": amount, "folio_id": folio_id, "payment_method": method}])
     except (ValueError, IntegrityError) as exc:
         db.rollback(); raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -264,9 +266,10 @@ def create_deposit_with_ledger(stay_id: int, payload: dict, idempotency_key: str
     folio = db.scalar(select(Folio).where(Folio.reservation_id == stay.reservation_id)); reservation = db.get(Reservation, stay.reservation_id); current = stay_deposit_ledger_balance(db, stay.id); signed = amount if transaction_type in {"received", "adjusted"} else -amount; new_balance = money(current + signed)
     if new_balance < 0: raise HTTPException(status_code=409, detail="Deposit transaction exceeds available deposit balance")
     if transaction_type == "received" and stay.deposit_required > 0 and new_balance > stay.deposit_required: raise HTTPException(status_code=409, detail="Deposit received exceeds required deposit")
-    deposit = DepositTransaction(stay_id=stay.id, folio_id=folio.id if folio else None, transaction_type=transaction_type, amount=amount, payment_method=payload.get("payment_method"), reference=key or payload.get("reference"), notes=payload.get("notes"), created_by=user.id); db.add(deposit); db.flush()
-    method = payload.get("payment_method") or "other"; cash_account = {"cash": "Cash", "card": "Card Clearing", "bank_transfer": "Bank", "other": "Other Payment"}.get(method, "Other Payment"); financial_key = key or f"deposit:{deposit.id}"
+    deposit = DepositTransaction(stay_id=stay.id, folio_id=folio.id if folio else None, transaction_type=transaction_type, amount=amount, payment_method=payload.get("payment_method"), reference=key or payload.get("reference"), notes=payload.get("notes"), created_by=user.id); db.add(deposit)
     try:
+        db.flush()
+        method = payload.get("payment_method") or "other"; cash_account = {"cash": "Cash", "card": "Card Clearing", "bank_transfer": "Bank", "other": "Other Payment"}.get(method, "Other Payment"); financial_key = key or f"deposit:{deposit.id}"
         if transaction_type == "received": tx = post_deposit_received(db, stay_id=stay.id, folio_id=folio.id if folio else None, reservation_id=stay.reservation_id, deposit_id=deposit.id, amount=amount, method=payload.get("payment_method"), created_by=user.id)
         elif transaction_type == "refunded": tx = post_transaction(db, transaction_type="deposit_refund", description=f"Deposit refund #{deposit.id}", reference_type="deposit", reference_id=str(deposit.id), folio_id=folio.id if folio else None, reservation_id=stay.reservation_id, created_by=user.id, idempotency_key=financial_key, lines=[{"account": "Guest Deposits", "direction": "debit", "amount": amount, "stay_id": stay.id}, {"account": cash_account, "direction": "credit", "amount": amount, "stay_id": stay.id, "payment_method": payload.get("payment_method")}])
         elif transaction_type == "applied": tx = post_transaction(db, transaction_type="deposit_applied", description=f"Deposit applied #{deposit.id}", reference_type="deposit", reference_id=str(deposit.id), folio_id=folio.id if folio else None, reservation_id=stay.reservation_id, created_by=user.id, idempotency_key=financial_key, lines=[{"account": "Guest Deposits", "direction": "debit", "amount": amount, "stay_id": stay.id}, {"account": "Guest Receivables", "direction": "credit", "amount": amount, "folio_id": folio.id if folio else None, "stay_id": stay.id}])
