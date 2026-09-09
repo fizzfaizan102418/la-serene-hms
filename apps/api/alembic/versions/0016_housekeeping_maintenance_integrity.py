@@ -60,25 +60,16 @@ def upgrade() -> None:
 
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
-        op.execute(sa.text("""
-            CREATE UNIQUE INDEX uq_housekeeping_active_room
-            ON housekeeping_tasks(room_id)
-            WHERE status IN ('pending','in_progress');
-        """))
-        op.execute(sa.text("""
-            CREATE UNIQUE INDEX uq_active_maintenance_room
-            ON maintenance_blocks(room_id)
-            WHERE status = 'active';
-        """))
+        op.execute(sa.text("CREATE UNIQUE INDEX uq_housekeeping_active_room ON housekeeping_tasks(room_id) WHERE status IN ('pending','in_progress');"))
+        op.execute(sa.text("CREATE UNIQUE INDEX uq_active_maintenance_room ON maintenance_blocks(room_id) WHERE status='active';"))
+
         op.execute(sa.text("""
             CREATE OR REPLACE FUNCTION hms_guard_housekeeping_business_date()
             RETURNS trigger LANGUAGE plpgsql AS $$
             DECLARE current_date_value date;
             BEGIN
                 SELECT current_business_date INTO current_date_value FROM business_date_state WHERE id=1 FOR UPDATE;
-                IF NOT FOUND THEN
-                    RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='Business date is not initialized';
-                END IF;
+                IF NOT FOUND THEN RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='Business date is not initialized'; END IF;
                 IF NEW.business_date <> current_date_value THEN
                     RAISE EXCEPTION USING ERRCODE='23514', MESSAGE=format('Housekeeping task date %s is not current business date %s', NEW.business_date, current_date_value);
                 END IF;
@@ -86,15 +77,14 @@ def upgrade() -> None:
             END; $$;
         """))
         op.execute(sa.text("CREATE TRIGGER trg_housekeeping_business_date BEFORE INSERT ON housekeeping_tasks FOR EACH ROW EXECUTE FUNCTION hms_guard_housekeeping_business_date();"))
+
         op.execute(sa.text("""
             CREATE OR REPLACE FUNCTION hms_guard_maintenance_business_date()
             RETURNS trigger LANGUAGE plpgsql AS $$
             DECLARE current_date_value date;
             BEGIN
                 SELECT current_business_date INTO current_date_value FROM business_date_state WHERE id=1 FOR UPDATE;
-                IF NOT FOUND THEN
-                    RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='Business date is not initialized';
-                END IF;
+                IF NOT FOUND THEN RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='Business date is not initialized'; END IF;
                 IF NEW.business_date <> current_date_value THEN
                     RAISE EXCEPTION USING ERRCODE='23514', MESSAGE=format('Maintenance block date %s is not current business date %s', NEW.business_date, current_date_value);
                 END IF;
@@ -111,9 +101,6 @@ def upgrade() -> None:
                    AND EXISTS (SELECT 1 FROM maintenance_blocks WHERE room_id=NEW.id AND status='active') THEN
                     RAISE EXCEPTION USING ERRCODE='23514', MESSAGE=format('Room %s has an active maintenance block', NEW.id);
                 END IF;
-                IF NEW.status='out_of_order' AND TG_OP='UPDATE' THEN
-                    RETURN NEW;
-                END IF;
                 RETURN NEW;
             END; $$;
         """))
@@ -124,11 +111,9 @@ def upgrade() -> None:
             RETURNS trigger LANGUAGE plpgsql AS $$
             BEGIN
                 IF TG_OP='INSERT' AND NEW.status='active' THEN
-                    IF NEW.business_date = (SELECT current_business_date FROM business_date_state WHERE id=1) THEN
-                        UPDATE rooms SET status='out_of_order' WHERE id=NEW.room_id AND status NOT IN ('occupied','reserved');
-                        IF NOT FOUND THEN
-                            RAISE EXCEPTION USING ERRCODE='23514', MESSAGE='Maintenance block cannot be created for occupied or reserved room';
-                        END IF;
+                    UPDATE rooms SET status='out_of_order' WHERE id=NEW.room_id AND status NOT IN ('occupied','reserved');
+                    IF NOT FOUND THEN
+                        RAISE EXCEPTION USING ERRCODE='23514', MESSAGE='Maintenance block cannot be created for occupied or reserved room';
                     END IF;
                 ELSIF TG_OP='UPDATE' AND OLD.status='active' AND NEW.status='resolved' THEN
                     UPDATE rooms SET status='dirty' WHERE id=NEW.room_id AND status='out_of_order';
@@ -142,17 +127,42 @@ def upgrade() -> None:
             CREATE OR REPLACE FUNCTION hms_guard_housekeeping_transition()
             RETURNS trigger LANGUAGE plpgsql AS $$
             BEGIN
-                IF NEW.status <> OLD.status THEN
-                    IF NOT ((OLD.status='pending' AND NEW.status IN ('in_progress','cancelled')) OR
-                            (OLD.status='in_progress' AND NEW.status IN ('completed','cancelled')) OR
-                            OLD.status=NEW.status) THEN
-                        RAISE EXCEPTION USING ERRCODE='23514', MESSAGE=format('Invalid housekeeping task transition %s -> %s', OLD.status, NEW.status);
-                    END IF;
+                IF NEW.status <> OLD.status AND NOT (
+                    (OLD.status='pending' AND NEW.status IN ('in_progress','cancelled')) OR
+                    (OLD.status='in_progress' AND NEW.status IN ('completed','cancelled'))
+                ) THEN
+                    RAISE EXCEPTION USING ERRCODE='23514', MESSAGE=format('Invalid housekeeping task transition %s -> %s', OLD.status, NEW.status);
                 END IF;
                 RETURN NEW;
             END; $$;
         """))
         op.execute(sa.text("CREATE TRIGGER trg_housekeeping_transition BEFORE UPDATE OF status ON housekeeping_tasks FOR EACH ROW EXECUTE FUNCTION hms_guard_housekeeping_transition();"))
+
+        op.execute(sa.text("""
+            CREATE OR REPLACE FUNCTION hms_auto_housekeeping_task_for_dirty_room()
+            RETURNS trigger LANGUAGE plpgsql AS $$
+            DECLARE current_date_value date;
+            BEGIN
+                IF NEW.status='dirty' AND OLD.status IS DISTINCT FROM 'dirty' THEN
+                    SELECT current_business_date INTO current_date_value FROM business_date_state WHERE id=1;
+                    IF current_date_value IS NULL THEN
+                        RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='Business date is not initialized';
+                    END IF;
+                    INSERT INTO housekeeping_tasks (
+                        task_no, room_id, business_date, task_type, status, priority, reason, created_at, updated_at
+                    )
+                    SELECT
+                        'HK-' || to_char(current_date_value, 'YYYYMMDD') || '-' || upper(substr(md5(random()::text || NEW.id::text), 1, 8)),
+                        NEW.id, current_date_value, 'checkout_clean', 'pending', 'normal',
+                        'Room requires cleaning after checkout', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM housekeeping_tasks WHERE room_id=NEW.id AND status IN ('pending','in_progress')
+                    );
+                END IF;
+                RETURN NEW;
+            END; $$;
+        """))
+        op.execute(sa.text("CREATE TRIGGER trg_auto_housekeeping_task_for_dirty_room AFTER UPDATE OF status ON rooms FOR EACH ROW EXECUTE FUNCTION hms_auto_housekeeping_task_for_dirty_room();"))
 
 
 def downgrade() -> None:
