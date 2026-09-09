@@ -1,5 +1,5 @@
 import unittest
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from fastapi import HTTPException
@@ -12,7 +12,7 @@ import app.models  # noqa: F401
 import app.pms_core  # noqa: F401
 from app.front_desk import atomic_checkout, create_walk_in, WalkInCreate, WalkInRoom
 from app.ledger import post_transaction
-from app.models import Guest, Folio, FolioItem, Payment, Reservation, ReservationRoom, Role, Room, RoomType, User
+from app.models import BusinessDateState, Guest, Folio, FolioItem, Payment, Reservation, ReservationRoom, Role, Room, RoomType, User
 from app.main import app
 
 
@@ -25,6 +25,7 @@ class FrontDeskPhaseCTests(unittest.TestCase):
         Base.metadata.drop_all(bind=self.engine)
         Base.metadata.create_all(bind=self.engine)
         self.db = Session(self.engine)
+        self.db.add(BusinessDateState(id=1, current_business_date=date(2026, 9, 8), opened_at=datetime(2026, 9, 8, 0, 0, 0)))
         role = Role(name="reception")
         self.db.add(role); self.db.flush()
         user = User(username="reception", password_hash="test", role_id=role.id)
