@@ -57,6 +57,60 @@ class PostgreSQLSmokeTest(unittest.TestCase):
             self.assertEqual(sum((e.amount for e in entries if e.direction == "debit"), Decimal("0.00")), Decimal("10.00"))
             self.assertEqual(sum((e.amount for e in entries if e.direction == "credit"), Decimal("0.00")), Decimal("10.00"))
 
+    def test_postgresql_rejects_unbalanced_ledger_transaction(self):
+        with Session(engine) as db:
+            tx = post_transaction(
+                db,
+                transaction_type="ci_balance_guard",
+                description="CI PostgreSQL ledger balance guard test",
+                created_by=None,
+                lines=[
+                    {"account": "Cash", "direction": "debit", "amount": Decimal("11.00")},
+                    {"account": "Test Revenue", "direction": "credit", "amount": Decimal("11.00")},
+                ],
+            )
+            db.commit()
+
+            db.add(
+                LedgerEntry(
+                    transaction_id=tx.id,
+                    account="Cash",
+                    direction="debit",
+                    amount=Decimal("1.00"),
+                    currency="PKR",
+                )
+            )
+            with self.assertRaises(DBAPIError):
+                db.commit()
+            db.rollback()
+
+    def test_postgresql_rejects_mixed_currency_ledger_transaction(self):
+        with Session(engine) as db:
+            tx = post_transaction(
+                db,
+                transaction_type="ci_currency_guard",
+                description="CI PostgreSQL ledger currency guard test",
+                created_by=None,
+                lines=[
+                    {"account": "Cash", "direction": "debit", "amount": Decimal("12.00")},
+                    {"account": "Test Revenue", "direction": "credit", "amount": Decimal("12.00")},
+                ],
+            )
+            db.commit()
+
+            db.add(
+                LedgerEntry(
+                    transaction_id=tx.id,
+                    account="Cash",
+                    direction="debit",
+                    amount=Decimal("1.00"),
+                    currency="USD",
+                )
+            )
+            with self.assertRaises(DBAPIError):
+                db.commit()
+            db.rollback()
+
     def test_ledger_entries_cannot_be_updated_or_deleted(self):
         with Session(engine) as db:
             tx = post_transaction(
