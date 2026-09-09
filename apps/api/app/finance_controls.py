@@ -91,9 +91,7 @@ def post_deposit(stay_id: int, payload: DepositPostCreate, db: Session = Depends
     stay = db.get(Stay, stay_id)
     if not stay: raise HTTPException(status_code=404, detail="Stay not found")
     folio = db.scalar(select(Folio).where(Folio.reservation_id == stay.reservation_id)); reservation = db.get(Reservation, stay.reservation_id)
-    current = Decimal("0.00")
-    for row in db.scalars(select(DepositTransaction).where(DepositTransaction.stay_id == stay_id)).all():
-        current += row.amount if row.transaction_type in {"received", "adjusted"} else -row.amount
+    current = _stay_deposit_ledger_balance(db, stay_id)
     if payload.transaction_type == "received":
         new_balance = money(current + payload.amount)
         if stay.deposit_required > 0 and new_balance > stay.deposit_required: raise HTTPException(status_code=409, detail="Deposit received exceeds required deposit")
@@ -111,10 +109,10 @@ def post_deposit(stay_id: int, payload: DepositPostCreate, db: Session = Depends
         account = CASH_ACCOUNTS.get(payload.payment_method or "other", "Other Payment")
         lines = [{"account": "Guest Deposits", "direction": "debit", "amount": tx.amount, "folio_id": tx.folio_id, "stay_id": stay_id}, {"account": account, "direction": "credit", "amount": tx.amount, "folio_id": tx.folio_id, "stay_id": stay_id, "payment_method": payload.payment_method}]
     post_to_ledger(db, transaction_type=f"deposit_{payload.transaction_type}", description=f"Deposit {payload.transaction_type} #{tx.id}", reference_type="deposit", reference_id=str(tx.id), folio_id=tx.folio_id, reservation_id=reservation.id if reservation else None, created_by=user.id, business_date=business_date, lines=lines)
-    stay.deposit_received = new_balance
-    audit(db, user.id, "deposit", "stay", stay_id, {"deposit_id": tx.id, "transaction_type": payload.transaction_type, "amount": str(tx.amount), "new_balance": str(new_balance)})
+    stay.deposit_received = _stay_deposit_ledger_balance(db, stay_id)
+    audit(db, user.id, "deposit", "stay", stay_id, {"deposit_id": tx.id, "transaction_type": payload.transaction_type, "amount": str(tx.amount), "new_balance": str(stay.deposit_received)})
     db.commit(); db.refresh(tx)
-    return {"id": tx.id, "stay_id": stay_id, "transaction_type": tx.transaction_type, "amount": tx.amount, "balance": new_balance}
+    return {"id": tx.id, "stay_id": stay_id, "transaction_type": tx.transaction_type, "amount": tx.amount, "balance": stay.deposit_received}
 
 
 @router.get("/stays/{stay_id}/deposit-ledger")
@@ -125,7 +123,13 @@ def deposit_ledger(stay_id: int, db: Session = Depends(get_db), _: User = Depend
     for row in rows:
         balance += row.amount if row.transaction_type in {"received", "adjusted"} else -row.amount
         result.append({"id": row.id, "transaction_type": row.transaction_type, "amount": row.amount, "payment_method": row.payment_method, "reference": row.reference, "notes": row.notes, "created_at": row.created_at, "balance": money(balance)})
-    return {"stay_id": stay_id, "balance": money(balance), "transactions": result}
+    return {"stay_id": stay_id, "balance": _stay_deposit_ledger_balance(db, stay_id), "transactions": result}
+
+
+def _stay_deposit_ledger_balance(db: Session, stay_id: int) -> Decimal:
+    credits = db.scalar(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(LedgerEntry.stay_id == stay_id, LedgerEntry.account == "Guest Deposits", LedgerEntry.direction == "credit", FinancialTransaction.status == "posted")) or Decimal("0.00")
+    debits = db.scalar(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(LedgerEntry.stay_id == stay_id, LedgerEntry.account == "Guest Deposits", LedgerEntry.direction == "debit", FinancialTransaction.status == "posted")) or Decimal("0.00")
+    return money(max(Decimal("0.00"), Decimal(credits) - Decimal(debits)))
 
 
 @router.get("/reports/trial-balance")
@@ -133,7 +137,7 @@ def trial_balance(business_date: date | None = None, db: Session = Depends(get_d
     target = business_date or current_business_date(db)
     rows = db.execute(select(LedgerEntry.account, LedgerEntry.direction, func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(FinancialTransaction.business_date == target, FinancialTransaction.status.in_(("posted", "reversed"))).group_by(LedgerEntry.account, LedgerEntry.direction).order_by(LedgerEntry.account, LedgerEntry.direction)).all()
     accounts: dict[str, dict[str, Decimal]] = {}
-    for account, direction, amount in rows: accounts.setdefault(account, {"debit": Decimal("0.00"), "credit": Decimal("0.00")})[direction] = money(amount)
+    for account, direction, amount in rows: accounts.setdefault(account, {"debit": Decimal("0.00"), "credit": Decimal("0.00"})[direction] = money(amount)
     result = []; total_debit = Decimal("0.00"); total_credit = Decimal("0.00")
     for account, values in accounts.items():
         total_debit += values["debit"]; total_credit += values["credit"]; result.append({"account": account, "debit": money(values["debit"]), "credit": money(values["credit"]), "net": money(values["debit"] - values["credit"])})
