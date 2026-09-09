@@ -23,7 +23,6 @@ class NightAuditControlTests(unittest.TestCase):
 
     def setUp(self):
         Base.metadata.drop_all(bind=self.engine)
-        Base.metadata.create_all(bind=self.engine)
         self.db = Session(self.engine)
         role = Role(name="admin")
         self.db.add(role)
@@ -31,6 +30,7 @@ class NightAuditControlTests(unittest.TestCase):
         self.user = User(username="admin", password_hash="test", role_id=role.id)
         self.db.add(self.user)
         self.db.flush()
+        self.user_id = self.user.id
         self.db.add(BusinessDateState(id=1, current_business_date=date(2026, 9, 8), opened_at=datetime.utcnow()))
         self.db.commit()
 
@@ -78,7 +78,7 @@ class NightAuditControlTests(unittest.TestCase):
         second_db = Session(self.engine)
         try:
             with self.assertRaises(HTTPException) as exc:
-                close_day(None, second_db, SimpleNamespace(id=self.user.id, username=self.user.username))
+                close_day(None, second_db, SimpleNamespace(id=self.user_id, username="admin"))
             self.assertEqual(exc.exception.status_code, 409)
             self.assertEqual(second_db.get(BusinessDateState, 1).current_business_date, date(2026, 9, 8))
         finally:
