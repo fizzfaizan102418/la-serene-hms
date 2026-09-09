@@ -77,8 +77,9 @@ class FrontDeskPhaseCTests(unittest.TestCase):
         self.db.add(folio); self.db.flush()
         self.db.add(ReservationRoom(reservation_id=reservation.id, room_id=self.room1.id))
         from app.pms_core import Stay
-        self.db.add(Stay(reservation_id=reservation.id, room_id=self.room1.id, guest_id=self.guest.id, status="checked_in", check_in=reservation.check_in, check_out=reservation.check_out, agreed_rate=Decimal("100")))
-        item = FolioItem(folio_id=folio.id, description="Room", category="room", quantity=1, unit_price=100, discount=0)
+        stay = Stay(reservation_id=reservation.id, room_id=self.room1.id, guest_id=self.guest.id, status="checked_in", check_in=reservation.check_in, check_out=reservation.check_out, agreed_rate=Decimal("100"))
+        self.db.add(stay); self.db.flush()
+        item = FolioItem(folio_id=folio.id, stay_id=stay.id, description="Room", category="room", quantity=1, unit_price=100, discount=0)
         self.db.add(item); self.db.flush()
         post_transaction(
             self.db,
