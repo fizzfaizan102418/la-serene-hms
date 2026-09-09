@@ -166,8 +166,8 @@ def revenue_report(business_date: date | None = None, db: Session = Depends(get_
 
 @router.get("/reports/accounts-receivable")
 def accounts_receivable(db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception"))):
-    folios = db.scalars(select(Folio)).all(); result = []; total = Decimal("0.00")
-    for folio in folios:
+    result = []; total = Decimal("0.00")
+    for folio in db.scalars(select(Folio).order_by(Folio.id)).all():
         balance = folio_ledger_summary(db, folio.id).balance
         if balance > 0:
             total += balance
