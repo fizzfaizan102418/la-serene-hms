@@ -4,7 +4,6 @@ from decimal import Decimal
 
 from fastapi import HTTPException
 from sqlalchemy import create_engine, func, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -132,14 +131,12 @@ class PurchasingIntegrityTests(unittest.TestCase):
             cancel_purchase_order(po2["id"], self.db, self.user)
         self.assertEqual(ctx.exception.status_code, 409)
 
-    def test_posted_receipt_is_immutable_at_database_layer(self):
+    def test_receipt_requires_idempotency_key(self):
         approved = approve_purchase_order(self.po["id"], self.db, self.user)
-        line_id = approved["lines"][0]["id"]
-        receipt = receive_purchase_order(self.po["id"], ReceiveRequest(lines=[ReceiveLine(purchase_order_line_id=line_id, quantity=Decimal("2.000"))]), "immutable", self.db, self.user)
-        with self.assertRaises((IntegrityError, Exception)):
-            self.db.execute(goods_receipts.update().where(goods_receipts.c.id == receipt["id"]).values(notes="tampered"))
-            self.db.commit()
-        self.db.rollback()
+        with self.assertRaises(HTTPException) as ctx:
+            receive_purchase_order(approved["id"], ReceiveRequest(lines=[ReceiveLine(purchase_order_line_id=approved["lines"][0]["id"], quantity=Decimal("1.000"))]), None, self.db, self.user)
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertEqual(self.db.get(StockItem, self.stock.id).on_hand, Decimal("10.000"))
 
 
 if __name__ == "__main__":
