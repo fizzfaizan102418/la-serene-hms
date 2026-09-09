@@ -1,7 +1,10 @@
 import unittest
 from datetime import date, datetime
 from decimal import Decimal
+from types import SimpleNamespace
+from unittest.mock import patch
 
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -10,7 +13,7 @@ import app.financial_models  # noqa: F401
 import app.models  # noqa: F401
 import app.pms_core  # noqa: F401
 from app.models import BusinessDateState, Role, User
-from app.night_audit import build_summary, get_business_date
+from app.night_audit import ClosingConfirm, build_summary, close_day, get_business_date
 
 
 class NightAuditControlTests(unittest.TestCase):
@@ -50,6 +53,34 @@ class NightAuditControlTests(unittest.TestCase):
         self.db.commit()
         summary = build_summary(self.db, date(2026, 9, 8))
         self.assertFalse(summary["posting_open"])
+
+    def test_close_atomically_rolls_business_date_forward(self):
+        with patch("app.night_audit.create_pack", return_value={"json": "daily-closing.json", "xlsx": "daily-closing.xlsx", "pdf": "daily-closing.pdf"}):
+            result = close_day(ClosingConfirm(notes="Night audit complete"), self.db, self.user)
+
+        self.assertEqual(result["status"], "closed")
+        self.assertEqual(result["business_date"], date(2026, 9, 8))
+        self.assertEqual(result["next_business_date"], date(2026, 9, 9))
+        state = self.db.get(BusinessDateState, 1)
+        self.assertEqual(state.current_business_date, date(2026, 9, 9))
+        self.assertIsNotNone(state.last_closed_at)
+        self.assertEqual(get_business_date(self.db), date(2026, 9, 9))
+
+    def test_second_close_is_rejected_without_advancing_again(self):
+        with patch("app.night_audit.create_pack", return_value={"json": "daily-closing.json", "xlsx": "daily-closing.xlsx", "pdf": "daily-closing.pdf"}):
+            close_day(None, self.db, self.user)
+
+        first_next_date = self.db.get(BusinessDateState, 1).current_business_date
+        self.db.close()
+        second_db = Session(self.engine)
+        try:
+            with self.assertRaises(HTTPException) as exc:
+                close_day(None, second_db, SimpleNamespace(id=self.user.id, username=self.user.username))
+            self.assertEqual(exc.exception.status_code, 409)
+            self.assertEqual(second_db.get(BusinessDateState, 1).current_business_date, first_next_date)
+        finally:
+            second_db.rollback()
+            second_db.close()
 
 
 if __name__ == "__main__":
