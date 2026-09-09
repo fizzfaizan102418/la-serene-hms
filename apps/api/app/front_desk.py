@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from .auth import require_roles
@@ -14,8 +14,8 @@ from .db import get_db
 from .business_date import get_current_business_date
 from .financial_authority import folio_ledger_summary, post_folio_charge_authoritative
 from .ledger import post_deposit_received
-from .models import AuditLog, DepositTransaction, Folio, FolioItem, Guest, Reservation, ReservationRoom, Room, RoomType, User
-from .pms_core import Stay, StayRateSegment
+from .models import AuditLog, DepositTransaction, Folio, FolioItem, Guest, Reservation, ReservationRoom, Room, RoomType, StayRateSegment, User
+from .pms_core import Stay
 
 router = APIRouter(tags=["front-desk-2"])
 MONEY = Decimal("0.01")
@@ -64,30 +64,23 @@ def room_stay_ids(db: Session, reservation_id: int) -> list[int]:
 
 
 def post_accrued_room_charges(db: Session, reservation: Reservation, folio: Folio, business_date: date, user_id: int) -> int:
-    """Post only room nights elapsed through the active business date.
-
-    The operation is deliberately performed inside the caller's transaction so a
-    financial posting failure prevents the operational checkout from committing.
-    """
+    """Post room nights elapsed through the end of the active business date."""
     posted = 0
     stays = db.scalars(select(Stay).where(Stay.reservation_id == reservation.id).order_by(Stay.id)).all()
     for stay in stays:
-        cutoff = min(stay.check_out, business_date)
+        cutoff = min(stay.check_out, business_date + timedelta(days=1))
         elapsed_nights = max(0, (cutoff - stay.check_in).days)
         if elapsed_nights <= 0:
             continue
 
-        charged = db.scalar(
-            select(FolioItem.quantity)
-            .where(
+        charged_nights = db.scalar(
+            select(func.coalesce(func.sum(FolioItem.quantity), 0)).where(
                 FolioItem.folio_id == folio.id,
                 FolioItem.stay_id == stay.id,
                 FolioItem.category == "room",
             )
-            .order_by(FolioItem.id.desc())
-            .limit(1)
-        )
-        charged_nights = Decimal(str(charged or 0))
+        ) or 0
+        charged_nights = Decimal(str(charged_nights))
         total_to_charge = Decimal(elapsed_nights)
         if charged_nights >= total_to_charge:
             continue
@@ -117,7 +110,7 @@ def post_accrued_room_charges(db: Session, reservation: Reservation, folio: Foli
 
         for segment in segments:
             segment_start = segment.from_date
-            segment_end = min(segment.to_date, business_date)
+            segment_end = min(segment.to_date, business_date + timedelta(days=1))
             segment_nights = Decimal(max(0, (segment_end - segment_start).days))
             if segment_nights <= 0:
                 continue
@@ -279,20 +272,8 @@ def atomic_check_in(reservation_id: int, db: Session = Depends(get_db), user: Us
         for room in rooms:
             room_type = db.get(RoomType, room.room_type_id)
             rate = money(room_type.base_rate if room_type else 0)
-            stay = Stay(
-                reservation_id=reservation.id,
-                room_id=room.id,
-                guest_id=reservation.guest_id,
-                status="checked_in",
-                check_in=reservation.check_in,
-                check_out=reservation.check_out,
-                actual_check_in=check_in_at,
-                agreed_rate=rate,
-                discount_percent=Decimal("0.00"),
-                discount_amount=Decimal("0.00"),
-            )
-            db.add(stay)
-            db.flush()
+            stay = Stay(reservation_id=reservation.id, room_id=room.id, guest_id=reservation.guest_id, status="checked_in", check_in=reservation.check_in, check_out=reservation.check_out, actual_check_in=check_in_at, agreed_rate=rate, discount_percent=Decimal("0.00"), discount_amount=Decimal("0.00"))
+            db.add(stay); db.flush()
             db.add(StayRateSegment(stay_id=stay.id, from_date=reservation.check_in, to_date=reservation.check_out, rate=rate, discount_percent=Decimal("0.00"), discount_amount=Decimal("0.00"), source="reservation"))
     else:
         for stay in existing_stays:
