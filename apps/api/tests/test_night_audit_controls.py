@@ -66,18 +66,21 @@ class NightAuditControlTests(unittest.TestCase):
         self.assertIsNotNone(state.last_closed_at)
         self.assertEqual(get_business_date(self.db), date(2026, 9, 9))
 
-    def test_second_close_is_rejected_without_advancing_again(self):
+    def test_duplicate_close_for_already_closed_date_is_rejected(self):
         with patch("app.night_audit.create_pack", return_value={"json": "daily-closing.json", "xlsx": "daily-closing.xlsx", "pdf": "daily-closing.pdf"}):
             close_day(None, self.db, self.user)
 
-        first_next_date = self.db.get(BusinessDateState, 1).current_business_date
+        state = self.db.get(BusinessDateState, 1)
+        state.current_business_date = date(2026, 9, 8)
+        self.db.commit()
         self.db.close()
+
         second_db = Session(self.engine)
         try:
             with self.assertRaises(HTTPException) as exc:
                 close_day(None, second_db, SimpleNamespace(id=self.user.id, username=self.user.username))
             self.assertEqual(exc.exception.status_code, 409)
-            self.assertEqual(second_db.get(BusinessDateState, 1).current_business_date, first_next_date)
+            self.assertEqual(second_db.get(BusinessDateState, 1).current_business_date, date(2026, 9, 8))
         finally:
             second_db.rollback()
             second_db.close()
