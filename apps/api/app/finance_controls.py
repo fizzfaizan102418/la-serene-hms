@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from .auth import require_roles
 from .db import get_db
 from .financial_authority import folio_ledger_summary
+from .financial_models import PaymentRefund
 from .models import AuditLog, BusinessDateState, DepositTransaction, FinancialTransaction, Folio, FolioItem, LedgerEntry, Payment, Reservation, User
 from .pms_core import FolioWindow, Stay
 
@@ -137,7 +138,7 @@ def trial_balance(business_date: date | None = None, db: Session = Depends(get_d
     target = business_date or current_business_date(db)
     rows = db.execute(select(LedgerEntry.account, LedgerEntry.direction, func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(FinancialTransaction.business_date == target, FinancialTransaction.status.in_(("posted", "reversed"))).group_by(LedgerEntry.account, LedgerEntry.direction).order_by(LedgerEntry.account, LedgerEntry.direction)).all()
     accounts: dict[str, dict[str, Decimal]] = {}
-    for account, direction, amount in rows: accounts.setdefault(account, {"debit": Decimal("0.00"), "credit": Decimal("0.00"})[direction] = money(amount)
+    for account, direction, amount in rows: accounts.setdefault(account, {"debit": Decimal("0.00"), "credit": Decimal("0.00")})[direction] = money(amount)
     result = []; total_debit = Decimal("0.00"); total_credit = Decimal("0.00")
     for account, values in accounts.items():
         total_debit += values["debit"]; total_credit += values["credit"]; result.append({"account": account, "debit": money(values["debit"]), "credit": money(values["credit"]), "net": money(values["debit"] - values["credit"])})
@@ -165,8 +166,8 @@ def revenue_report(business_date: date | None = None, db: Session = Depends(get_
 
 @router.get("/reports/accounts-receivable")
 def accounts_receivable(db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception"))):
-    result = []; total = Decimal("0.00")
-    for folio in db.scalars(select(Folio).order_by(Folio.id)).all():
+    folios = db.scalars(select(Folio)).all(); result = []; total = Decimal("0.00")
+    for folio in folios:
         balance = folio_ledger_summary(db, folio.id).balance
         if balance > 0:
             total += balance
