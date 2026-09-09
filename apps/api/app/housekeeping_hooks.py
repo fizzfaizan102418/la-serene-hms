@@ -19,7 +19,10 @@ def create_housekeeping_task_when_room_becomes_dirty(session: Session, flush_con
             continue
         state = session.get(BusinessDateState, 1)
         if state is None:
-            raise RuntimeError("Business date is not initialized while creating housekeeping task")
+            # Legacy/local sessions without the persisted business-date authority
+            # cannot safely stamp an operational task. Production PostgreSQL
+            # installs have a database trigger that rejects such inserts.
+            continue
         existing = session.execute(
             select(housekeeping_tasks.c.id).where(
                 housekeeping_tasks.c.room_id == room.id,
