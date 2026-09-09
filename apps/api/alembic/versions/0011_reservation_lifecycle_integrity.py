@@ -1,12 +1,12 @@
 """Enforce reservation dates and lifecycle transitions in PostgreSQL.
 
-Revision ID: 0011_reservation_lifecycle_integrity
+Revision ID: 0011_reservation_lifecycle
 Revises: 0010_ledger_balance_integrity
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0011_reservation_lifecycle_integrity"
+revision = "0011_reservation_lifecycle"
 down_revision = "0010_ledger_balance_integrity"
 branch_labels = None
 depends_on = None
