@@ -29,7 +29,22 @@ def upgrade() -> None:
                 debit_total numeric;
                 credit_total numeric;
                 currency_count integer;
+                latest_entry_id integer;
             BEGIN
+                SELECT MAX(le.id)::integer
+                INTO latest_entry_id
+                FROM ledger_entries AS le
+                WHERE le.transaction_id = NEW.transaction_id;
+
+                -- A deferred trigger is queued once per inserted ledger entry.
+                -- Validate only from the newest entry so a multi-line posting
+                -- is checked after all of its lines are present. A later direct
+                -- ledger insert becomes the newest entry and is therefore also
+                -- validated at transaction commit.
+                IF NEW.id <> latest_entry_id THEN
+                    RETURN NEW;
+                END IF;
+
                 SELECT
                     COUNT(*)::integer,
                     COALESCE(SUM(CASE WHEN le.direction = 'debit' THEN le.amount ELSE 0 END), 0),
@@ -37,7 +52,7 @@ def upgrade() -> None:
                     COUNT(DISTINCT le.currency)::integer
                 INTO entry_count, debit_total, credit_total, currency_count
                 FROM ledger_entries AS le
-                WHERE le.transaction_id = NEW.id;
+                WHERE le.transaction_id = NEW.transaction_id;
 
                 IF entry_count < 2 THEN
                     RAISE EXCEPTION USING
@@ -71,18 +86,6 @@ def upgrade() -> None:
     op.execute(
         sa.text(
             """
-            CREATE CONSTRAINT TRIGGER trg_financial_transaction_balance_on_transaction
-            AFTER INSERT ON financial_transactions
-            DEFERRABLE INITIALLY DEFERRED
-            FOR EACH ROW
-            EXECUTE FUNCTION hms_guard_financial_transaction_balance();
-            """
-        )
-    )
-
-    op.execute(
-        sa.text(
-            """
             CREATE CONSTRAINT TRIGGER trg_financial_transaction_balance_on_entry
             AFTER INSERT ON ledger_entries
             DEFERRABLE INITIALLY DEFERRED
@@ -101,11 +104,6 @@ def downgrade() -> None:
     op.execute(
         sa.text(
             "DROP TRIGGER IF EXISTS trg_financial_transaction_balance_on_entry ON ledger_entries"
-        )
-    )
-    op.execute(
-        sa.text(
-            "DROP TRIGGER IF EXISTS trg_financial_transaction_balance_on_transaction ON financial_transactions"
         )
     )
     op.execute(sa.text("DROP FUNCTION IF EXISTS hms_guard_financial_transaction_balance()"))
