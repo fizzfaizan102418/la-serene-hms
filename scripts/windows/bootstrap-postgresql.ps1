@@ -1,0 +1,67 @@
+[CmdletBinding()]
+param(
+    [string]$PgBin = "C:\Program Files\PostgreSQL\17\bin",
+    [string]$Host = "127.0.0.1",
+    [int]$Port = 5432,
+    [string]$Database = "la_serene_hms",
+    [string]$AppUser = "la_serene_hms_app"
+)
+
+$ErrorActionPreference = "Stop"
+
+$Psql = Join-Path $PgBin "psql.exe"
+if (-not (Test-Path $Psql)) {
+    throw "PostgreSQL client not found at '$Psql'. Install PostgreSQL first or pass -PgBin with the PostgreSQL bin directory."
+}
+
+Write-Host "La Serene HMS - PostgreSQL production bootstrap"
+Write-Host "Host: $Host`:$Port  Database: $Database  User: $AppUser"
+Write-Host ""
+
+$AdminPassword = Read-Host "PostgreSQL administrator password" -AsSecureString
+$AdminCredential = New-Object System.Management.Automation.PSCredential("postgres", $AdminPassword)
+$AdminPlain = $AdminCredential.GetNetworkCredential().Password
+
+$env:PGPASSWORD = $AdminPlain
+try {
+    & $Psql -h $Host -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -c "SELECT version();" | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "PostgreSQL connection test failed." }
+
+    $AppPassword = Read-Host "Password for $AppUser (do not reuse your PostgreSQL administrator password)" -AsSecureString
+    $AppCredential = New-Object System.Management.Automation.PSCredential($AppUser, $AppPassword)
+    $AppPlain = $AppCredential.GetNetworkCredential().Password
+
+    if ([string]::IsNullOrWhiteSpace($AppPlain) -or $AppPlain.Length -lt 20) {
+        throw "Application database password must be at least 20 characters."
+    }
+
+    $RoleExists = (& $Psql -h $Host -p $Port -U postgres -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname = '$AppUser';").Trim()
+    if ($RoleExists -ne "1") {
+        & $Psql -h $Host -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE `"$AppUser`" LOGIN PASSWORD '$AppPlain';" | Out-Host
+    } else {
+        & $Psql -h $Host -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -c "ALTER ROLE `"$AppUser`" WITH LOGIN PASSWORD '$AppPlain';" | Out-Host
+    }
+    if ($LASTEXITCODE -ne 0) { throw "Could not create/update the application role." }
+
+    $DatabaseExists = (& $Psql -h $Host -p $Port -U postgres -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$Database';").Trim()
+    if ($DatabaseExists -ne "1") {
+        & $Psql -h $Host -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE `"$Database`" OWNER `"$AppUser`";" | Out-Host
+    } else {
+        & $Psql -h $Host -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -c "ALTER DATABASE `"$Database`" OWNER TO `"$AppUser`";" | Out-Host
+    }
+    if ($LASTEXITCODE -ne 0) { throw "Could not create/update the application database." }
+
+    & $Psql -h $Host -p $Port -U postgres -d $Database -v ON_ERROR_STOP=1 -c "REVOKE ALL ON DATABASE `"$Database`" FROM PUBLIC; GRANT CONNECT ON DATABASE `"$Database`" TO `"$AppUser`";" | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "Could not apply database access policy." }
+
+    $ConnectionUrl = "postgresql+psycopg://$AppUser:<URL_ENCODED_PASSWORD>@$Host`:$Port/$Database"
+    Write-Host ""
+    Write-Host "Bootstrap completed successfully." -ForegroundColor Green
+    Write-Host "Set HMS_DATABASE_URL in the production environment to:" -ForegroundColor Cyan
+    Write-Host $ConnectionUrl
+    Write-Host "Replace <URL_ENCODED_PASSWORD> with the URL-encoded application password. Do not commit the real value."
+}
+finally {
+    Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+    Remove-Variable AdminPlain,AppPlain -ErrorAction SilentlyContinue
+}
