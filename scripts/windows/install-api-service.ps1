@@ -49,7 +49,7 @@ if ($existing) {
     & $NssmExe remove $ServiceName confirm
 }
 
-& $NssmExe install $ServiceName $PythonExe "-m uvicorn app.main:app --host $ListenHost --port $ListenPort"
+& $NssmExe install $ServiceName $PythonExe "-m uvicorn app.production:app --host $ListenHost --port $ListenPort"
 & $NssmExe set $ServiceName DisplayName $ServiceDisplayName
 & $NssmExe set $ServiceName Description "La Serene HMS FastAPI production service"
 & $NssmExe set $ServiceName AppDirectory $ApiRoot
@@ -80,6 +80,6 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "Installed and started $ServiceDisplayName ($ServiceName)."
-Write-Host "API: http://$ListenHost`:$ListenPort"
+Write-Host "API listener: http://$ListenHost`:$ListenPort"
 Write-Host "Logs: $LogRoot"
 Write-Host "Production secrets remain in $EnvFile and are not copied into the service script."
