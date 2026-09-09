@@ -47,7 +47,7 @@ class ManagementReportingIntegrityTests(unittest.TestCase):
         folio = Folio(reservation_id=reservation.id, status="open")
         self.db.add(folio)
         self.db.flush()
-        item = FolioItem(folio_id=folio.id, description="Room charge", category="room", quantity=1, unit_price=100, discount=10)
+        item = FolioItem(folio_id=folio.id, description="Room charge", category="room", quantity=1, unit_price=100, discount=10, created_at=datetime(2026, 9, 1, 10, 0))
         self.db.add(item)
         self.db.add(BusinessDateState(id=1, current_business_date=date(2026, 9, 9), opened_at=datetime(2026, 9, 9, 8, 0)))
         self.db.commit()
@@ -94,7 +94,7 @@ class ManagementReportingIntegrityTests(unittest.TestCase):
         self.assertEqual(report["business_date"], date(2026, 9, 9))
         self.assertEqual(report["rooms"]["total"], 2)
         self.assertEqual(report["occupancy"]["occupied_room_nights"], 1)
-        self.assertEqual(report["occupancy"]["available_room_nights"], 2)
+        self.assertEqual(report["rooms"]["available_room_nights"], 2)
         self.assertEqual(report["occupancy"]["occupancy_rate"], 50.0)
 
     def test_management_report_uses_ledger_authority_for_revenue(self):
@@ -105,9 +105,6 @@ class ManagementReportingIntegrityTests(unittest.TestCase):
         self.assertEqual(report["finance"]["revenue_difference"], Decimal("0.00"))
 
     def test_management_report_does_not_depend_on_folio_item_created_at(self):
-        item = self.db.query(FolioItem).one()
-        item.created_at = datetime(2026, 9, 1, 10, 0)
-        self.db.commit()
         report = management_report(self.db)
         self.assertEqual(report["revenue"]["room"], Decimal("90.00"))
 
