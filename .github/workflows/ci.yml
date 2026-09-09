@@ -31,10 +31,16 @@ jobs:
           python-version: '3.12'
       - run: pip install -r requirements.txt
       - run: python -c "from app.main import app; print(app.title)"
-      - run: alembic upgrade head
+      - name: Initialize PostgreSQL schema from empty database
+        run: alembic upgrade head
+      - name: Verify PostgreSQL migration state
+        run: alembic current
+      - name: Verify PostgreSQL migration idempotency
+        run: alembic upgrade head
       - run: python -m unittest discover -s tests -v
       - run: python -m unittest discover -s tests -p 'test_postgres_smoke.py' -v
-      - run: HMS_DATABASE_URL=sqlite:///ci_phase0.sqlite3 alembic upgrade head
+      - name: Verify SQLite migration compatibility
+        run: HMS_DATABASE_URL=sqlite:///ci_phase0.sqlite3 alembic upgrade head
       - name: Verify PostgreSQL backup and restore round trip
         working-directory: .
         env:
