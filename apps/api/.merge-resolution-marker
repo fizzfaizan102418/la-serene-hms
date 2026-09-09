@@ -1,0 +1,1 @@
+PR #18 merge resolution: finance_controls.py intentionally matches current main; merge commit will preserve branch changes and current main history.
