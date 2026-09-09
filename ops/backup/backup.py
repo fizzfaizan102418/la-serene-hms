@@ -21,9 +21,16 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def normalize_postgres_url(url: str) -> str:
+    value = url.strip()
+    if value.startswith("postgresql+psycopg://"):
+        return "postgresql://" + value[len("postgresql+psycopg://"):]
+    return value
+
+
 def require_postgres_url() -> str:
-    url = os.environ.get("HMS_DATABASE_URL", "").strip()
-    if not url.startswith(POSTGRES_PREFIXES):
+    url = normalize_postgres_url(os.environ.get("HMS_DATABASE_URL", ""))
+    if not url.startswith(("postgresql://", "postgres://")):
         raise RuntimeError("HMS_DATABASE_URL must point to PostgreSQL for production backup operations")
     return url
 
@@ -37,6 +44,7 @@ def sha256_file(path: Path) -> str:
 
 
 def database_metadata(database_url: str) -> dict[str, object]:
+    database_url = normalize_postgres_url(database_url)
     with psycopg.connect(database_url) as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT current_database(), current_user")
@@ -59,17 +67,19 @@ def database_metadata(database_url: str) -> dict[str, object]:
 
 
 def run_pg_dump(database_url: str, destination: Path) -> None:
-    command = [
-        "pg_dump",
-        "--format=custom",
-        "--no-owner",
-        "--no-privileges",
-        "--dbname",
-        database_url,
-        "--file",
-        str(destination),
-    ]
-    subprocess.run(command, check=True)
+    subprocess.run(
+        [
+            "pg_dump",
+            "--format=custom",
+            "--no-owner",
+            "--no-privileges",
+            "--dbname",
+            normalize_postgres_url(database_url),
+            "--file",
+            str(destination),
+        ],
+        check=True,
+    )
 
 
 def write_manifest(manifest_path: Path, payload: dict[str, object]) -> None:
@@ -136,18 +146,17 @@ def verify_backup(backup_file: Path, manifest_file: Path) -> dict[str, object]:
         raise RuntimeError("Manifest does not identify the supplied backup file")
     if not isinstance(expected_hash, str) or len(expected_hash) != 64:
         raise RuntimeError("Manifest SHA-256 is missing or malformed")
-    actual_hash = sha256_file(backup_file)
-    if actual_hash != expected_hash:
+    if sha256_file(backup_file) != expected_hash:
         raise RuntimeError("Backup checksum mismatch; refusing restore verification")
-    listed_size = payload.get("size_bytes")
-    if listed_size != backup_file.stat().st_size:
+    if payload.get("size_bytes") != backup_file.stat().st_size:
         raise RuntimeError("Backup size differs from the manifest")
     return payload
 
 
 def restore_and_verify(backup_file: Path, manifest_file: Path, target_database_url: str) -> dict[str, object]:
     payload = verify_backup(backup_file, manifest_file)
-    if not target_database_url.startswith(POSTGRES_PREFIXES):
+    target_database_url = normalize_postgres_url(target_database_url)
+    if not target_database_url.startswith(("postgresql://", "postgres://")):
         raise RuntimeError("Target database must be PostgreSQL")
 
     with tempfile.TemporaryDirectory(prefix="la-serene-hms-restore-") as temp_dir_name:
@@ -175,12 +184,10 @@ def restore_and_verify(backup_file: Path, manifest_file: Path, target_database_u
             if cur.fetchone()[0] != 1:
                 raise RuntimeError("Restored database is missing the BusinessDateState singleton")
             cur.execute("SELECT current_business_date FROM business_date_state WHERE id = 1")
-            restored_business_date = cur.fetchone()[0].isoformat()
-            if restored_business_date != payload["business_date"]:
+            if cur.fetchone()[0].isoformat() != payload["business_date"]:
                 raise RuntimeError("Restored business date does not match backup manifest")
             cur.execute("SELECT version_num FROM alembic_version")
-            restored_revision = cur.fetchone()[0]
-            if restored_revision != payload["alembic_revision"]:
+            if cur.fetchone()[0] != payload["alembic_revision"]:
                 raise RuntimeError("Restored Alembic revision does not match backup manifest")
             cur.execute(
                 """
