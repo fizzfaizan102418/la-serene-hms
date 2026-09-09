@@ -24,6 +24,7 @@ from .reports import router as reports_router
 from .schemas import BillingSummaryResponse, FolioItemCreate, FolioItemResponse, FolioItemUpdate, FolioResponse, PaymentCreate, PaymentResponse
 from .stay_lifecycle import router as stay_lifecycle_router
 from .restaurant_pos import router as restaurant_pos_router
+from .inventory import router as inventory_router
 
 router = APIRouter(prefix="/api", tags=["billing"])
 MONEY = Decimal("0.01")
@@ -45,6 +46,11 @@ for restaurant_route in restaurant_pos_router.routes:
     if hasattr(restaurant_route, "path_format"):
         restaurant_route.path_format = restaurant_route.path_format.removeprefix("/api")
     router.routes.append(restaurant_route)
+for inventory_route in inventory_router.routes:
+    inventory_route.path = inventory_route.path.removeprefix("/api")
+    if hasattr(inventory_route, "path_format"):
+        inventory_route.path_format = inventory_route.path_format.removeprefix("/api")
+    router.routes.append(inventory_route)
 
 
 def money(value: Decimal) -> Decimal:
@@ -113,7 +119,7 @@ def get_receipt(folio_id: int, db: Session = Depends(get_db), _: User = Depends(
     summary = build_folio_response(db, folio)
     room_ids = db.scalars(select(ReservationRoom.room_id).where(ReservationRoom.reservation_id == reservation.id)).all()
     rooms = [db.get(Room, room_id) for room_id in room_ids]
-    return {"folio_id": folio.id, "reservation_id": reservation.id, "status": folio.status, "guest": {"full_name": guest.full_name, "phone": guest.phone, "email": guest.email, "address": guest.address}, "stay": {"check_in": reservation.check_in, "check_out": reservation.check_out, "nights": (reservation.check_out - reservation.check_in).days}, "rooms": [{"id": room.id, "number": room.number, "room_type_id": room.room_type_id} for room in rooms if room], "items": [{"id": item.id, "description": item.description, "category": item.category, "quantity": float(item.quantity), "unit_price": float(item.unit_price), "discount": float(item.discount), "line_total": float(item_line_total(item))} for item in summary.items], "payments": [{"id": payment.id, "amount": float(payment.amount), "method": payment.method, "reference": payment.reference} for payment in summary.payments], "refunds": [{"id": refund.id, "payment_id": refund.payment_id, "amount": refund.amount, "method": refund.method, "reference": refund.reference, "reason": refund.reason} for refund in db.scalars(select(PaymentRefund).where(PaymentRefund.folio_id == folio.id).order_by(PaymentRefund.id)).all()], "subtotal": float(summary.subtotal), "discounts": float(summary.discounts), "food_service_charge": float(summary.food_service_charge), "total": float(summary.total), "paid": float(summary.paid), "balance": float(summary.balance)}
+    return {"folio_id": folio.id, "reservation_id": reservation.id, "status": folio.status, "guest": {"full_name": guest.full_name, "phone": guest.phone, "email": guest.email, "address": guest.address}, "stay": {"check_in": reservation.check_in, "check_out": reservation.check_out, "nights": (reservation.check_out - reservation.check_in).days}, "rooms": [{"id": room.id, "number": room.number, "room_type_id": room.room_type_id} for room in rooms if room], "items": [{"id": item.id, "description": item.description, "category": item.category, "quantity": float(item.quantity), "unit_price": float(item.unit_price), "discount": float(item.discount), "line_total": float(item_line_total(item))} for item in summary.items], "payments": [{"id": payment.id, "amount": float(payment.amount), "method": payment.method, "reference": payment.reference} for payment in summary.payments], "refunds": [{"id": refund.id, "payment_id": refund.payment_id, "amount": float(refund.amount), "method": refund.method, "reference": refund.reference, "reason": refund.reason} for refund in db.scalars(select(PaymentRefund).where(PaymentRefund.folio_id == folio.id).order_by(PaymentRefund.id)).all()], "subtotal": float(summary.subtotal), "discounts": float(summary.discounts), "food_service_charge": float(summary.food_service_charge), "total": float(summary.total), "paid": float(summary.paid), "balance": float(summary.balance)}
 
 
 @router.post("/folios/{folio_id}/room-charges", response_model=FolioResponse)
