@@ -11,6 +11,7 @@ configure_production_logging()
 
 from .db import engine  # noqa: E402
 from .main import app as api_app  # noqa: E402
+from .migration_guard import check_database_at_head  # noqa: E402
 from .schemas import HealthResponse  # noqa: E402
 
 
@@ -21,6 +22,11 @@ if not WEB_DIST.is_dir():
         f"Production web build not found at {WEB_DIST}. "
         "Run scripts/windows/build-web.ps1 before starting the production service."
     )
+
+# Fail closed: the production service must never start against a pending or
+# divergent Alembic schema. Database upgrades are performed by the K12 lifecycle
+# script before the service is restarted.
+check_database_at_head()
 
 app: FastAPI = api_app
 
