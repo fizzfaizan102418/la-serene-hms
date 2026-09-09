@@ -39,9 +39,13 @@ def main() -> int:
         logging.info("Backup completed and checksum verified: %s", dump_path.name)
         print(json.dumps(result))
         return 0
-    except Exception:
-        logging.exception("Scheduled backup failed")
-        raise
+    except Exception as exc:
+        # Do not log the exception text: database-driver errors can contain
+        # connection details, and the production backup log must never become
+        # a credential or connection-string disclosure channel.
+        logging.error("Scheduled backup failed: %s", type(exc).__name__)
+        print(json.dumps({"status": "failed", "error": "Scheduled backup failed"}))
+        return 1
 
 
 if __name__ == "__main__":
