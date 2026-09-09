@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .auth import require_roles
+from .business_date import get_current_business_date
 from .db import get_db
 from .models import BusinessDateState, FinancialTransaction, LedgerEntry, User
 
@@ -47,12 +48,7 @@ def money(value: Decimal | int | float | str) -> Decimal:
 
 
 def current_business_date(db: Session) -> date:
-    state = db.get(BusinessDateState, 1)
-    if state is None:
-        state = BusinessDateState(id=1, current_business_date=date.today())
-        db.add(state)
-        db.flush()
-    return state.current_business_date
+    return get_current_business_date(db)
 
 
 def new_transaction_no(business_date: date) -> str:
@@ -184,8 +180,6 @@ def post_transaction(
     )
 
     try:
-        # A savepoint keeps a concurrent idempotency-key conflict from rolling
-        # back the caller's larger business transaction.
         with db.begin_nested():
             db.add(transaction)
             db.flush()
@@ -281,6 +275,5 @@ def reverse_transaction_endpoint(transaction_id: int, reason: str = "Correction"
         db.rollback(); raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-# Financial controls are mounted here because billing already mounts the ledger router.
 from .finance_controls import router as finance_controls_router
 router.include_router(finance_controls_router)
