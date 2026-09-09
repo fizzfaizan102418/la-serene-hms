@@ -8,7 +8,7 @@ from secrets import token_hex
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import Date, DateTime, Numeric, String, Table, Column, ForeignKey, func, insert, select
+from sqlalchemy import Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Table, func, insert, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -23,17 +23,17 @@ MONEY = Decimal("0.01")
 stock_operations = Table(
     "stock_operations",
     Base.metadata,
-    Column("id", primary_key=True),
+    Column("id", Integer, primary_key=True),
     Column("operation_no", String(40), unique=True, index=True, nullable=False),
     Column("idempotency_key", String(100), unique=True, index=True, nullable=False),
     Column("idempotency_fingerprint", String(64), index=True, nullable=False),
     Column("business_date", Date, index=True, nullable=False),
     Column("operation_type", String(30), index=True, nullable=False),
-    Column("stock_item_id", ForeignKey("stock_items.id"), index=True, nullable=False),
+    Column("stock_item_id", Integer, ForeignKey("stock_items.id"), index=True, nullable=False),
     Column("quantity", Numeric(14, 3), nullable=False),
     Column("unit_cost", Numeric(12, 2), nullable=False),
     Column("reason", String(300), nullable=False),
-    Column("created_by", ForeignKey("users.id"), nullable=False),
+    Column("created_by", Integer, ForeignKey("users.id"), nullable=False),
     Column("created_at", DateTime, default=datetime.utcnow, nullable=False),
     Column("updated_at", DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False),
 )
@@ -103,7 +103,7 @@ def lock_business_date(db: Session) -> date:
     return state.current_business_date
 
 
-def build_operation_response(db: Session, row, stock: StockItem, expected_fingerprint: str, replayed: bool) -> dict:
+def build_operation_response(row, stock: StockItem, expected_fingerprint: str, replayed: bool) -> dict:
     if row["idempotency_fingerprint"] != expected_fingerprint:
         raise HTTPException(status_code=409, detail="Idempotency key is already bound to a different inventory operation")
     return {
@@ -133,7 +133,7 @@ def create_operation(db: Session, user: User, stock: StockItem, business_date: d
     expected = fingerprint(operation_type, stock.id, quantity, unit_cost, reason, business_date)
     existing = find_existing(db, idempotency_key)
     if existing is not None:
-        return build_operation_response(db, existing, stock, expected, True)
+        return build_operation_response(existing, stock, expected, True)
 
     quantity = qty(quantity)
     unit_cost = money(unit_cost)
@@ -171,10 +171,10 @@ def create_operation(db: Session, user: User, stock: StockItem, business_date: d
         existing = find_existing(db, idempotency_key)
         if existing is not None:
             stock = db.get(StockItem, existing["stock_item_id"])
-            return build_operation_response(db, existing, stock, expected, True)
+            return build_operation_response(existing, stock, expected, True)
         raise HTTPException(status_code=409, detail="Inventory operation could not be committed") from exc
     stock = db.get(StockItem, stock.id)
-    return build_operation_response(db, result, stock, expected, False)
+    return build_operation_response(result, stock, expected, False)
 
 
 @router.get("/stock-items")
