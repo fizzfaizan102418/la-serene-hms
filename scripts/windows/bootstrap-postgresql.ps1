@@ -2,12 +2,20 @@
 param(
     [string]$PgBin = "C:\Program Files\PostgreSQL\17\bin",
     [string]$Host = "127.0.0.1",
+    [ValidateRange(1, 65535)]
     [int]$Port = 5432,
     [string]$Database = "la_serene_hms",
     [string]$AppUser = "la_serene_hms_app"
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($Database -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+    throw "Database name must contain only letters, numbers, and underscores and must not start with a number."
+}
+if ($AppUser -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+    throw "Application username must contain only letters, numbers, and underscores and must not start with a number."
+}
 
 $Psql = Join-Path $PgBin "psql.exe"
 if (-not (Test-Path $Psql)) {
@@ -37,21 +45,21 @@ try {
 
     $RoleExists = (& $Psql -h $Host -p $Port -U postgres -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname = '$AppUser';").Trim()
     if ($RoleExists -ne "1") {
-        & $Psql -h $Host -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE `"$AppUser`" LOGIN PASSWORD '$AppPlain';" | Out-Host
+        & $Psql -h $Host -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -v "app_password=$AppPlain" -c "CREATE ROLE \"$AppUser\" LOGIN PASSWORD :'app_password';" | Out-Host
     } else {
-        & $Psql -h $Host -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -c "ALTER ROLE `"$AppUser`" WITH LOGIN PASSWORD '$AppPlain';" | Out-Host
+        & $Psql -h $Host -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -v "app_password=$AppPlain" -c "ALTER ROLE \"$AppUser\" WITH LOGIN PASSWORD :'app_password';" | Out-Host
     }
     if ($LASTEXITCODE -ne 0) { throw "Could not create/update the application role." }
 
     $DatabaseExists = (& $Psql -h $Host -p $Port -U postgres -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$Database';").Trim()
     if ($DatabaseExists -ne "1") {
-        & $Psql -h $Host -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE `"$Database`" OWNER `"$AppUser`";" | Out-Host
+        & $Psql -h $Host -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$Database\" OWNER \"$AppUser\";" | Out-Host
     } else {
-        & $Psql -h $Host -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -c "ALTER DATABASE `"$Database`" OWNER TO `"$AppUser`";" | Out-Host
+        & $Psql -h $Host -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -c "ALTER DATABASE \"$Database\" OWNER TO \"$AppUser\";" | Out-Host
     }
     if ($LASTEXITCODE -ne 0) { throw "Could not create/update the application database." }
 
-    & $Psql -h $Host -p $Port -U postgres -d $Database -v ON_ERROR_STOP=1 -c "REVOKE ALL ON DATABASE `"$Database`" FROM PUBLIC; GRANT CONNECT ON DATABASE `"$Database`" TO `"$AppUser`";" | Out-Host
+    & $Psql -h $Host -p $Port -U postgres -d $Database -v ON_ERROR_STOP=1 -c "REVOKE ALL ON DATABASE \"$Database\" FROM PUBLIC; GRANT CONNECT ON DATABASE \"$Database\" TO \"$AppUser\";" | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "Could not apply database access policy." }
 
     $ConnectionUrl = "postgresql+psycopg://$AppUser:<URL_ENCODED_PASSWORD>@$Host`:$Port/$Database"
