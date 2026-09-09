@@ -6,7 +6,7 @@ import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from .auth import require_roles
@@ -77,17 +77,14 @@ def post_accrued_room_charges(db: Session, reservation: Reservation, folio: Foli
         if elapsed_nights <= 0:
             continue
 
-        charged = db.scalar(
-            select(FolioItem.quantity)
-            .where(
+        charged_nights = db.scalar(
+            select(func.coalesce(func.sum(FolioItem.quantity), 0)).where(
                 FolioItem.folio_id == folio.id,
                 FolioItem.stay_id == stay.id,
                 FolioItem.category == "room",
             )
-            .order_by(FolioItem.id.desc())
-            .limit(1)
-        )
-        charged_nights = Decimal(str(charged or 0))
+        ) or 0
+        charged_nights = Decimal(str(charged_nights))
         total_to_charge = Decimal(elapsed_nights)
         if charged_nights >= total_to_charge:
             continue
