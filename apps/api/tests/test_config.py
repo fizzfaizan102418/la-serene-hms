@@ -7,13 +7,13 @@ from app.config import Settings
 
 class ProductionConfigurationTests(unittest.TestCase):
     def test_development_allows_sqlite_fallback(self):
-        settings = Settings(environment="development")
+        settings = Settings(environment="development", database_url="")
         self.assertEqual(settings.database_url, "")
         self.assertEqual(settings.secret_key, "la-serene-development-secret-change-me")
 
     def test_production_requires_postgresql_database(self):
         with self.assertRaisesRegex(ValidationError, "HMS_DATABASE_URL is required in production"):
-            Settings(environment="production", secret_key="x" * 64)
+            Settings(environment="production", database_url="", secret_key="x" * 64)
 
     def test_production_rejects_sqlite_database(self):
         with self.assertRaisesRegex(ValidationError, "must use PostgreSQL"):
