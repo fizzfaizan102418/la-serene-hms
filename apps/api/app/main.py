@@ -13,6 +13,7 @@ from .phase_a_workflows import router as phase_a_workflows_router
 from .pms_core_bootstrap import ensure_pms_core_schema
 from .reservation_workflows import router as reservation_workflows_router
 from .business_date import get_current_business_date
+from .sqlite_bootstrap import initialize_sqlite_database
 from .schemas import (
     AvailabilityResponse, BootstrapAdminRequest, CheckInResponse, CheckOutResponse,
     DashboardResponse, FrontDeskResponse, GuestCreate, GuestResponse, HealthResponse,
@@ -58,16 +59,16 @@ def reservation_list_item(db: Session, reservation: Reservation, guest_name: str
 
 
 @app.on_event("startup")
-def seed_system_roles():
+def initialize_database():
+    initialize_sqlite_database()
     with Session(engine) as db:
         for name in ("admin", "reception", "housekeeping"):
             if not db.scalar(select(Role).where(Role.name == name)):
                 db.add(Role(name=name))
         db.commit()
     # Existing local installations receive the PMS Core backfill/triggers on startup.
-    with Session(engine) as db:
-        ensure_pms_core_schema()
-        db.commit()
+    # The SQLite bootstrap above guarantees the required tables exist first.
+    ensure_pms_core_schema()
 
 
 @app.get("/api/health", response_model=HealthResponse)
