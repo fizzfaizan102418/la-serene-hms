@@ -1,8 +1,8 @@
-from datetime import date
+from datetime import date, datetime
 import json
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from .auth import require_roles
@@ -12,19 +12,15 @@ from . import pms_core as _pms_core_models
 from .pms_core import router as pms_core_router
 from .pms_core_bootstrap import ensure_pms_core_schema
 from .housekeeping_control import (
-    HousekeepingTaskCreate,
     MaintenanceCreate,
     active_housekeeping_task,
     active_maintenance,
-    complete_task,
     create_housekeeping_task,
     create_maintenance_block,
     housekeeping_tasks,
-    maintenance_blocks,
     require_room,
     resolve_maintenance_block,
     router as housekeeping_control_router,
-    start_task,
 )
 from .inventory import lock_business_date
 from .models import AuditLog, Reservation, ReservationRoom, Room, RoomType, User
@@ -32,9 +28,6 @@ from .models import AuditLog, Reservation, ReservationRoom, Room, RoomType, User
 router = APIRouter(prefix="", tags=["housekeeping"])
 router.include_router(backup_router)
 router.include_router(pms_core_router)
-# Control routes are intentionally mounted here so existing /api/housekeeping
-# ownership remains in one domain router and staff clients do not gain a
-# second route prefix.
 router.include_router(housekeeping_control_router)
 
 
@@ -99,10 +92,17 @@ def mark_room_clean(room_id: int, db: Session = Depends(get_db), user: User = De
     task = active_housekeeping_task(db, room.id)
     if task is None:
         task = create_housekeeping_task(db, room, business_date, user.id, "manual_clean", "Legacy clean operation", "normal")
-        db.commit()
     if task["status"] == "pending":
-        start_task(task["id"], db, user)
-    return complete_task(task["id"], db, user)
+        now = datetime.utcnow()
+        db.execute(update(housekeeping_tasks).where(housekeeping_tasks.c.id == task["id"]).values(status="in_progress", started_at=now, updated_at=now))
+    elif task["status"] != "in_progress":
+        raise HTTPException(status_code=409, detail="Housekeeping task cannot be completed")
+    now = datetime.utcnow()
+    room.status = "available"
+    db.execute(update(housekeeping_tasks).where(housekeeping_tasks.c.id == task["id"]).values(status="completed", completed_at=now, completed_by=user.id, updated_at=now))
+    db.add(AuditLog(user_id=user.id, action="housekeeping_clean", entity_type="room", entity_id=str(room.id), details=json.dumps({"room_number": room.number, "task_id": task["id"], "from": "dirty", "to": "available"})))
+    db.commit()
+    return {"room_id": room.id, "room_number": room.number, "status": room.status, "task_id": task["id"], "business_date": business_date}
 
 
 @router.post("/housekeeping/rooms/{room_id}/out-of-order")
