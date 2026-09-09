@@ -10,7 +10,6 @@ from .backup import router as backup_router
 from .db import get_db
 from . import pms_core as _pms_core_models
 from .pms_core import router as pms_core_router
-from .pms_core_bootstrap import ensure_pms_core_schema
 from .housekeeping_control import (
     MaintenanceCreate,
     active_housekeeping_task,
@@ -32,12 +31,7 @@ router.include_router(pms_core_router)
 router.include_router(housekeeping_control_router)
 
 
-@router.on_event("startup")
-def initialize_pms_core():
-    ensure_pms_core_schema()
-
-
-@router.get("/housekeeping")
+@app.get("/housekeeping")
 def housekeeping_board(db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception", "housekeeping"))):
     business_date = lock_business_date(db)
     rows = db.execute(
@@ -78,50 +72,3 @@ def housekeeping_board(db: Session = Depends(get_db), _: User = Depends(require_
             "open_housekeeping_tasks": sum(1 for row in result if row["housekeeping_task"]),
             "active_maintenance": sum(1 for row in result if row["maintenance_block"]),
         },
-        "rooms": result,
-    }
-
-
-@router.post("/housekeeping/rooms/{room_id}/clean")
-def mark_room_clean(room_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "housekeeping"))):
-    business_date = lock_business_date(db)
-    room = require_room(db, room_id)
-    if room.status != "dirty":
-        raise HTTPException(status_code=409, detail=f"Room {room.number} is not awaiting cleaning")
-    if active_maintenance(db, room.id):
-        raise HTTPException(status_code=409, detail="Room has an active maintenance block")
-    task = active_housekeeping_task(db, room.id)
-    if task is None:
-        task = create_housekeeping_task(db, room, business_date, user.id, "manual_clean", "Legacy clean operation", "normal")
-    if task["status"] == "pending":
-        now = datetime.utcnow()
-        db.execute(update(housekeeping_tasks).where(housekeeping_tasks.c.id == task["id"]).values(status="in_progress", started_at=now, updated_at=now))
-    elif task["status"] != "in_progress":
-        raise HTTPException(status_code=409, detail="Housekeeping task cannot be completed")
-    now = datetime.utcnow()
-    room.status = "available"
-    db.execute(update(housekeeping_tasks).where(housekeeping_tasks.c.id == task["id"]).values(status="completed", completed_at=now, completed_by=user.id, updated_at=now))
-    db.add(AuditLog(user_id=user.id, action="housekeeping_clean", entity_type="room", entity_id=str(room.id), details=json.dumps({"room_number": room.number, "task_id": task["id"], "from": "dirty", "to": "available"})))
-    db.commit()
-    return {"room_id": room.id, "room_number": room.number, "status": room.status, "task_id": task["id"], "business_date": business_date}
-
-
-@router.post("/housekeeping/rooms/{room_id}/out-of-order")
-def mark_room_out_of_order(room_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
-    business_date = lock_business_date(db)
-    room = require_room(db, room_id)
-    if room.status in ("occupied", "reserved"):
-        raise HTTPException(status_code=409, detail="Occupied or reserved rooms cannot be taken out of order")
-    if active_maintenance(db, room.id):
-        raise HTTPException(status_code=409, detail="Room already has an active maintenance block")
-    row = create_maintenance_block(room.id, MaintenanceCreate(reason="Legacy out-of-order block", severity="normal"), db, user)
-    return {"room_id": room.id, "room_number": room.number, "status": "out_of_order", "maintenance_block_id": row["id"], "business_date": business_date}
-
-
-@router.post("/housekeeping/rooms/{room_id}/release")
-def release_room_from_out_of_order(room_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
-    block = active_maintenance(db, room_id)
-    if block is None:
-        raise HTTPException(status_code=409, detail=f"Room {room_id} has no active maintenance block")
-    result = resolve_maintenance_block(block["id"], db, user)
-    return {"room_id": room_id, "status": result["room_status"], "maintenance_block_id": block["id"], "housekeeping_task_id": result["housekeeping_task_id"]}
