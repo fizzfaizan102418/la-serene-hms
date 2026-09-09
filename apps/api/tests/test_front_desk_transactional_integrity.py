@@ -104,7 +104,7 @@ class FrontDeskTransactionalIntegrityTests(unittest.TestCase):
         self.assertEqual(self.db.scalar(select(FolioItem.id).where(FolioItem.folio_id == folio.id)), None)
         self.assertEqual(self.db.scalar(select(FinancialTransaction.id).where(FinancialTransaction.folio_id == folio.id)), None)
 
-        payment = __import__("app.models", fromlist=["Payment"]).Payment(folio_id=folio.id, amount=Decimal("100"), method="cash")
+        payment = __import__("app.models", fromlist=["Payment"]).Payment(folio_id=folio.id, amount=Decimal("200"), method="cash")
         self.db.add(payment); self.db.flush()
         post_transaction(
             self.db,
@@ -117,8 +117,8 @@ class FrontDeskTransactionalIntegrityTests(unittest.TestCase):
             created_by=self.user.id,
             idempotency_key=f"checkout-test-payment:{payment.id}",
             lines=[
-                {"account": "Cash", "direction": "debit", "amount": Decimal("100"), "folio_id": folio.id, "payment_method": "cash"},
-                {"account": "Guest Receivables", "direction": "credit", "amount": Decimal("100"), "folio_id": folio.id, "payment_method": "cash"},
+                {"account": "Cash", "direction": "debit", "amount": Decimal("200"), "folio_id": folio.id, "payment_method": "cash"},
+                {"account": "Guest Receivables", "direction": "credit", "amount": Decimal("200"), "folio_id": folio.id, "payment_method": "cash"},
             ],
         )
         self.db.commit()
@@ -131,7 +131,7 @@ class FrontDeskTransactionalIntegrityTests(unittest.TestCase):
         self.assertEqual(self.db.get(Room, self.room.id).status, "dirty")
         charge = self.db.scalar(select(FolioItem).where(FolioItem.folio_id == folio.id, FolioItem.category == "room"))
         self.assertIsNotNone(charge)
-        self.assertEqual(Decimal(charge.quantity), Decimal("1"))
+        self.assertEqual(Decimal(charge.quantity), Decimal("2"))
         self.assertEqual(Decimal(charge.unit_price), Decimal("100.00"))
         txs = self.db.scalars(select(FinancialTransaction).where(FinancialTransaction.folio_id == folio.id).order_by(FinancialTransaction.id)).all()
         self.assertTrue(any(tx.transaction_type == "folio_charge" and tx.business_date == self.business_date for tx in txs))
