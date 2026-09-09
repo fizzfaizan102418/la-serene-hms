@@ -54,9 +54,18 @@ if ($existing) {
 & $NssmExe set $ServiceName Description "La Serene HMS FastAPI production service"
 & $NssmExe set $ServiceName AppDirectory $ApiRoot
 & $NssmExe set $ServiceName Start SERVICE_AUTO_START
+
+# K13 service-recovery contract:
+# - A clean NSSM/service stop must stay stopped.
+# - An unexpected API process exit must restart automatically.
+# - Restart attempts are throttled to avoid a tight crash loop.
+& $NssmExe set $ServiceName AppExit 0 Exit
 & $NssmExe set $ServiceName AppExit Default Restart
 & $NssmExe set $ServiceName AppRestartDelay 5000
 & $NssmExe set $ServiceName AppThrottle 5000
+& $NssmExe set $ServiceName AppStopMethodConsole 1500
+& $NssmExe set $ServiceName AppStopMethodWindow 1500
+& $NssmExe set $ServiceName AppStopMethodThreads 1500
 & $NssmExe set $ServiceName AppNoConsole 1
 & $NssmExe set $ServiceName AppStdout (Join-Path $LogRoot "api.stdout.log")
 & $NssmExe set $ServiceName AppStderr (Join-Path $LogRoot "api.stderr.log")
@@ -81,5 +90,6 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host "Installed and started $ServiceDisplayName ($ServiceName)."
 Write-Host "API listener: http://$ListenHost`:$ListenPort"
-Write-Host "Logs: $LogRoot"
+Write-Host "Unexpected process exits are configured for automatic restart."
+Write-Host "API logs: $LogRoot"
 Write-Host "Production secrets remain in $EnvFile and are not copied into the service script."
