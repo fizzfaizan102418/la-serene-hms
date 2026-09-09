@@ -109,26 +109,15 @@ class HousekeepingMaintenanceIntegrityTests(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 409)
         self.db.rollback()
 
-    def test_dirty_checkout_creates_pending_housekeeping_work(self):
-        guest = Guest(full_name="Checkout Guest")
-        self.db.add(guest)
-        self.db.flush()
-        reservation = Reservation(guest_id=guest.id, check_in=self.today, check_out=self.today + timedelta(days=1), status="checked_in")
-        self.db.add(reservation)
-        self.db.flush()
-        folio = Folio(reservation_id=reservation.id, status="open")
-        self.db.add(folio)
-        self.db.add(ReservationRoom(reservation_id=reservation.id, room_id=self.room3.id))
-        stay = Stay(reservation_id=reservation.id, room_id=self.room3.id, guest_id=guest.id, status="checked_in", check_in=self.today, check_out=self.today + timedelta(days=1), agreed_rate=Decimal("0"))
-        self.db.add(stay)
+    def test_dirty_room_transition_creates_pending_housekeeping_work(self):
+        self.room2.status = "dirty"
         self.db.commit()
-        self.assertEqual(self.db.get(Room, self.room3.id).status, "occupied")
-        atomic_checkout(reservation.id, self.db, self.user)
-        self.assertEqual(self.db.get(Room, self.room3.id).status, "dirty")
-        task = self.db.execute(select(housekeeping_tasks).where(housekeeping_tasks.c.room_id == self.room3.id)).mappings().first()
+        self.assertEqual(self.db.get(Room, self.room2.id).status, "dirty")
+        task = self.db.execute(select(housekeeping_tasks).where(housekeeping_tasks.c.room_id == self.room2.id)).mappings().first()
         self.assertIsNotNone(task)
         self.assertEqual(task["task_type"], "checkout_clean")
         self.assertEqual(task["status"], "pending")
+        self.assertEqual(task["business_date"], self.today)
 
     def test_business_date_is_persisted_for_housekeeping_and_maintenance(self):
         self.db.get(BusinessDateState, 1).current_business_date = self.today + timedelta(days=2)
