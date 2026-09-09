@@ -38,6 +38,10 @@ $env:PYTHONPATH = $InstallRoot
 $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 $wasRunning = $service -and $service.Status -eq 'Running'
 
+if ($SkipServiceRestart -and $wasRunning) {
+    throw "Refusing to migrate while $ServiceName is running. A live production service must be stopped during K12 schema upgrades."
+}
+
 try {
     Write-Host "K12 database lifecycle: creating mandatory pre-upgrade backup..."
     & (Join-Path $InstallRoot "scripts\windows\run-backup.ps1") -InstallRoot $InstallRoot -PythonExe $PythonExe -BackupDir $BackupDir -Retain $Retain
@@ -59,7 +63,7 @@ try {
         Pop-Location
     }
 
-    if ($wasRunning -and -not $SkipServiceRestart) {
+    if ($wasRunning) {
         Write-Host "Stopping $ServiceName for controlled schema upgrade..."
         Stop-Service -Name $ServiceName -ErrorAction Stop
         $service.WaitForStatus('Stopped', '00:00:30')
@@ -97,13 +101,13 @@ try {
         }
         Write-Host "Production database upgrade completed and readiness is healthy."
     } else {
-        Write-Host "Migration completed. Service restart was skipped by request."
+        Write-Host "Migration completed. Service restart was skipped because the service was not running."
     }
 }
 finally {
     Remove-Item Env:HMS_DATABASE_URL -ErrorAction SilentlyContinue
     Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
-    if (-not $SkipServiceRestart -and $wasRunning -and $service) {
+    if (-not $SkipServiceRestart -and $wasRunning) {
         $current = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
         if ($current -and $current.Status -eq 'Stopped') {
             Write-Warning "$ServiceName remains stopped because the upgrade did not complete successfully."
