@@ -33,7 +33,9 @@ def upgrade() -> None:
               AND le.account = 'Guest Receivables'
               AND ft.status = 'posted';
             IF NEW.amount > available_balance THEN
-                RAISE EXCEPTION 'Payment exceeds outstanding balance of %', available_balance;
+                RAISE EXCEPTION USING
+                    ERRCODE = '23514',
+                    MESSAGE = format('Payment exceeds outstanding balance of %s', available_balance);
             END IF;
             RETURN NEW;
         END;
@@ -52,14 +54,22 @@ def upgrade() -> None:
         AS $$
         DECLARE payment_amount numeric; refunded_amount numeric;
         BEGIN
-            SELECT amount INTO payment_amount FROM payments WHERE id = NEW.payment_id FOR UPDATE;
+            SELECT p.amount INTO payment_amount
+            FROM payments AS p
+            WHERE p.id = NEW.payment_id
+            FOR UPDATE;
             IF payment_amount IS NULL THEN
-                RAISE EXCEPTION 'Refund references a missing payment';
+                RAISE EXCEPTION USING
+                    ERRCODE = '23503',
+                    MESSAGE = 'Refund references a missing payment';
             END IF;
-            SELECT COALESCE(SUM(amount), 0) INTO refunded_amount
-            FROM payment_refunds WHERE payment_id = NEW.payment_id;
-            IF refunded_amount > payment_amount THEN
-                RAISE EXCEPTION 'Refund exceeds refundable payment balance of %', payment_amount;
+            SELECT COALESCE(SUM(pr.amount), 0) INTO refunded_amount
+            FROM payment_refunds AS pr
+            WHERE pr.payment_id = NEW.payment_id;
+            IF refunded_amount + NEW.amount > payment_amount THEN
+                RAISE EXCEPTION USING
+                    ERRCODE = '23514',
+                    MESSAGE = format('Refund exceeds refundable payment balance of %s', payment_amount - refunded_amount);
             END IF;
             RETURN NEW;
         END;
@@ -76,27 +86,34 @@ def upgrade() -> None:
         RETURNS trigger
         LANGUAGE plpgsql
         AS $$
-        DECLARE stay_balance numeric; signed_amount numeric; deposit_required numeric;
+        DECLARE stay_balance numeric; signed_amount numeric; required_amount numeric;
         BEGIN
             PERFORM 1 FROM stays WHERE id = NEW.stay_id FOR UPDATE;
             SELECT COALESCE(SUM(CASE
-                WHEN transaction_type IN ('received', 'adjusted', 'transferred_in') THEN amount
-                WHEN transaction_type IN ('applied', 'refunded', 'transferred_out') THEN -amount
+                WHEN dt.transaction_type IN ('received', 'adjusted', 'transferred_in') THEN dt.amount
+                WHEN dt.transaction_type IN ('applied', 'refunded', 'transferred_out') THEN -dt.amount
                 ELSE 0 END), 0)
             INTO stay_balance
-            FROM deposit_transactions WHERE stay_id = NEW.stay_id;
+            FROM deposit_transactions AS dt
+            WHERE dt.stay_id = NEW.stay_id;
             signed_amount := CASE
                 WHEN NEW.transaction_type IN ('received', 'adjusted', 'transferred_in') THEN NEW.amount
                 WHEN NEW.transaction_type IN ('applied', 'refunded', 'transferred_out') THEN -NEW.amount
                 ELSE 0 END;
             IF stay_balance + signed_amount < 0 THEN
-                RAISE EXCEPTION 'Deposit transaction exceeds available deposit balance';
+                RAISE EXCEPTION USING
+                    ERRCODE = '23514',
+                    MESSAGE = 'Deposit transaction exceeds available deposit balance';
             END IF;
             IF NEW.transaction_type = 'received' THEN
-                SELECT deposit_required INTO deposit_required FROM stays WHERE id = NEW.stay_id;
-                IF deposit_required IS NOT NULL AND deposit_required > 0
-                   AND stay_balance + signed_amount > deposit_required THEN
-                    RAISE EXCEPTION 'Deposit received exceeds required deposit';
+                SELECT s.deposit_required INTO required_amount
+                FROM stays AS s
+                WHERE s.id = NEW.stay_id;
+                IF required_amount IS NOT NULL AND required_amount > 0
+                   AND stay_balance + signed_amount > required_amount THEN
+                    RAISE EXCEPTION USING
+                        ERRCODE = '23514',
+                        MESSAGE = 'Deposit received exceeds required deposit';
                 END IF;
             END IF;
             RETURN NEW;
