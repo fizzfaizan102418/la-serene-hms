@@ -1,4 +1,3 @@
-import os
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -8,12 +7,13 @@ from pwdlib import PasswordHash
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .config import settings
 from .db import get_db
 from .models import Role, User
 
-SECRET_KEY = os.getenv("HMS_SECRET_KEY", "la-serene-development-secret-change-me")
+SECRET_KEY = settings.secret_key
 ALGORITHM = "HS256"
-TOKEN_EXPIRE_MINUTES = int(os.getenv("HMS_TOKEN_EXPIRE_MINUTES", "480"))
+TOKEN_EXPIRE_MINUTES = settings.token_expire_minutes
 
 password_hash = PasswordHash.recommended()
 bearer = HTTPBearer(auto_error=False)

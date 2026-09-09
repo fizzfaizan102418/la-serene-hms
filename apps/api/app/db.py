@@ -1,8 +1,9 @@
 from pathlib import Path
-import os
 
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
+
+from .config import settings
 
 BASE_DIR = Path(__file__).resolve().parents[3]
 DATA_DIR = BASE_DIR / "data"
@@ -11,7 +12,7 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 # Production uses PostgreSQL through HMS_DATABASE_URL. SQLite remains the explicit
 # local-development fallback so existing developer databases can still be opened
 # during the migration period.
-DATABASE_URL = os.getenv("HMS_DATABASE_URL", f"sqlite:///{DATA_DIR / 'la_serene_hms.sqlite3'}")
+DATABASE_URL = settings.database_url or f"sqlite:///{DATA_DIR / 'la_serene_hms.sqlite3'}"
 IS_SQLITE = DATABASE_URL.startswith("sqlite")
 
 engine_kwargs = {"pool_pre_ping": True}
