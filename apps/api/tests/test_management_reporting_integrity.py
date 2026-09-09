@@ -30,6 +30,8 @@ class ManagementReportingIntegrityTests(unittest.TestCase):
         user = User(username="admin", password_hash="test", role_id=role.id)
         guest = Guest(full_name="Management Guest")
         room_type = RoomType(name="Standard", base_rate=100)
+        self.db.add_all([user, guest, room_type])
+        self.db.flush()
         room_a = Room(number="301", room_type_id=room_type.id, status="occupied")
         room_b = Room(number="302", room_type_id=room_type.id, status="available")
         reservation = Reservation(
@@ -39,7 +41,7 @@ class ManagementReportingIntegrityTests(unittest.TestCase):
             status="checked_in",
             checked_in_at=datetime(2026, 9, 9, 12, 0),
         )
-        self.db.add_all([user, guest, room_type, room_a, room_b, reservation])
+        self.db.add_all([room_a, room_b, reservation])
         self.db.flush()
         self.db.add(ReservationRoom(reservation_id=reservation.id, room_id=room_a.id))
         folio = Folio(reservation_id=reservation.id, status="open")
