@@ -1,18 +1,15 @@
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import text
-from sqlalchemy.orm import Session
 
 from .logging_config import configure_production_logging
 
 configure_production_logging()
 
-from .db import engine  # noqa: E402
 from .main import app as api_app  # noqa: E402
 from .migration_guard import check_database_at_head  # noqa: E402
-from .schemas import HealthResponse  # noqa: E402
+from .readiness import router as readiness_router  # noqa: E402
 
 
 WEB_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
@@ -29,19 +26,7 @@ if not WEB_DIST.is_dir():
 check_database_at_head()
 
 app: FastAPI = api_app
-
-
-@app.get("/api/ready", response_model=HealthResponse, tags=["health"])
-def readiness() -> HealthResponse:
-    try:
-        with Session(engine) as db:
-            db.execute(text("SELECT 1"))
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database readiness check failed",
-        ) from exc
-    return HealthResponse(status="ready", service="la-serene-hms-api", mode="postgresql")
+app.include_router(readiness_router)
 
 
 # API routes are registered before this catch-all static mount. StaticFiles(html=True)
