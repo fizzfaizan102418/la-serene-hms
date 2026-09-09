@@ -66,7 +66,7 @@ class FrontDeskPhaseCTests(unittest.TestCase):
         self.room1.status = "occupied"
         self.db.add(ReservationRoom(reservation_id=reservation.id, room_id=self.room1.id)); self.db.commit()
         with self.assertRaises(HTTPException) as ctx:
-            create_walk_in(WalkInCreate(guest_id=self.guest.id, rooms=[WalkInRoom(room_id=self.room1.id, agreed_rate=100)], check_out=date(2026, 9, 9)), self.db, self.user)
+            create_walk_in(WalkInCreate(guest_id=self.guest.id, rooms=[WalkInRoom(room_id=self.room1.id, agreed_rate=100)], check_out=date(2026, 9, 10)), self.db, self.user)
         self.assertEqual(ctx.exception.status_code, 409)
 
     def test_atomic_checkout_requires_zero_balance(self):
