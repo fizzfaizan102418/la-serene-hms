@@ -1,7 +1,6 @@
 import unittest
 from datetime import date
 from decimal import Decimal
-from types import SimpleNamespace
 
 from fastapi import HTTPException
 from sqlalchemy import create_engine, func, select
@@ -24,22 +23,13 @@ from app.models import (
     StockMovement,
     User,
 )
-from app.restaurant_pos import (
-    PaymentCreate,
-    add_pos_payment,
-    cancel_order,
-    post_order,
-    void_posted_order,
-)
+from app.restaurant_pos import PaymentCreate, add_pos_payment, cancel_order, post_order, void_posted_order
 
 
 class RestaurantPosIntegrityTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-        Base.metadata.create_all(bind=cls.engine)
-
     def setUp(self):
+        self.engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        Base.metadata.create_all(bind=self.engine)
         self.db = Session(self.engine)
         self.today = date(2026, 9, 9)
         self.db.add(BusinessDateState(id=1, current_business_date=self.today))
@@ -64,6 +54,7 @@ class RestaurantPosIntegrityTests(unittest.TestCase):
     def tearDown(self):
         self.db.rollback()
         self.db.close()
+        self.engine.dispose()
 
     def _make_order(self, *, order_no: str, price: Decimal, quantity: Decimal = Decimal("1"), stock: StockItem | None = None):
         menu = MenuItem(
@@ -75,25 +66,10 @@ class RestaurantPosIntegrityTests(unittest.TestCase):
         )
         self.db.add(menu)
         self.db.flush()
-        order = RestaurantOrder(
-            order_no=order_no,
-            folio_id=self.folio_id,
-            reservation_id=self.reservation_id,
-            business_date=self.today,
-            created_by=self.user_id,
-        )
+        order = RestaurantOrder(order_no=order_no, folio_id=self.folio_id, reservation_id=self.reservation_id, business_date=self.today, created_by=self.user_id)
         self.db.add(order)
         self.db.flush()
-        self.db.add(
-            RestaurantOrderItem(
-                order_id=order.id,
-                menu_item_id=menu.id,
-                description=menu.name,
-                quantity=quantity,
-                unit_price=menu.unit_price,
-                stock_quantity_per_unit=menu.stock_quantity_per_unit,
-            )
-        )
+        self.db.add(RestaurantOrderItem(order_id=order.id, menu_item_id=menu.id, description=menu.name, quantity=quantity, unit_price=menu.unit_price, stock_quantity_per_unit=menu.stock_quantity_per_unit))
         self.db.commit()
         return order, menu
 
@@ -102,11 +78,9 @@ class RestaurantPosIntegrityTests(unittest.TestCase):
         self.db.add(stock)
         self.db.flush()
         order, _ = self._make_order(order_no="POS-TEST-1", price=Decimal("1000.00"), quantity=Decimal("20"), stock=stock)
-
         with self.assertRaises(HTTPException) as ctx:
             post_order(order.id, self.db, self.user)
         self.assertEqual(ctx.exception.status_code, 409)
-
         self.db.rollback()
         self.assertEqual(self.db.get(RestaurantOrder, order.id).status, "open")
         self.assertEqual(self.db.get(StockItem, stock.id).on_hand, Decimal("1.000"))
@@ -117,7 +91,6 @@ class RestaurantPosIntegrityTests(unittest.TestCase):
         self.db.add(stock)
         self.db.flush()
         order, _ = self._make_order(order_no="POS-TEST-2", price=Decimal("500.00"), quantity=Decimal("2"), stock=stock)
-
         result = post_order(order.id, self.db, self.user)
         self.assertEqual(result["status"], "posted")
         self.assertEqual(result["subtotal"], Decimal("1000.00"))
@@ -133,7 +106,6 @@ class RestaurantPosIntegrityTests(unittest.TestCase):
         order, _ = self._make_order(order_no="POS-TEST-3", price=Decimal("100.00"))
         order.business_date = date(2026, 9, 8)
         self.db.commit()
-
         with self.assertRaises(HTTPException) as ctx:
             post_order(order.id, self.db, self.user)
         self.assertEqual(ctx.exception.status_code, 409)
@@ -150,7 +122,7 @@ class RestaurantPosIntegrityTests(unittest.TestCase):
     def test_pos_payment_is_idempotent(self):
         order, _ = self._make_order(order_no="POS-TEST-5", price=Decimal("100.00"))
         post_order(order.id, self.db, self.user)
-        payload = PaymentCreate(amount=Decimal("110.00"), method="cash", reference="r1")
+        payload = PaymentCreate(amount=Decimal("1100.00"), method="cash", reference="r1")
         first = add_pos_payment(order.id, payload, "pos-key-1", self.db, self.user)
         second = add_pos_payment(order.id, payload, "pos-key-1", self.db, self.user)
         self.assertEqual(first["id"], second["id"])
@@ -164,7 +136,6 @@ class RestaurantPosIntegrityTests(unittest.TestCase):
         order, _ = self._make_order(order_no="POS-TEST-6", price=Decimal("200.00"), quantity=Decimal("1"), stock=stock)
         post_order(order.id, self.db, self.user)
         before = self.db.get(StockItem, stock.id).on_hand
-
         result = void_posted_order(order.id, "manager correction", self.db, self.user)
         self.assertEqual(result["status"], "voided")
         self.assertEqual(self.db.get(StockItem, stock.id).on_hand, before + Decimal("0.100"))
