@@ -120,7 +120,7 @@ class RestaurantPosIntegrityTests(unittest.TestCase):
         self.assertIsNone(self.db.scalar(select(FinancialTransaction.id).where(FinancialTransaction.folio_id == self.folio_id)))
 
     def test_pos_payment_is_idempotent(self):
-        order, _ = self._make_order(order_no="POS-TEST-5", price=Decimal("100.00"))
+        order, _ = self._make_order(order_no="POS-TEST-5", price=Decimal("1000.00"))
         post_order(order.id, self.db, self.user)
         payload = PaymentCreate(amount=Decimal("1100.00"), method="cash", reference="r1")
         first = add_pos_payment(order.id, payload, "pos-key-1", self.db, self.user)
