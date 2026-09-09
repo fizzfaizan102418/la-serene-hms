@@ -226,3 +226,65 @@ class LedgerEntry(Base):
     payment_method: Mapped[str | None] = mapped_column(String(30), nullable=True)
     reference: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class MenuItem(TimestampMixin, Base):
+    __tablename__ = "menu_items"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    category: Mapped[str] = mapped_column(String(50), default="food")
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    active: Mapped[bool] = mapped_column(default=True, index=True)
+    stock_item_id: Mapped[int | None] = mapped_column(ForeignKey("stock_items.id"), nullable=True, index=True)
+    stock_quantity_per_unit: Mapped[Decimal] = mapped_column(Numeric(12, 3), default=0)
+
+
+class RestaurantOrder(TimestampMixin, Base):
+    __tablename__ = "restaurant_orders"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_no: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    folio_id: Mapped[int] = mapped_column(ForeignKey("folios.id"), index=True)
+    reservation_id: Mapped[int] = mapped_column(ForeignKey("reservations.id"), index=True)
+    business_date: Mapped[date] = mapped_column(Date, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="open", index=True)
+    service_charge_rate: Mapped[Decimal] = mapped_column(Numeric(5, 4), default=Decimal("0.10"))
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    void_reason: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+
+
+class RestaurantOrderItem(TimestampMixin, Base):
+    __tablename__ = "restaurant_order_items"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("restaurant_orders.id", ondelete="CASCADE"), index=True)
+    menu_item_id: Mapped[int] = mapped_column(ForeignKey("menu_items.id"), index=True)
+    description: Mapped[str] = mapped_column(String(200))
+    quantity: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    stock_quantity_per_unit: Mapped[Decimal] = mapped_column(Numeric(12, 3), default=0)
+    folio_item_id: Mapped[int | None] = mapped_column(ForeignKey("folio_items.id"), nullable=True, unique=True)
+    reversed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class StockItem(TimestampMixin, Base):
+    __tablename__ = "stock_items"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    sku: Mapped[str] = mapped_column(String(60), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    unit: Mapped[str] = mapped_column(String(20), default="unit")
+    on_hand: Mapped[Decimal] = mapped_column(Numeric(14, 3), default=0)
+    active: Mapped[bool] = mapped_column(default=True, index=True)
+
+
+class StockMovement(TimestampMixin, Base):
+    __tablename__ = "stock_movements"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    stock_item_id: Mapped[int] = mapped_column(ForeignKey("stock_items.id"), index=True)
+    business_date: Mapped[date] = mapped_column(Date, index=True)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3))
+    movement_type: Mapped[str] = mapped_column(String(30), index=True)
+    reference_type: Mapped[str] = mapped_column(String(40))
+    reference_id: Mapped[str] = mapped_column(String(50))
+    unit_cost: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
