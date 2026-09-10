@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 from datetime import date, datetime, timezone
@@ -33,6 +34,30 @@ def require_postgres_url() -> str:
     if not url.startswith(("postgresql://", "postgres://")):
         raise RuntimeError("HMS_DATABASE_URL must point to PostgreSQL for production backup operations")
     return url
+
+
+def resolve_postgres_tool(tool_name: str) -> str:
+    configured = os.environ.get("HMS_POSTGRES_BIN", "").strip()
+    if configured:
+        candidate = Path(configured) / (f"{tool_name}.exe" if os.name == "nt" else tool_name)
+        if candidate.is_file():
+            return str(candidate)
+        raise RuntimeError(f"Configured PostgreSQL bin directory does not contain {tool_name}: {candidate}")
+
+    resolved = shutil.which(tool_name)
+    if resolved:
+        return resolved
+
+    if os.name == "nt":
+        program_files = Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
+        for version in ("18", "17", "16", "15", "14"):
+            candidate = program_files / "PostgreSQL" / version / "bin" / f"{tool_name}.exe"
+            if candidate.is_file():
+                return str(candidate)
+
+    raise RuntimeError(
+        f"{tool_name} was not found on PATH. Install PostgreSQL client tools or set HMS_POSTGRES_BIN."
+    )
 
 
 def sha256_file(path: Path) -> str:
@@ -69,7 +94,7 @@ def database_metadata(database_url: str) -> dict[str, object]:
 def run_pg_dump(database_url: str, destination: Path) -> None:
     subprocess.run(
         [
-            "pg_dump",
+            resolve_postgres_tool("pg_dump"),
             "--format=custom",
             "--no-owner",
             "--no-privileges",
@@ -162,10 +187,10 @@ def restore_and_verify(backup_file: Path, manifest_file: Path, target_database_u
     with tempfile.TemporaryDirectory(prefix="la-serene-hms-restore-") as temp_dir_name:
         list_file = Path(temp_dir_name) / "restore.list"
         with list_file.open("w", encoding="utf-8") as handle:
-            subprocess.run(["pg_restore", "--list", str(backup_file)], check=True, stdout=handle)
+            subprocess.run([resolve_postgres_tool("pg_restore"), "--list", str(backup_file)], check=True, stdout=handle)
         subprocess.run(
             [
-                "pg_restore",
+                resolve_postgres_tool("pg_restore"),
                 "--clean",
                 "--if-exists",
                 "--no-owner",
