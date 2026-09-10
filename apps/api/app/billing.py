@@ -237,6 +237,10 @@ def close_folio(folio_id: int, db: Session = Depends(get_db), user: User = Depen
     folio = db.get(Folio, folio_id)
     if not folio: raise HTTPException(status_code=404, detail="Folio not found")
     if folio.status != "open": raise HTTPException(status_code=409, detail="Folio is already closed")
+    reservation = db.get(Reservation, folio.reservation_id)
+    if not reservation: raise HTTPException(status_code=404, detail="Reservation not found")
+    if reservation.status == "checked_in":
+        raise HTTPException(status_code=409, detail="Active stays must be checked out before the folio can be closed")
     summary = build_folio_response(db, folio)
     if summary.balance != 0: raise HTTPException(status_code=409, detail=f"Folio cannot be closed with an outstanding balance of {summary.balance}")
     folio.status = "closed"; audit(db, user.id, "close", "folio", folio.id, {"reservation_id": folio.reservation_id}); db.commit(); db.refresh(folio)
