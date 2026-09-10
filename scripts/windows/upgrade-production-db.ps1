@@ -46,9 +46,11 @@ try {
     Push-Location $ApiRoot
     try {
         Write-Host "Inspecting production migration state..."
-        $probe = @'
+        $probePath = Join-Path $ApiRoot ".migration-state-probe.py"
+        @'
 import os
 import psycopg
+
 url = os.environ.get("HMS_DATABASE_URL", "").replace("postgresql+psycopg://", "postgresql://", 1)
 conn = psycopg.connect(url)
 cur = conn.cursor()
@@ -57,9 +59,14 @@ row = cur.fetchone()
 cur.close()
 conn.close()
 print("fresh" if row == (None, None) else "initialized")
-'@
-        $schemaState = & $PythonExe -c $probe
-        if ($LASTEXITCODE -ne 0) { throw "Unable to inspect production migration state." }
+'@ | Set-Content -LiteralPath $probePath -Encoding UTF8
+        try {
+            $schemaState = & $PythonExe $probePath
+            if ($LASTEXITCODE -ne 0) { throw "Unable to inspect production migration state." }
+        }
+        finally {
+            Remove-Item -LiteralPath $probePath -Force -ErrorAction SilentlyContinue
+        }
     }
     finally {
         Pop-Location
