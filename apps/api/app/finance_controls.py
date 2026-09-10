@@ -9,10 +9,11 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .auth import require_roles
+from .business_date import get_current_business_date, lock_current_business_date
 from .db import get_db
 from .financial_authority import folio_ledger_summary
 from .financial_models import PaymentRefund
-from .models import AuditLog, BusinessDateState, DepositTransaction, FinancialTransaction, Folio, FolioItem, LedgerEntry, Payment, Reservation, User
+from .models import AuditLog, DepositTransaction, FinancialTransaction, Folio, FolioItem, LedgerEntry, Payment, Reservation, User
 from .pms_core import FolioWindow, Stay
 
 router = APIRouter(prefix="/finance", tags=["finance-controls"])
@@ -25,14 +26,13 @@ def money(value: Decimal | int | float | str) -> Decimal:
 
 
 def current_business_date(db: Session) -> date:
-    state = db.get(BusinessDateState, 1)
-    return state.current_business_date if state else date.today()
+    return get_current_business_date(db)
 
 
 def require_open_business_date(db: Session) -> date:
-    state = db.get(BusinessDateState, 1)
-    current = state.current_business_date if state else date.today()
-    if state and state.last_closed_at is not None and state.last_closed_at.date() >= current:
+    state = lock_current_business_date(db)
+    current = state.current_business_date
+    if state.last_closed_at is not None and state.last_closed_at.date() >= current:
         raise HTTPException(status_code=409, detail=f"Business date {current.isoformat()} is closed for posting")
     return current
 
@@ -63,10 +63,12 @@ class DepositPostCreate(BaseModel):
 
 @router.get("/period")
 def period_status(db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception"))):
-    state = db.get(BusinessDateState, 1)
-    current = state.current_business_date if state else date.today()
-    closed = bool(state and state.last_closed_at and state.last_closed_at.date() >= current)
-    return {"business_date": current, "opened_at": state.opened_at if state else None, "last_closed_at": state.last_closed_at if state else None, "posting_open": not closed}
+    state = db.scalar(select(BusinessDateState).order_by(BusinessDateState.id).limit(1))
+    if state is None or state.current_business_date is None:
+        raise HTTPException(status_code=503, detail="Business date is not initialized")
+    current = state.current_business_date
+    closed = bool(state.last_closed_at and state.last_closed_at.date() >= current)
+    return {"business_date": current, "opened_at": state.opened_at, "last_closed_at": state.last_closed_at, "posting_open": not closed}
 
 
 @router.post("/folio-transfers", status_code=201)
