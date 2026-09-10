@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$PgBin = "C:\Program Files\PostgreSQL\17\bin",
+    [string]$PgBin = "C:\Program Files\PostgreSQL\18\bin",
     [string]$PgHost = "127.0.0.1",
     [ValidateRange(1, 65535)]
     [int]$Port = 5432,
@@ -46,22 +46,22 @@ try {
     $RoleExists = ((& $Psql -h $PgHost -p $Port -U postgres -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname = '$AppUser';") | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) { throw "Could not check whether the application role exists." }
     if ($RoleExists -ne "1") {
-        & $Psql -h $PgHost -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -v "app_password=$AppPlain" -c "CREATE ROLE \"$AppUser\" LOGIN PASSWORD :'app_password';" | Out-Host
+        & $Psql -h $PgHost -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -v "app_password=$AppPlain" -c "CREATE ROLE $AppUser LOGIN PASSWORD :'app_password';" | Out-Host
     } else {
-        & $Psql -h $PgHost -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -v "app_password=$AppPlain" -c "ALTER ROLE \"$AppUser\" WITH LOGIN PASSWORD :'app_password';" | Out-Host
+        & $Psql -h $PgHost -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -v "app_password=$AppPlain" -c "ALTER ROLE $AppUser WITH LOGIN PASSWORD :'app_password';" | Out-Host
     }
     if ($LASTEXITCODE -ne 0) { throw "Could not create/update the application role." }
 
     $DatabaseExists = ((& $Psql -h $PgHost -p $Port -U postgres -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$Database';") | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) { throw "Could not check whether the application database exists." }
     if ($DatabaseExists -ne "1") {
-        & $Psql -h $PgHost -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$Database\" OWNER \"$AppUser\";" | Out-Host
+        & $Psql -h $PgHost -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE $Database OWNER $AppUser;" | Out-Host
     } else {
-        & $Psql -h $PgHost -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -c "ALTER DATABASE \"$Database\" OWNER TO \"$AppUser\";" | Out-Host
+        & $Psql -h $PgHost -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -c "ALTER DATABASE $Database OWNER TO $AppUser;" | Out-Host
     }
     if ($LASTEXITCODE -ne 0) { throw "Could not create/update the application database." }
 
-    & $Psql -h $PgHost -p $Port -U postgres -d $Database -v ON_ERROR_STOP=1 -c "REVOKE ALL ON DATABASE \"$Database\" FROM PUBLIC; GRANT CONNECT ON DATABASE \"$Database\" TO \"$AppUser\";" | Out-Host
+    & $Psql -h $PgHost -p $Port -U postgres -d $Database -v ON_ERROR_STOP=1 -c "REVOKE ALL ON DATABASE $Database FROM PUBLIC; GRANT CONNECT ON DATABASE $Database TO $AppUser;" | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "Could not apply database access policy." }
 
     $ConnectionUrl = "postgresql+psycopg://${AppUser}:<URL_ENCODED_PASSWORD>@$PgHost`:$Port/$Database"
