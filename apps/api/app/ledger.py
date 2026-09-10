@@ -13,9 +13,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .auth import require_roles
-from .business_date import get_current_business_date
+from .business_date import get_current_business_date, lock_current_business_date
 from .db import get_db
-from .models import BusinessDateState, FinancialTransaction, LedgerEntry, User
+from .models import FinancialTransaction, LedgerEntry, User
 
 router = APIRouter(prefix="/ledger", tags=["ledger"])
 MONEY = Decimal("0.01")
@@ -156,11 +156,11 @@ def post_transaction(
                 raise ValueError("Idempotency key is already bound to a different financial transaction")
             return existing
 
-    tx_date = business_date or current_business_date(db)
-    state = db.get(BusinessDateState, 1)
-    if business_date is not None and tx_date != current_business_date(db):
+    state = lock_current_business_date(db)
+    tx_date = business_date or state.current_business_date
+    if business_date is not None and tx_date != state.current_business_date:
         raise ValueError(f"Financial posting date {tx_date.isoformat()} is not the current business date")
-    if state is not None and state.last_closed_at is not None and state.last_closed_at.date() >= tx_date:
+    if state.last_closed_at is not None and state.last_closed_at.date() >= tx_date:
         raise ValueError(f"Business date {tx_date.isoformat()} is closed for financial posting")
 
     transaction = FinancialTransaction(
