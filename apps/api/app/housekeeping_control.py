@@ -141,6 +141,8 @@ def create_task(room_id: int, payload: HousekeepingTaskCreate, db: Session = Dep
     room = require_room(db, room_id)
     if active_maintenance(db, room.id):
         raise HTTPException(status_code=409, detail="Room has an active maintenance block")
+    if payload.task_type == "manual_clean" and room.status != "dirty":
+        raise HTTPException(status_code=409, detail="Manual cleaning tasks can only be created for dirty rooms")
     if room.status not in ("dirty", "available"):
         raise HTTPException(status_code=409, detail="Housekeeping tasks can only be created for dirty or available rooms")
     task = create_housekeeping_task(db, room, business_date, user.id, payload.task_type, payload.reason, payload.priority)
