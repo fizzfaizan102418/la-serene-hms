@@ -82,6 +82,14 @@ def overlaps(db: Session, room_id: int, check_in: date, check_out: date, exclude
     return db.scalar(stmt) is not None
 
 
+def lock_rooms(db: Session, room_ids: list[int]) -> dict[int, Room]:
+    ids = sorted(set(room_ids))
+    if not ids:
+        return {}
+    rows = db.scalars(select(Room).where(Room.id.in_(ids)).order_by(Room.id).with_for_update()).all()
+    return {room.id: room for room in rows}
+
+
 def reservation_rooms(db: Session, reservation_id: int) -> list[int]:
     return db.scalars(select(ReservationRoom.room_id).where(ReservationRoom.reservation_id == reservation_id)).all()
 
@@ -105,9 +113,10 @@ def create_reservation_workflow(payload: ReservationWorkflowCreate, db: Session 
     room_ids = [item.room_id for item in payload.rooms]
     if len(room_ids) != len(set(room_ids)):
         raise HTTPException(status_code=400, detail="Duplicate rooms are not allowed")
-    rooms = [db.get(Room, room_id) for room_id in room_ids]
-    if any(room is None for room in rooms):
+    locked_rooms = lock_rooms(db, room_ids)
+    if len(locked_rooms) != len(room_ids):
         raise HTTPException(status_code=400, detail="One or more rooms do not exist")
+    rooms = [locked_rooms[room_id] for room_id in room_ids]
     if any(room.status in ("dirty", "out_of_order") for room in rooms):
         raise HTTPException(status_code=409, detail="One or more rooms are not operationally bookable")
     conflicts = [room.number for room in rooms if overlaps(db, room.id, payload.check_in, payload.check_out)]
@@ -139,7 +148,7 @@ def create_reservation_workflow(payload: ReservationWorkflowCreate, db: Session 
         db.add(StayOccupant(stay_id=stay.id, guest_id=occupant_id, role="primary", is_primary=True, check_in=payload.check_in, check_out=payload.check_out, notes=payload.notes))
         db.add(StayRateSegment(stay_id=stay.id, from_date=payload.check_in, to_date=payload.check_out, rate=money(item.agreed_rate), discount_percent=item.discount_percent, discount_amount=discount, source="reservation", notes=payload.notes))
         db.add(ReservationRoom(reservation_id=reservation.id, room_id=item.room_id))
-        room = db.get(Room, item.room_id)
+        room = locked_rooms[item.room_id]
         if room and payload.check_in <= date.today() < payload.check_out:
             room.status = "reserved"
     if payload.group_id:
@@ -160,7 +169,8 @@ def update_reservation(reservation_id: int, payload: ReservationUpdate, db: Sess
     if payload.guest_id is not None and not db.get(Guest, payload.guest_id): raise HTTPException(status_code=400, detail="Guest does not exist")
     old = {"check_in": str(reservation.check_in), "check_out": str(reservation.check_out), "guest_id": reservation.guest_id, "notes": reservation.notes}
     current_rooms = reservation_rooms(db, reservation_id)
-    conflicts = [db.get(Room, room_id).number for room_id in current_rooms if db.get(Room, room_id) and overlaps(db, room_id, check_in, check_out, reservation_id)]
+    locked_rooms = lock_rooms(db, current_rooms)
+    conflicts = [locked_rooms[room_id].number for room_id in current_rooms if room_id in locked_rooms and overlaps(db, room_id, check_in, check_out, reservation_id)]
     if conflicts: raise HTTPException(status_code=409, detail=f"Updated dates conflict with room(s): {', '.join(conflicts)}")
     reservation.check_in = check_in; reservation.check_out = check_out; reservation.notes = payload.notes
     if payload.guest_id is not None: reservation.guest_id = payload.guest_id
@@ -181,8 +191,9 @@ def replace_reservation_rooms(reservation_id: int, payload: RoomAssignmentsUpdat
     if reservation.status != "reserved": raise HTTPException(status_code=409, detail="Room allocation can only be changed before check-in")
     old_ids = reservation_rooms(db, reservation_id)
     if len(payload.room_ids) != len(set(payload.room_ids)): raise HTTPException(status_code=400, detail="Duplicate room IDs are not allowed")
-    rooms = [db.get(Room, room_id) for room_id in payload.room_ids]
-    if any(room is None for room in rooms): raise HTTPException(status_code=400, detail="One or more rooms do not exist")
+    locked_rooms = lock_rooms(db, payload.room_ids)
+    if len(locked_rooms) != len(payload.room_ids): raise HTTPException(status_code=400, detail="One or more rooms do not exist")
+    rooms = [locked_rooms[room_id] for room_id in payload.room_ids]
     if any(room.status in ("dirty", "out_of_order") for room in rooms): raise HTTPException(status_code=409, detail="One or more rooms are not operationally bookable")
     conflicts = [room.number for room in rooms if overlaps(db, room.id, reservation.check_in, reservation.check_out, reservation_id)]
     if conflicts: raise HTTPException(status_code=409, detail=f"Room(s) unavailable for dates: {', '.join(conflicts)}")
@@ -204,7 +215,8 @@ def extend_stay(reservation_id: int, payload: ExtendStay, db: Session = Depends(
     if payload.new_check_out <= reservation.check_in or payload.new_check_out <= date.today(): raise HTTPException(status_code=400, detail="New check-out date is invalid")
     if payload.new_check_out <= reservation.check_out: raise HTTPException(status_code=400, detail="Use a later date to extend the stay")
     room_ids = reservation_rooms(db, reservation_id)
-    conflicts = [db.get(Room, room_id).number for room_id in room_ids if db.get(Room, room_id) and overlaps(db, room_id, reservation.check_out, payload.new_check_out, reservation_id)]
+    locked_rooms = lock_rooms(db, room_ids)
+    conflicts = [locked_rooms[room_id].number for room_id in room_ids if room_id in locked_rooms and overlaps(db, room_id, reservation.check_out, payload.new_check_out, reservation_id)]
     if conflicts: raise HTTPException(status_code=409, detail=f"Extension conflicts with room(s): {', '.join(conflicts)}")
     old_checkout = reservation.check_out; reservation.check_out = payload.new_check_out
     for stay in db.scalars(select(Stay).where(Stay.reservation_id == reservation_id)).all():
