@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .auth import require_roles
-from .business_date import get_current_business_date
+from .business_date import get_current_business_date, lock_current_business_date
 from .db import get_db
 from .ledger import post_transaction
 from .models import AuditLog, DepositTransaction, FinancialTransaction, Folio, LedgerEntry, Reservation, User
@@ -88,15 +88,9 @@ def transfer_deposit(
     if stay_id == payload.destination_stay_id:
         raise HTTPException(status_code=400, detail="Source and destination stay must be different")
 
-    source = db.get(Stay, stay_id)
-    destination = db.get(Stay, payload.destination_stay_id)
-    if not source or not destination:
-        raise HTTPException(status_code=404, detail="Source or destination stay not found")
-
-    amount = money(payload.amount)
     existing_tx = db.scalar(select(FinancialTransaction).where(FinancialTransaction.idempotency_key == key))
     if existing_tx is not None:
-        expected_description = f"Deposit transfer {source.id} → {destination.id}: {payload.reason}"
+        expected_description = f"Deposit transfer {stay_id} → {payload.destination_stay_id}: {payload.reason}"
         if (
             existing_tx.transaction_type != "deposit_transfer"
             or existing_tx.reference_type != "deposit_transfer"
@@ -104,6 +98,11 @@ def transfer_deposit(
             or existing_tx.description != expected_description
         ):
             raise HTTPException(status_code=409, detail="Idempotency key is already bound to different transfer parameters")
+        source = db.get(Stay, stay_id)
+        destination = db.get(Stay, payload.destination_stay_id)
+        if not source or not destination:
+            raise HTTPException(status_code=404, detail="Source or destination stay not found")
+        amount = money(payload.amount)
         rows = db.scalars(select(DepositTransaction).where(DepositTransaction.reference == key).order_by(DepositTransaction.id)).all()
         if len(rows) != 2:
             raise HTTPException(status_code=409, detail="Idempotent deposit transfer exists but its operational records are incomplete")
@@ -113,6 +112,19 @@ def transfer_deposit(
         if len(transfer_amounts) != 1 or next(iter(transfer_amounts)) != amount:
             raise HTTPException(status_code=409, detail="Idempotency key is already bound to different transfer parameters")
         return transfer_response(db, existing_tx, key, source, destination, amount, True)
+
+    business_date_state = lock_current_business_date(db)
+    locked_stays = db.scalars(
+        select(Stay)
+        .where(Stay.id.in_((stay_id, payload.destination_stay_id)))
+        .order_by(Stay.id)
+        .with_for_update()
+    ).all()
+    stays_by_id = {stay.id: stay for stay in locked_stays}
+    source = stays_by_id.get(stay_id)
+    destination = stays_by_id.get(payload.destination_stay_id)
+    if not source or not destination:
+        raise HTTPException(status_code=404, detail="Source or destination stay not found")
 
     source_reservation = db.get(Reservation, source.reservation_id)
     destination_reservation = db.get(Reservation, destination.reservation_id)
@@ -124,11 +136,12 @@ def transfer_deposit(
     if not source_folio or not destination_folio:
         raise HTTPException(status_code=409, detail="Source or destination folio not found")
 
+    amount = money(payload.amount)
     available = stay_deposit_balance(db, source.id)
     if amount > available:
         raise HTTPException(status_code=409, detail=f"Transfer exceeds available source deposit balance of {available}")
 
-    business_date = get_current_business_date(db, fallback_to_today=True)
+    business_date = business_date_state.current_business_date
     try:
         tx = post_transaction(
             db,
