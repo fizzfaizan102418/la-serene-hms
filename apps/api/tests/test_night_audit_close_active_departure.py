@@ -12,7 +12,7 @@ import app.financial_models  # noqa: F401
 import app.models  # noqa: F401
 import app.pms_core  # noqa: F401
 import app.stay_lifecycle  # noqa: F401
-from app.models import Reservation
+from app.models import Guest, Reservation
 from app.night_audit import close_day
 
 
@@ -33,8 +33,12 @@ class NightAuditCloseActiveDepartureTests(unittest.TestCase):
         self.db.close()
 
     def add_active_reservation(self, check_out: date):
+        guest = Guest(full_name="Night Audit Test Guest")
+        self.db.add(guest)
+        self.db.flush()
+
         reservation = Reservation(
-            guest_id=None,
+            guest_id=guest.id,
             check_in=date(2026, 9, 10),
             check_out=check_out,
             status="checked_in",
