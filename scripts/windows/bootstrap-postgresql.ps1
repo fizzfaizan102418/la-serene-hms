@@ -43,19 +43,21 @@ try {
         throw "Application database password must be at least 20 characters."
     }
 
-    # psql variable interpolation is not reliable through PowerShell's native argument
-    # boundary on all Windows environments. Escape the password as a SQL string literal
-    # before passing it to PostgreSQL. This value is never printed.
-    $AppPasswordSql = $AppPlain.Replace("'", "''")
-
     $RoleExists = ((& $Psql -h $PgHost -p $Port -U postgres -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname = '$AppUser';") | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) { throw "Could not check whether the application role exists." }
+
     if ($RoleExists -ne "1") {
-        & $Psql -h $PgHost -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE $AppUser LOGIN PASSWORD '$AppPasswordSql';" | Out-Host
+        & $Psql -h $PgHost -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE $AppUser LOGIN;" | Out-Host
     } else {
-        & $Psql -h $PgHost -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -c "ALTER ROLE $AppUser WITH LOGIN PASSWORD '$AppPasswordSql';" | Out-Host
+        & $Psql -h $PgHost -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -c "ALTER ROLE $AppUser WITH LOGIN;" | Out-Host
     }
     if ($LASTEXITCODE -ne 0) { throw "Could not create/update the application role." }
+
+    # Set the password through psql's interactive \password command so the secret
+    # is not exposed in SQL text or the process command line.
+    $PasswordInput = "$AppPlain`n$AppPlain`n"
+    $PasswordInput | & $Psql -h $PgHost -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -c "\password $AppUser" | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "Could not set the application role password." }
 
     $DatabaseExists = ((& $Psql -h $PgHost -p $Port -U postgres -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$Database';") | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) { throw "Could not check whether the application database exists." }
@@ -78,5 +80,5 @@ try {
 }
 finally {
     Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
-    Remove-Variable AdminPlain,AppPlain,AppPasswordSql -ErrorAction SilentlyContinue
+    Remove-Variable AdminPlain,AppPlain,AppPassword,AdminCredential,AppCredential,PasswordInput -ErrorAction SilentlyContinue
 }
