@@ -135,3 +135,45 @@ h2 { margin: 0; }
 @media (max-width: 640px) { .topbar, .welcome, .page-heading { align-items: flex-start; flex-direction: column; } .user-actions { width: 100%; justify-content: space-between; } .stats, .rooms, .grid, .housekeeping-grid { grid-template-columns: 1fr 1fr; } .module-nav { width: 100%; overflow-x: auto; } .shell { padding-top: 28px; } }
 @media (max-width: 520px) { .two-col, .search-bar { grid-template-columns: 1fr; display: grid; } .availability-picker { grid-template-columns: 1fr 1fr; } .housekeeping-heading-actions { width: 100%; } }
 @media (max-width: 420px) { .stats, .rooms, .room-map, .grid, .availability-picker, .housekeeping-grid { grid-template-columns: 1fr; } .auth-card { padding: 28px 22px; } }
+
+/* Operational UX polish: preserve the existing visual language while improving hierarchy and touch usability. */
+html { scroll-behavior: smooth; }
+body { line-height: 1.45; }
+button, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid rgba(134,149,130,.28); outline-offset: 2px; }
+.panel, .stat, .desk-card, .housekeeping-card, .room-card, .billing-row, .guest-list article, .reservation-list article { border: 1px solid rgba(216,212,203,.55); }
+.stat { min-height: 112px; transition: transform .15s ease, box-shadow .15s ease; }
+.stat:hover { transform: translateY(-1px); box-shadow: 0 8px 22px rgba(30,30,20,.06); }
+.stat:nth-child(2), .stat:nth-child(3) { box-shadow: inset 0 3px 0 #c6dbc4; }
+.stat:nth-child(5), .stat:nth-child(6) { box-shadow: inset 0 3px 0 #d9cda2; }
+.panel { box-shadow: 0 5px 18px rgba(30,30,20,.035); }
+.panel-head h2 { letter-spacing: -.01em; }
+.page-heading h2 { font-size: clamp(26px, 3vw, 34px); letter-spacing: -.02em; }
+.page-heading .muted { margin: 0 0 5px; }
+.room, .room-card { position: relative; overflow: hidden; }
+.room::before, .room-card::before { content: ''; position: absolute; inset: 0 auto 0 0; width: 4px; background: transparent; }
+.room-available::before, .room-card.room-available::before { background: #7ea77a; }
+.room-reserved::before { background: #b59d56; }
+.room-occupied::before { background: #a66f69; }
+.room-dirty::before { background: #b58a58; }
+.room-out_of_order::before { background: #7c8388; }
+.room-card select, .panel-head select { min-height: 40px; }
+.primary-button, .secondary-button, .logout-button, .module-nav button { min-height: 40px; }
+.primary-button:hover:not(:disabled) { filter: brightness(.94); box-shadow: 0 4px 12px rgba(38,52,42,.14); }
+.secondary-button:hover:not(:disabled) { background: #ded9cf; }
+.desk-card, .housekeeping-card { transition: box-shadow .15s ease, transform .15s ease; }
+.desk-card:hover, .housekeeping-card:hover { transform: translateY(-1px); box-shadow: 0 8px 22px rgba(30,30,20,.055); }
+.billing-totals .grand { padding-top: 15px; padding-bottom: 15px; font-weight: 750; }
+.billing-totals .balance { border: 1px solid #cfe1cd; font-weight: 750; }
+.notice, .error { border: 1px solid transparent; }
+.notice { border-color: #d7e7d4; }
+.error { margin: 18px 0 0; padding: 12px 14px; border-radius: 12px; background: #f9e9e6; border-color: #edd0ca; }
+.form-error { margin: 0; padding: 10px 12px; border-radius: 10px; background: #f9e9e6; }
+.search-bar input::placeholder, input::placeholder, textarea::placeholder { color: #8b928c; }
+.module-nav { max-width: 100%; scrollbar-width: thin; }
+.module-nav button { white-space: nowrap; }
+.empty-state, .muted:only-child { color: #788079; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .stat, .desk-card, .housekeeping-card { transition: none; } .stat:hover, .desk-card:hover, .housekeeping-card:hover { transform: none; } }
+@media (max-width: 760px) { .shell { padding-left: 16px; padding-right: 16px; } .panel { padding: 18px; } .module-nav { margin-top: 20px; } .stats { gap: 10px; } .stat { min-height: 96px; padding: 15px; } .stat strong { font-size: 26px; } }
+@media (max-width: 520px) { .panel-head { align-items: flex-start; flex-wrap: wrap; } .panel-head select { width: 100%; } .desk-actions, .housekeeping-actions, .billing-actions { display: grid; grid-template-columns: 1fr 1fr; } .desk-actions .primary-button, .desk-actions .secondary-button, .housekeeping-actions .primary-button, .housekeeping-actions .secondary-button, .billing-actions .primary-button, .billing-actions .secondary-button { width: 100%; } }
+@media (max-width: 420px) { .stat { min-height: 88px; } .stat span { font-size: 12px; } .stat strong { font-size: 24px; } .panel { padding: 16px; border-radius: 16px; } .desk-actions, .housekeeping-actions, .billing-actions { grid-template-columns: 1fr; } }
