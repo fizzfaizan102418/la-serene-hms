@@ -18,7 +18,7 @@ function Require-File([string]$Path, [string]$Label) {
 
 $ApiRoot = Join-Path $InstallRoot "apps\api"
 $EnvFile = Join-Path $ApiRoot ".env"
-if (-not $PythonExe) { $PythonExe = Join-Path $InstallRoot ".venv\Scripts\python.exe" }
+if (-not $PythonExe) { $PythonExe = Join-Path $ApiRoot ".venv\Scripts\python.exe" }
 if (-not $BackupDir) { $BackupDir = Join-Path $InstallRoot "backups" }
 
 Require-File $EnvFile "Production environment file"
@@ -43,10 +43,24 @@ if ($SkipServiceRestart -and $wasRunning) {
 }
 
 try {
-    Write-Host "K12 database lifecycle: creating mandatory pre-upgrade backup..."
-    & (Join-Path $InstallRoot "scripts\windows\run-backup.ps1") -InstallRoot $InstallRoot -PythonExe $PythonExe -BackupDir $BackupDir -Retain $Retain
-    if ($LASTEXITCODE -ne 0) {
-        throw "Pre-upgrade backup failed; migration was not attempted."
+    Push-Location $ApiRoot
+    try {
+        Write-Host "Inspecting production migration state..."
+        $schemaState = & $PythonExe -c "import os, psycopg; url=os.environ['HMS_DATABASE_URL'].replace('postgresql+psycopg://','postgresql://',1); conn=psycopg.connect(url); cur=conn.cursor(); cur.execute(\"SELECT to_regclass('public.business_date_state'), to_regclass('public.alembic_version')\"); row=cur.fetchone(); cur.close(); conn.close(); print('fresh' if row == (None, None) else 'initialized')"
+        if ($LASTEXITCODE -ne 0) { throw "Unable to inspect production migration state." }
+    }
+    finally {
+        Pop-Location
+    }
+
+    if ($schemaState.Trim() -eq 'fresh') {
+        Write-Host "K12 database lifecycle: fresh PostgreSQL database detected; no pre-upgrade backup is required before initial schema creation."
+    } else {
+        Write-Host "K12 database lifecycle: creating mandatory pre-upgrade backup..."
+        & (Join-Path $InstallRoot "scripts\windows\run-backup.ps1") -InstallRoot $InstallRoot -PythonExe $PythonExe -BackupDir $BackupDir -Retain $Retain
+        if ($LASTEXITCODE -ne 0) {
+            throw "Pre-upgrade backup failed; migration was not attempted."
+        }
     }
 
     Push-Location $ApiRoot
@@ -87,6 +101,14 @@ try {
     }
     finally {
         Pop-Location
+    }
+
+    if ($schemaState.Trim() -eq 'fresh') {
+        Write-Host "K12 database lifecycle: creating initial production backup after schema creation..."
+        & (Join-Path $InstallRoot "scripts\windows\run-backup.ps1") -InstallRoot $InstallRoot -PythonExe $PythonExe -BackupDir $BackupDir -Retain $Retain
+        if ($LASTEXITCODE -ne 0) {
+            throw "Initial post-migration backup failed. Review $BackupDir\backup.log."
+        }
     }
 
     if (-not $SkipServiceRestart -and $service) {
