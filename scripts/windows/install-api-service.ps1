@@ -42,8 +42,20 @@ Require-File $NssmExe "NSSM executable"
 
 New-Item -ItemType Directory -Force -Path $LogRoot | Out-Null
 
-& $NssmExe status $ServiceName 2>$null
-$existing = $LASTEXITCODE -eq 0
+# NSSM writes a diagnostic message to stderr when the service does not yet exist.
+# Treat that expected case as a normal install path without weakening error handling
+# for the actual service installation/configuration commands below.
+$existing = $false
+$previousErrorActionPreference = $ErrorActionPreference
+try {
+    $ErrorActionPreference = "Continue"
+    & $NssmExe status $ServiceName 2>$null
+    $existing = $LASTEXITCODE -eq 0
+}
+finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
+
 if ($existing) {
     & $NssmExe stop $ServiceName 2>$null
     & $NssmExe remove $ServiceName confirm
