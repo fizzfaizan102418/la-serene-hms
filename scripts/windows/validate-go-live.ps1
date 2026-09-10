@@ -31,7 +31,7 @@ function Assert-Check([string]$Name, [bool]$Condition, [string]$FailureMessage) 
         Write-Host "PASS: $Name"
         return
     }
-    throw "FAIL: $Name — $FailureMessage"
+    throw "FAIL: $Name - $FailureMessage"
 }
 
 Write-Host "K14 production go-live validation"
