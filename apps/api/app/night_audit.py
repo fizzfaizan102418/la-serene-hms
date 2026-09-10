@@ -317,6 +317,18 @@ def close_day(payload: ClosingConfirm | None = None, db: Session = Depends(get_d
     if state.last_closed_at and state.last_closed_at.date() >= business_date:
         raise HTTPException(status_code=409, detail=f"Business date {business_date.isoformat()} is already closed")
 
+    active_departures = db.scalar(
+        select(func.count(Reservation.id)).where(
+            Reservation.status == "checked_in",
+            Reservation.check_out <= business_date,
+        )
+    ) or 0
+    if active_departures:
+        raise HTTPException(
+            status_code=409,
+            detail="Active departures must be checked out before Night Audit can close the business date",
+        )
+
     finance = finance_snapshot(db, business_date)
     if finance["status"] != "balanced":
         db.rollback()
