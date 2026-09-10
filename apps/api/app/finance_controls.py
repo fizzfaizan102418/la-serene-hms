@@ -13,7 +13,7 @@ from .business_date import get_current_business_date, lock_current_business_date
 from .db import get_db
 from .financial_authority import folio_ledger_summary
 from .financial_models import PaymentRefund
-from .models import AuditLog, DepositTransaction, FinancialTransaction, Folio, FolioItem, LedgerEntry, Payment, Reservation, User
+from .models import AuditLog, BusinessDateState, DepositTransaction, FinancialTransaction, Folio, FolioItem, LedgerEntry, Payment, Reservation, User
 from .pms_core import FolioWindow, Stay
 
 router = APIRouter(prefix="/finance", tags=["finance-controls"])
@@ -63,7 +63,7 @@ class DepositPostCreate(BaseModel):
 
 @router.get("/period")
 def period_status(db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception"))):
-    state = db.scalar(select(BusinessDateState).order_by(BusinessDateState.id).limit(1))
+    state = db.get(BusinessDateState, 1)
     if state is None or state.current_business_date is None:
         raise HTTPException(status_code=503, detail="Business date is not initialized")
     current = state.current_business_date
