@@ -46,7 +46,19 @@ try {
     Push-Location $ApiRoot
     try {
         Write-Host "Inspecting production migration state..."
-        $schemaState = & $PythonExe -c 'import os, psycopg; url=os.environ["HMS_DATABASE_URL"].replace("postgresql+psycopg://","postgresql://",1); conn=psycopg.connect(url); cur=conn.cursor(); cur.execute("""SELECT to_regclass('public.business_date_state'), to_regclass('public.alembic_version')"""); row=cur.fetchone(); cur.close(); conn.close(); print("fresh" if row == (None, None) else "initialized")'
+        $probe = @'
+import os
+import psycopg
+url = os.environ.get("HMS_DATABASE_URL", "").replace("postgresql+psycopg://", "postgresql://", 1)
+conn = psycopg.connect(url)
+cur = conn.cursor()
+cur.execute("SELECT to_regclass('public.business_date_state'), to_regclass('public.alembic_version')")
+row = cur.fetchone()
+cur.close()
+conn.close()
+print("fresh" if row == (None, None) else "initialized")
+'@
+        $schemaState = & $PythonExe -c $probe
         if ($LASTEXITCODE -ne 0) { throw "Unable to inspect production migration state." }
     }
     finally {
