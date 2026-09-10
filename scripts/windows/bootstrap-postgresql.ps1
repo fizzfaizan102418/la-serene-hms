@@ -43,7 +43,8 @@ try {
         throw "Application database password must be at least 20 characters."
     }
 
-    $RoleExists = (& $Psql -h $PgHost -p $Port -U postgres -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname = '$AppUser';").Trim()
+    $RoleExists = ((& $Psql -h $PgHost -p $Port -U postgres -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname = '$AppUser';") | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) { throw "Could not check whether the application role exists." }
     if ($RoleExists -ne "1") {
         & $Psql -h $PgHost -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -v "app_password=$AppPlain" -c "CREATE ROLE \"$AppUser\" LOGIN PASSWORD :'app_password';" | Out-Host
     } else {
@@ -51,7 +52,8 @@ try {
     }
     if ($LASTEXITCODE -ne 0) { throw "Could not create/update the application role." }
 
-    $DatabaseExists = (& $Psql -h $PgHost -p $Port -U postgres -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$Database';").Trim()
+    $DatabaseExists = ((& $Psql -h $PgHost -p $Port -U postgres -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$Database';") | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) { throw "Could not check whether the application database exists." }
     if ($DatabaseExists -ne "1") {
         & $Psql -h $PgHost -p $Port -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$Database\" OWNER \"$AppUser\";" | Out-Host
     } else {
