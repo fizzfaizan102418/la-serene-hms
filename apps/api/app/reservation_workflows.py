@@ -63,11 +63,11 @@ def money(value: Decimal) -> Decimal:
 
 
 def discount_values(rate: Decimal, percent: Decimal, fixed: Decimal) -> tuple[Decimal, Decimal]:
-    if percent and fixed:
-        raise HTTPException(status_code=400, detail="Use either percentage or fixed discount, not both")
+    """Apply percentage and fixed discounts cumulatively, capped at gross."""
     gross = money(rate)
-    discount = money(gross * percent / Decimal("100")) if percent else money(fixed)
-    discount = min(discount, gross)
+    pct_amount = money(gross * percent / Decimal("100")) if percent else Decimal("0.00")
+    fixed_amount = money(fixed) if fixed else Decimal("0.00")
+    discount = min(money(pct_amount + fixed_amount), gross)
     return discount, money(gross - discount)
 
 
@@ -142,9 +142,11 @@ def create_reservation_workflow(payload: ReservationWorkflowCreate, db: Session 
     db.add(folio); db.flush()
     stays: list[Stay] = []
     per_room_deposit = money(payload.deposit_received / Decimal(len(room_ids))) if room_ids else Decimal("0")
+    discount_audit = []
     for item, discount, net, occupant_id in stay_values:
         stay = Stay(reservation_id=reservation.id, room_id=item.room_id, guest_id=occupant_id, status="reserved", check_in=payload.check_in, check_out=payload.check_out, agreed_rate=net, discount_percent=money(item.discount_percent), discount_amount=discount, payment_due_policy=payload.payment_policy, deposit_required=money(net * stay_days), deposit_received=min(per_room_deposit, money(net * stay_days)), notes=payload.notes)
         db.add(stay); db.flush(); stays.append(stay)
+        discount_audit.append({"room_id": item.room_id, "gross_rate": str(money(item.agreed_rate)), "discount_percent": str(item.discount_percent), "fixed_discount": str(money(item.fixed_discount)), "total_discount": str(discount), "net_rate": str(net)})
         db.add(StayOccupant(stay_id=stay.id, guest_id=occupant_id, role="primary", is_primary=True, check_in=payload.check_in, check_out=payload.check_out, notes=payload.notes))
         db.add(StayRateSegment(stay_id=stay.id, from_date=payload.check_in, to_date=payload.check_out, rate=money(item.agreed_rate), discount_percent=item.discount_percent, discount_amount=discount, source="reservation", notes=payload.notes))
         db.add(ReservationRoom(reservation_id=reservation.id, room_id=item.room_id))
@@ -153,7 +155,7 @@ def create_reservation_workflow(payload: ReservationWorkflowCreate, db: Session 
             room.status = "reserved"
     if payload.group_id:
         db.add(GroupReservation(group_id=payload.group_id, reservation_id=reservation.id, role="member"))
-    audit(db, user.id, "create_workflow", reservation.id, {"room_ids": room_ids, "group_id": payload.group_id, "payment_policy": payload.payment_policy, "deposit_received": str(payload.deposit_received)})
+    audit(db, user.id, "create_workflow", reservation.id, {"room_ids": room_ids, "group_id": payload.group_id, "payment_policy": payload.payment_policy, "deposit_received": str(payload.deposit_received), "discounts": discount_audit})
     db.commit()
     return {"id": reservation.id, "guest_id": reservation.guest_id, "check_in": reservation.check_in, "check_out": reservation.check_out, "status": reservation.status, "room_ids": room_ids, "folio_id": folio.id, "group_id": payload.group_id}
 
