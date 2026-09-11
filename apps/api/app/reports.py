@@ -10,11 +10,12 @@ from .business_date import get_current_business_date
 from .db import get_db
 from .financial_authority import folio_ledger_summary
 from .financial_ops import ledger_reconciliation
-from .models import BusinessDateState, Folio, FolioItem, Guest, Payment, Reservation, ReservationRoom, Room, User
+from .models import BusinessDateState, FinancialTransaction, Folio, FolioItem, Guest, LedgerEntry, Payment, Reservation, ReservationRoom, Room, User
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 MONEY = Decimal("0.01")
 ACTIVE_STATUSES = ("reserved", "checked_in", "checked_out")
+CASH_ACCOUNTS = {"Cash", "Card Clearing", "Bank", "Other Payment"}
 
 
 def money(value: Decimal | int | float) -> Decimal:
@@ -26,9 +27,103 @@ def overlap_nights(check_in: date, check_out: date, period_start: date, period_e
     return max(0, (end - start).days)
 
 
+def _financial_period_summary(db: Session, period_start: date, period_end_exclusive: date) -> dict:
+    """Read financial reporting from the authoritative ledger business dates.
+
+    This deliberately does not use FolioItem.created_at or Payment.created_at.
+    Those timestamps describe when a row was created, not which PMS business day
+    owns the posting. Closed days therefore remain reproducible after rollover.
+    """
+    business_dates = select(FinancialTransaction.business_date).where(
+        FinancialTransaction.business_date >= period_start,
+        FinancialTransaction.business_date < period_end_exclusive,
+        FinancialTransaction.status == "posted",
+    ).distinct().subquery()
+
+    revenue_rows = db.execute(
+        select(LedgerEntry.account, func.coalesce(func.sum(LedgerEntry.amount), 0))
+        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
+        .where(
+            FinancialTransaction.business_date >= period_start,
+            FinancialTransaction.business_date < period_end_exclusive,
+            FinancialTransaction.status == "posted",
+            LedgerEntry.direction == "credit",
+            LedgerEntry.account.like("Revenue - %"),
+        )
+        .group_by(LedgerEntry.account)
+        .order_by(LedgerEntry.account)
+    ).all()
+    revenue_by_account = {account: money(amount or 0) for account, amount in revenue_rows}
+    authoritative_revenue = money(sum(revenue_by_account.values(), Decimal("0.00")))
+
+    payment_transactions = db.scalars(
+        select(FinancialTransaction).where(
+            FinancialTransaction.business_date >= period_start,
+            FinancialTransaction.business_date < period_end_exclusive,
+            FinancialTransaction.status == "posted",
+            FinancialTransaction.transaction_type.in_(("folio_payment", "payment_refund")),
+        )
+    ).all()
+    received: dict[str, Decimal] = {}
+    refunded: dict[str, Decimal] = {}
+    for tx in payment_transactions:
+        entries = db.scalars(select(LedgerEntry).where(LedgerEntry.transaction_id == tx.id)).all()
+        cash_entries = [entry for entry in entries if entry.account in CASH_ACCOUNTS]
+        amount = money(sum((Decimal(entry.amount) for entry in cash_entries), Decimal("0.00")))
+        method = next((entry.payment_method for entry in cash_entries if entry.payment_method), "other")
+        target = refunded if tx.transaction_type == "payment_refund" else received
+        target[method] = target.get(method, Decimal("0.00")) + amount
+
+    methods = sorted(set(received) | set(refunded))
+    payment_breakdown = [
+        {
+            "method": method,
+            "amount": float(money(received.get(method, 0) - refunded.get(method, 0))),
+            "received": float(money(received.get(method, 0))),
+            "refunded": float(money(refunded.get(method, 0))),
+        }
+        for method in methods
+    ]
+    payments_received = money(sum(received.values(), Decimal("0.00")))
+    payments_refunded = money(sum(refunded.values(), Decimal("0.00")))
+    payments_net = money(payments_received - payments_refunded)
+
+    # Ending accounts receivable for the requested period: all posted ledger
+    # activity through the period end, not the current state of today's folios.
+    ar_rows = db.execute(
+        select(LedgerEntry.direction, func.coalesce(func.sum(LedgerEntry.amount), 0))
+        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
+        .where(
+            FinancialTransaction.business_date < period_end_exclusive,
+            FinancialTransaction.status == "posted",
+            LedgerEntry.account == "Guest Receivables",
+        )
+        .group_by(LedgerEntry.direction)
+    ).all()
+    ar_balance = Decimal("0.00")
+    for direction, amount in ar_rows:
+        value = Decimal(amount or 0)
+        ar_balance += value if direction == "debit" else -value
+    ar_balance = money(max(Decimal("0.00"), ar_balance))
+
+    return {
+        "gross": authoritative_revenue,
+        "discounts": Decimal("0.00"),
+        "net": authoritative_revenue,
+        "payments_received": payments_received,
+        "payments_refunded": payments_refunded,
+        "payments_net": payments_net,
+        "outstanding_balance": ar_balance,
+        "payment_breakdown": payment_breakdown,
+        "revenue_accounts": [{"account": account, "amount": float(amount)} for account, amount in revenue_by_account.items()],
+        "financial_source": "financial_transactions.business_date + ledger_entries",
+    }
+
+
 @router.get("/summary")
 def report_summary(from_date: date | None = Query(default=None), to_date: date | None = Query(default=None), db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception"))):
-    period_start = from_date or date.today(); period_end_exclusive = (to_date + timedelta(days=1)) if to_date else (period_start + timedelta(days=1))
+    period_start = from_date or get_current_business_date(db, fallback_to_today=True)
+    period_end_exclusive = (to_date + timedelta(days=1)) if to_date else (period_start + timedelta(days=1))
     if period_end_exclusive <= period_start: raise HTTPException(status_code=400, detail="to_date must be on or after from_date")
     period_days = (period_end_exclusive - period_start).days
     total_rooms = db.scalar(select(func.count(Room.id))) or 0; operational_rooms = db.scalar(select(func.count(Room.id)).where(Room.status != "out_of_order")) or 0
@@ -50,19 +145,13 @@ def report_summary(from_date: date | None = Query(default=None), to_date: date |
             occupied_room_nights += overlap_nights(effective_start, effective_end, period_start, period_end_exclusive) * room_count
         elif reservation.status == "checked_in": occupied_room_nights += planned_nights * room_count
     available_room_nights = operational_rooms * period_days; occupancy_rate = round((occupied_room_nights / available_room_nights) * 100, 2) if available_room_nights else 0.0
-    revenue_row = db.execute(select(func.coalesce(func.sum(FolioItem.quantity * FolioItem.unit_price), 0), func.coalesce(func.sum(FolioItem.discount), 0)).where(FolioItem.created_at >= period_start, FolioItem.created_at < period_end_exclusive)).first()
-    gross_revenue = money(revenue_row[0] or 0); discounts = money(revenue_row[1] or 0); net_revenue = money(max(Decimal("0.00"), gross_revenue - discounts))
-    payment_total = money(db.scalar(select(func.coalesce(func.sum(Payment.amount), 0)).where(Payment.created_at >= period_start, Payment.created_at < period_end_exclusive)) or 0)
-    payment_breakdown = [{"method": method, "amount": float(money(amount or 0))} for method, amount in db.execute(select(Payment.method, func.coalesce(func.sum(Payment.amount), 0)).where(Payment.created_at >= period_start, Payment.created_at < period_end_exclusive).group_by(Payment.method).order_by(Payment.method))]
-    item_totals = {folio_id: (Decimal(gross or 0), Decimal(discount or 0)) for folio_id, gross, discount in db.execute(select(FolioItem.folio_id, func.coalesce(func.sum(FolioItem.quantity * FolioItem.unit_price), 0), func.coalesce(func.sum(FolioItem.discount), 0)).group_by(FolioItem.folio_id))}; payment_totals = {folio_id: Decimal(amount or 0) for folio_id, amount in db.execute(select(Payment.folio_id, func.coalesce(func.sum(Payment.amount), 0)).group_by(Payment.folio_id))}; outstanding = Decimal("0.00")
-    for folio_id in db.scalars(select(Folio.id)):
-        gross, discount = item_totals.get(folio_id, (Decimal("0.00"), Decimal("0.00"))); paid = payment_totals.get(folio_id, Decimal("0.00")); outstanding += max(Decimal("0.00"), gross - discount - paid)
+
+    financial = _financial_period_summary(db, period_start, period_end_exclusive)
     guest_rows = db.execute(select(Guest.full_name, func.count(Reservation.id)).join(Reservation, Reservation.guest_id == Guest.id).where(Reservation.check_in < period_end_exclusive, Reservation.check_out > period_start, Reservation.status.in_(ACTIVE_STATUSES)).group_by(Guest.id, Guest.full_name).order_by(func.count(Reservation.id).desc(), Guest.full_name).limit(5)).all(); top_guests = [{"guest_name": name, "stays": int(count)} for name, count in guest_rows]
-    return {"from_date": period_start, "to_date": period_end_exclusive - timedelta(days=1), "period_days": period_days, "rooms": {"total": total_rooms, "operational": operational_rooms, "available_room_nights": available_room_nights, "booked_room_nights": booked_room_nights, "occupied_room_nights": occupied_room_nights, "occupancy_rate": occupancy_rate}, "operations": {"scheduled_arrivals": scheduled_arrivals, "scheduled_departures": scheduled_departures, "actual_check_ins": actual_check_ins, "actual_check_outs": actual_check_outs, "checked_in_guests": sum(1 for reservation in reservations if reservation.status == "checked_in"), "completed_stays": completed_stays, "stays_overlapping_period": stays_overlapping_period, "legacy_lifecycle_records": legacy_lifecycle_records}, "revenue": {"gross": float(gross_revenue), "discounts": float(discounts), "net": float(net_revenue), "payments_received": float(payment_total), "outstanding_balance": float(money(outstanding))}, "payment_breakdown": payment_breakdown, "top_guests": top_guests}
+    return {"from_date": period_start, "to_date": period_end_exclusive - timedelta(days=1), "period_days": period_days, "rooms": {"total": total_rooms, "operational": operational_rooms, "available_room_nights": available_room_nights, "booked_room_nights": booked_room_nights, "occupied_room_nights": occupied_room_nights, "occupancy_rate": occupancy_rate}, "operations": {"scheduled_arrivals": scheduled_arrivals, "scheduled_departures": scheduled_departures, "actual_check_ins": actual_check_ins, "actual_check_outs": actual_check_outs, "checked_in_guests": sum(1 for reservation in reservations if reservation.status == "checked_in"), "completed_stays": completed_stays, "stays_overlapping_period": stays_overlapping_period, "legacy_lifecycle_records": legacy_lifecycle_records}, "revenue": {"gross": float(financial["gross"]), "discounts": float(financial["discounts"]), "net": float(financial["net"]), "payments_received": float(financial["payments_received"]), "payments_refunded": float(financial["payments_refunded"]), "payments_net": float(financial["payments_net"]), "outstanding_balance": float(financial["outstanding_balance"]), "financial_source": financial["financial_source"]}, "payment_breakdown": financial["payment_breakdown"], "revenue_accounts": financial["revenue_accounts"], "top_guests": top_guests}
 
 
 def _revenue_by_account_prefix(db: Session, business_date: date, prefix: str) -> Decimal:
-    from .models import FinancialTransaction, LedgerEntry
     rows = db.execute(
         select(LedgerEntry.account, LedgerEntry.direction, func.coalesce(func.sum(LedgerEntry.amount), 0))
         .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
