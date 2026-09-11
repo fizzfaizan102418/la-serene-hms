@@ -28,18 +28,12 @@ def overlap_nights(check_in: date, check_out: date, period_start: date, period_e
 
 
 def _financial_period_summary(db: Session, period_start: date, period_end_exclusive: date) -> dict:
-    """Read financial reporting from the authoritative ledger business dates.
+    """Read financial reporting from authoritative ledger business dates.
 
     This deliberately does not use FolioItem.created_at or Payment.created_at.
     Those timestamps describe when a row was created, not which PMS business day
     owns the posting. Closed days therefore remain reproducible after rollover.
     """
-    business_dates = select(FinancialTransaction.business_date).where(
-        FinancialTransaction.business_date >= period_start,
-        FinancialTransaction.business_date < period_end_exclusive,
-        FinancialTransaction.status == "posted",
-    ).distinct().subquery()
-
     revenue_rows = db.execute(
         select(LedgerEntry.account, func.coalesce(func.sum(LedgerEntry.amount), 0))
         .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
@@ -88,8 +82,6 @@ def _financial_period_summary(db: Session, period_start: date, period_end_exclus
     payments_refunded = money(sum(refunded.values(), Decimal("0.00")))
     payments_net = money(payments_received - payments_refunded)
 
-    # Ending accounts receivable for the requested period: all posted ledger
-    # activity through the period end, not the current state of today's folios.
     ar_rows = db.execute(
         select(LedgerEntry.direction, func.coalesce(func.sum(LedgerEntry.amount), 0))
         .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
