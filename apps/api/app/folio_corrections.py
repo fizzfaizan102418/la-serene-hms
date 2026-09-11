@@ -14,7 +14,7 @@ from .ledger import reverse_transaction
 from .models import AuditLog, FinancialTransaction, Folio, FolioItem, Reservation, User
 from .schemas import FolioItemResponse
 
-router = APIRouter(prefix="/api", tags=["folio-corrections"])
+router = APIRouter(prefix="", tags=["folio-corrections"])
 MONEY = Decimal("0.01")
 ITEM_TRANSACTION_REFERENCES = {"folio_item", "folio_item_discount", "folio_item_service_charge"}
 
