@@ -119,10 +119,12 @@ def money(value: Decimal) -> Decimal:
 
 
 def calculate_discount(rate: Decimal, percent: Decimal, fixed: Decimal) -> tuple[Decimal, Decimal]:
+    """Apply percentage and fixed discounts cumulatively, capped at gross."""
     gross = money(rate)
-    pct_amount = money(gross * percent / Decimal("100"))
-    chosen = money(max(pct_amount, fixed)) if percent and fixed else (pct_amount if percent else money(fixed))
-    return min(chosen, gross), money(gross - chosen)
+    pct_amount = money(gross * percent / Decimal("100")) if percent else Decimal("0.00")
+    fixed_amount = money(fixed) if fixed else Decimal("0.00")
+    chosen = min(money(pct_amount + fixed_amount), gross)
+    return chosen, money(gross - chosen)
 
 
 def audit(db: Session, user_id: int, action: str, entity_type: str, entity_id: int, details: dict) -> None:
@@ -217,8 +219,6 @@ def create_reservation_stays(reservation_id: int, payload: list[StayCreate], db:
             raise HTTPException(status_code=400, detail=f"Room {item.room_id} does not exist")
         if item.guest_id and not db.get(Guest, item.guest_id):
             raise HTTPException(status_code=400, detail=f"Guest {item.guest_id} does not exist")
-        if item.discount_amount and item.discount_percent:
-            raise HTTPException(status_code=400, detail="Use either a percentage discount or a fixed discount, not both")
         discount, net = calculate_discount(item.agreed_rate, item.discount_percent, item.discount_amount)
         if item.deposit_received > item.deposit_required:
             raise HTTPException(status_code=400, detail="Deposit received cannot exceed deposit required")
@@ -263,8 +263,6 @@ def update_stay_discount(stay_id: int, discount_percent: Decimal = 0, discount_a
         raise HTTPException(status_code=404, detail="Stay not found")
     if discount_percent < 0 or discount_percent > 100 or discount_amount < 0:
         raise HTTPException(status_code=400, detail="Discount values are invalid")
-    if discount_percent and discount_amount:
-        raise HTTPException(status_code=400, detail="Use either percentage or fixed discount")
     discount, net = calculate_discount(stay.agreed_rate + stay.discount_amount, discount_percent, discount_amount)
     stay.discount_percent = discount_percent
     stay.discount_amount = discount
