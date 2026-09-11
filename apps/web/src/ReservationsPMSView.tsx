@@ -342,7 +342,7 @@ export default function ReservationsPMSView({ user, guests, rooms, roomTypes, re
         <div className="two-col"><label>Payment policy<select value={paymentPolicy} onChange={e => setPaymentPolicy(e.target.value)}><option value="at_booking">At booking</option><option value="at_checkin">At check-in</option><option value="at_checkout">At check-out</option><option value="partial">Partial / staged</option></select></label><label>Deposit received<input type="number" min="0" step="0.01" value={deposit} onChange={e => setDeposit(e.target.value)} /></label></div>
         <label>Group / organizer<select value={groupId} onChange={e => setGroupId(e.target.value)} onFocus={loadGroups}><option value="">No group</option>{groups.map(g => <option key={g.id} value={g.id}>{g.code} · {g.name}</option>)}</select></label>
         <label>Notes<textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder="Company, organizer, special instructions, room-sharing notes…" /></label>
-        <button className="primary-button" disabled={busy || !bookingGuest || !checkOut || !allocations.length || checkOut <= checkIn}>{busy ? 'Saving…' : `Create reservation · ${allocations.length} room${allocations.length === 1 ? '' : 's'`}</button>
+        <button className="primary-button" disabled={busy || !bookingGuest || !checkOut || !allocations.length || checkOut <= checkIn}>{busy ? 'Saving…' : `Create reservation · ${allocations.length} room${allocations.length === 1 ? '' : 's'}`}</button>
       </form>}
     </div>
   </section>;
