@@ -26,6 +26,7 @@ from .stay_lifecycle import router as stay_lifecycle_router
 from .restaurant_pos import router as restaurant_pos_router
 from .inventory import router as inventory_router
 from .purchasing import router as purchasing_router
+from .folio_corrections import router as folio_corrections_router
 
 router = APIRouter(prefix="/api", tags=["billing"])
 MONEY = Decimal("0.01")
@@ -42,6 +43,7 @@ router.include_router(stay_lifecycle_router)
 router.include_router(rate_lifecycle_router)
 router.include_router(phase_a_completion_router)
 router.include_router(front_desk_router)
+router.include_router(folio_corrections_router)
 for restaurant_route in restaurant_pos_router.routes:
     restaurant_route.path = restaurant_route.path.removeprefix("/api")
     if hasattr(restaurant_route, "path_format"):
