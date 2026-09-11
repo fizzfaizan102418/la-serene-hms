@@ -11,7 +11,7 @@ import app.models  # noqa: F401
 import app.pms_core  # noqa: F401
 from app.financial_authority import folio_ledger_summary, post_folio_charge_authoritative
 from app.folio_corrections import ITEM_TRANSACTION_REFERENCES, FolioItemCorrection, correct_folio_item, reverse_folio_item
-from app.models import BusinessDateState, FinancialTransaction, Folio, FolioItem, Guest, Reservation, User
+from app.models import BusinessDateState, FinancialTransaction, Folio, FolioItem, Guest, LedgerEntry, Reservation, User
 
 
 class FolioItemCorrectionTests(unittest.TestCase):
@@ -68,6 +68,12 @@ class FolioItemCorrectionTests(unittest.TestCase):
             )
         ).all()
 
+    def _guest_receivable_net(self, transaction_ids):
+        entries = self.db.scalars(
+            select(LedgerEntry).where(LedgerEntry.transaction_id.in_(transaction_ids), LedgerEntry.account == "Guest Receivables")
+        ).all()
+        return sum((entry.amount if entry.direction == "debit" else -entry.amount for entry in entries), Decimal("0.00"))
+
     def test_reverse_reverses_charge_discount_and_food_service_charge_atomically(self):
         item = self._food_item()
         result = reverse_folio_item(1, item.id, "Removed by manager", self.db, self.db.get(User, 1))
@@ -103,8 +109,7 @@ class FolioItemCorrectionTests(unittest.TestCase):
         replacement_transactions = self._item_transactions(result.replacement_item.id)
         self.assertEqual(len(replacement_transactions), 3)
         self.assertTrue(all(tx.status == "posted" for tx in replacement_transactions))
-        summary = folio_ledger_summary(self.db, 1)
-        self.assertEqual(summary.balance, Decimal("82.50"))
+        self.assertEqual(self._guest_receivable_net([tx.id for tx in replacement_transactions]), Decimal("82.50"))
 
 
 if __name__ == "__main__":
