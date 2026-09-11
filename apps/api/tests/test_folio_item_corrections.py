@@ -10,7 +10,7 @@ import app.financial_models  # noqa: F401
 import app.models  # noqa: F401
 import app.pms_core  # noqa: F401
 from app.financial_authority import folio_ledger_summary, post_folio_charge_authoritative
-from app.folio_corrections import FolioItemCorrection, correct_folio_item, reverse_folio_item
+from app.folio_corrections import ITEM_TRANSACTION_REFERENCES, FolioItemCorrection, correct_folio_item, reverse_folio_item
 from app.models import BusinessDateState, FinancialTransaction, Folio, FolioItem, Guest, Reservation, User
 
 
@@ -60,12 +60,20 @@ class FolioItemCorrectionTests(unittest.TestCase):
         self.db.commit()
         return item
 
+    def _item_transactions(self, item_id):
+        return self.db.scalars(
+            select(FinancialTransaction).where(
+                FinancialTransaction.reference_id == str(item_id),
+                FinancialTransaction.reference_type.in_(ITEM_TRANSACTION_REFERENCES),
+            )
+        ).all()
+
     def test_reverse_reverses_charge_discount_and_food_service_charge_atomically(self):
         item = self._food_item()
         result = reverse_folio_item(1, item.id, "Removed by manager", self.db, self.db.get(User, 1))
         self.assertEqual(result.action, "reversed")
         self.assertEqual(len(result.reversed_transaction_ids), 3)
-        statuses = self.db.scalars(select(FinancialTransaction.status).where(FinancialTransaction.reference_id == str(item.id))).all()
+        statuses = [tx.status for tx in self._item_transactions(item.id)]
         self.assertEqual(statuses, ["reversed", "reversed", "reversed"])
         summary = folio_ledger_summary(self.db, 1)
         self.assertEqual(summary.balance, Decimal("0.00"))
@@ -90,9 +98,9 @@ class FolioItemCorrectionTests(unittest.TestCase):
         self.assertIsNotNone(result.replacement_item)
         self.assertNotEqual(result.replacement_item.id, item.id)
         self.assertEqual(result.replacement_item.line_total, Decimal("75.00"))
-        original_statuses = self.db.scalars(select(FinancialTransaction.status).where(FinancialTransaction.reference_id == str(item.id))).all()
+        original_statuses = [tx.status for tx in self._item_transactions(item.id)]
         self.assertEqual(original_statuses, ["reversed", "reversed", "reversed"])
-        replacement_transactions = self.db.scalars(select(FinancialTransaction).where(FinancialTransaction.reference_id == str(result.replacement_item.id))).all()
+        replacement_transactions = self._item_transactions(result.replacement_item.id)
         self.assertEqual(len(replacement_transactions), 3)
         self.assertTrue(all(tx.status == "posted" for tx in replacement_transactions))
         summary = folio_ledger_summary(self.db, 1)
