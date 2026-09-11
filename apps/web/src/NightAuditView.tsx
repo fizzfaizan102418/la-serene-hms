@@ -6,6 +6,7 @@ type Finance = { status: string; ledger_balanced: boolean; total_debits: number;
 type Summary = { business_date: string; generated_at: string; posting_open: boolean; occupancy: { total_rooms: number; occupied_rooms: number; reserved_rooms: number; available_rooms: number; dirty_rooms: number; out_of_order_rooms: number; in_house_reservations: number }; movement: { arrivals: number; departures: number; no_shows: number }; revenue: { room: number; food: number; food_service_charge: number; other: number; gross: number }; payments: { cash?: number; card?: number; bank_transfer?: number; other?: number; total: number }; outstanding: number; expenses: number; net_operating: number; finance: Finance };
 type Pack = { report: Summary; closing?: { notes?: string | null; closed_by: string; closed_at: string } };
 type Props = { api: <T>(path: string, options?: RequestInit) => Promise<T> };
+const TOKEN_KEY = 'la_serene_access_token';
 const money = (value: number) => Number(value || 0).toFixed(2);
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -20,19 +21,15 @@ export default function NightAuditView({ api }: Props) {
 
   async function loadCurrent() {
     setMessage('');
-    try {
-      const result = await api<Summary>('/api/night-audit/preview');
-      setSummary(result); setCurrentDate(result.business_date); setReportDate(result.business_date); setArchive(null);
-    } catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to load daily closing preview'); }
+    try { const result = await api<Summary>('/api/night-audit/preview'); setSummary(result); setCurrentDate(result.business_date); setReportDate(result.business_date); setArchive(null); }
+    catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to load daily closing preview'); }
   }
   async function loadDate(value: string) {
     setReportDate(value); setMessage(''); setArchive(null);
     if (value === currentDate) return loadCurrent();
     setBusy(true);
-    try {
-      const pack = await api<Pack>(`/api/night-audit/pack/${value}/daily-closing.json`);
-      setArchive(pack); setSummary({ ...pack.report, posting_open: false }); setNotes(pack.closing?.notes || '');
-    } catch (err) { setSummary(null); setMessage(err instanceof Error ? err.message : `No archived daily closing found for ${value}`); }
+    try { const pack = await api<Pack>(`/api/night-audit/pack/${value}/daily-closing.json`); setArchive(pack); setSummary({ ...pack.report, posting_open: false }); setNotes(pack.closing?.notes || ''); }
+    catch (err) { setSummary(null); setMessage(err instanceof Error ? err.message : `No archived daily closing found for ${value}`); }
     finally { setBusy(false); }
   }
   useEffect(() => { void loadCurrent(); }, []);
@@ -42,19 +39,26 @@ export default function NightAuditView({ api }: Props) {
     if (summary.finance.status !== 'balanced') { setMessage('Financial controls are not balanced. Resolve the reconciliation before closing the business date.'); return; }
     if (!window.confirm(`Close business day ${summary.business_date}? This locks the period, creates the closing pack and advances the business date.`)) return;
     setBusy(true); setMessage('');
-    try {
-      const result = await api<any>('/api/night-audit/close', { method: 'POST', body: JSON.stringify({ notes: notes || null }) });
-      setSummary({ ...result.summary, posting_open: false }); setArchive({ report: result.summary, closing: { notes: notes || null, closed_by: result.closed_by, closed_at: result.closed_at } }); setReportDate(result.business_date); setCurrentDate(result.next_business_date); setMessage(`Daily closing completed for ${result.business_date}. Next business date is ${result.next_business_date}.`);
-    } catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to close business day'); await loadCurrent(); }
+    try { const result = await api<any>('/api/night-audit/close', { method: 'POST', body: JSON.stringify({ notes: notes || null }) }); setSummary({ ...result.summary, posting_open: false }); setArchive({ report: result.summary, closing: { notes: notes || null, closed_by: result.closed_by, closed_at: result.closed_at } }); setReportDate(result.business_date); setCurrentDate(result.next_business_date); setMessage(`Daily closing completed for ${result.business_date}. Next business date is ${result.next_business_date}.`); }
+    catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to close business day'); await loadCurrent(); }
     finally { setBusy(false); }
   }
-  const download = (date: string, filename: string) => window.open(`/api/night-audit/pack/${date}/${filename}`, '_blank', 'noopener,noreferrer');
+  async function download(date: string, filename: string) {
+    try {
+      const token = localStorage.getItem(TOKEN_KEY);
+      const response = await fetch(`/api/night-audit/pack/${date}/${filename}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      if (!response.ok) { let detail = `Download failed (${response.status})`; try { detail = (await response.json()).detail || detail; } catch {} throw new Error(detail); }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = filename; document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url);
+      setMessage(`${filename} downloaded for business date ${date}.`);
+    } catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to download closing pack'); }
+  }
   if (!summary) return <section className="page"><div className="page-heading"><div><p className="muted">End-of-day controls</p><h2>Night Audit & Daily Closing</h2></div></div>{message && <p className="notice">{message}</p>}<p className="muted">No archived closing pack is available for the selected date.</p></section>;
   const f = summary.finance;
   return <section className="page">
     <div className="page-heading"><div><p className="muted">End-of-day controls</p><h2>Night Audit & Daily Closing</h2></div><div className="desk-actions"><label className="muted">Report date<input type="date" value={reportDate} onChange={e => void loadDate(e.target.value)} disabled={busy} /></label><button className="secondary-button" onClick={() => void loadCurrent()} disabled={busy}>Refresh current</button></div></div>
     {message && <p className="notice">{message}</p>}
-    <section className="panel" style={{ marginBottom: 16 }}><div className="panel-head"><div><p className="muted">{archive ? 'Archived Head Office pack' : 'Current business date'}</p><h2>Daily Closing {summary.business_date}</h2></div><span>{archive ? `Closed by ${archive.closing?.closed_by || 'admin'}` : summary.posting_open ? 'Open' : 'Closed'}</span></div><div className="desk-actions"><button className="primary-button" onClick={() => download(summary.business_date, 'daily-closing.pdf')}>Download / Print PDF</button><button className="secondary-button" onClick={() => download(summary.business_date, 'daily-closing.xlsx')}>Download Excel</button><button className="secondary-button" onClick={() => download(summary.business_date, 'daily-closing.json')}>Download JSON</button></div><p className="muted" style={{ marginTop: 10 }}>Closing packs are stored locally by business date, so refreshing or moving to the next business date does not lose the previous day's report.</p></section>
+    <section className="panel" style={{ marginBottom: 16 }}><div className="panel-head"><div><p className="muted">{archive ? 'Archived Head Office pack' : 'Current business date'}</p><h2>Daily Closing {summary.business_date}</h2></div><span>{archive ? `Closed by ${archive.closing?.closed_by || 'admin'}` : summary.posting_open ? 'Open' : 'Closed'}</span></div><div className="desk-actions"><button className="primary-button" onClick={() => void download(summary.business_date, 'daily-closing.pdf')}>Download / Print PDF</button><button className="secondary-button" onClick={() => void download(summary.business_date, 'daily-closing.xlsx')}>Download Excel</button><button className="secondary-button" onClick={() => void download(summary.business_date, 'daily-closing.json')}>Download JSON</button></div><p className="muted" style={{ marginTop: 10 }}>Closing packs are stored locally by business date, so refreshing or moving to the next business date does not lose the previous day's report.</p></section>
     <section className="stats"><article className="stat"><span>Occupancy</span><strong>{summary.occupancy.total_rooms ? ((summary.occupancy.occupied_rooms / summary.occupancy.total_rooms) * 100).toFixed(1) : '0.0'}%</strong></article><article className="stat"><span>Arrivals</span><strong>{summary.movement.arrivals}</strong></article><article className="stat"><span>Departures</span><strong>{summary.movement.departures}</strong></article><article className="stat"><span>Gross revenue</span><strong>{money(summary.revenue.gross)}</strong></article><article className="stat"><span>Payments</span><strong>{money(summary.payments.total)}</strong></article><article className="stat"><span>Outstanding</span><strong>{money(summary.outstanding)}</strong></article></section>
     <div className="report-grid" style={{ marginTop: 16 }}>
       <section className="panel"><div className="panel-head"><h2>Occupancy & movement</h2></div><div className="report-list"><div><span>Total rooms</span><strong>{summary.occupancy.total_rooms}</strong></div><div><span>Occupied rooms</span><strong>{summary.occupancy.occupied_rooms}</strong></div><div><span>Reserved rooms</span><strong>{summary.occupancy.reserved_rooms}</strong></div><div><span>Available rooms</span><strong>{summary.occupancy.available_rooms}</strong></div><div><span>Dirty / out of order</span><strong>{summary.occupancy.dirty_rooms} / {summary.occupancy.out_of_order_rooms}</strong></div><div><span>In-house reservations</span><strong>{summary.occupancy.in_house_reservations}</strong></div><div><span>No-shows</span><strong>{summary.movement.no_shows}</strong></div></div></section>
