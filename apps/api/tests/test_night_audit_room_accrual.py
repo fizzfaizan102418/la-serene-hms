@@ -1,5 +1,5 @@
 import unittest
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import create_engine, select
@@ -10,7 +10,7 @@ import app.financial_models  # noqa: F401
 import app.models  # noqa: F401
 import app.pms_core  # noqa: F401
 from app.financial_authority import folio_ledger_summary
-from app.models import FinancialTransaction, Folio, FolioItem, Guest, Reservation, Role, Room, RoomType, StayRateSegment, User
+from app.models import BusinessDateState, FinancialTransaction, Folio, FolioItem, Guest, Reservation, Role, Room, RoomType, StayRateSegment, User
 from app.pms_core import Stay
 from app.room_charge_accrual import accrue_room_charges_for_business_date
 
@@ -34,7 +34,8 @@ class NightAuditRoomAccrualTests(unittest.TestCase):
         folio = Folio(id=1, reservation_id=1, status="open")
         stay = Stay(id=1, reservation_id=1, room_id=1, guest_id=1, status="checked_in", check_in=date(2026, 9, 13), check_out=date(2026, 9, 15), agreed_rate=Decimal("10000.00"), payment_due_policy="at_checkout")
         segment = StayRateSegment(id=1, stay_id=1, from_date=date(2026, 9, 13), to_date=date(2026, 9, 15), rate=Decimal("10000.00"), discount_amount=Decimal("0.00"))
-        self.db.add_all([role, user, room_type, room, guest, reservation, folio, stay, segment])
+        state = BusinessDateState(id=1, current_business_date=date(2026, 9, 13), opened_at=datetime.utcnow())
+        self.db.add_all([role, user, room_type, room, guest, reservation, folio, stay, segment, state])
         self.db.commit()
 
     def tearDown(self):
