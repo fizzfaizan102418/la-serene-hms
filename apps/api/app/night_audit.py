@@ -22,8 +22,10 @@ from .auth import require_roles
 from .db import DATA_DIR, get_db
 from .financial_ops import ledger_reconciliation
 from .finance_controls import payment_reconciliation, revenue_report, trial_balance
+from .financial_authority import post_folio_charge_authoritative
 from .models import AuditLog, BusinessDateState, Expense, Folio, FolioItem, Payment, Reservation, Room, User
 from .business_date import get_current_business_date, lock_current_business_date
+from .room_charge_accrual import accrue_room_charges_for_business_date
 
 router = APIRouter(prefix="/night-audit", tags=["night-audit"])
 MONEY = Decimal("0.01")
@@ -329,12 +331,14 @@ def close_day(payload: ClosingConfirm | None = None, db: Session = Depends(get_d
             detail="Active departures must be checked out before Night Audit can close the business date",
         )
 
+    accrued_room_charges = accrue_room_charges_for_business_date(db, business_date=business_date, created_by=user.id)
     finance = finance_snapshot(db, business_date)
     if finance["status"] != "balanced":
         db.rollback()
         raise HTTPException(status_code=409, detail={"message": "Financial reconciliation requires review before Night Audit can close", "business_date": business_date, "finance": serializable(finance)})
 
     summary = build_summary(db, business_date, finance)
+    summary["night_audit"] = {"room_charges_accrued": accrued_room_charges}
     closed_at = datetime.utcnow()
     pack = create_pack(summary, payload.notes if payload else None, user.username, closed_at)
 
