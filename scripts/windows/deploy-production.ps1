@@ -21,7 +21,13 @@ function Require-Path([string]$Path, [string]$Label, [bool]$Directory = $true) {
 
 function Invoke-Checked([string]$File, [string[]]$Arguments) {
     & $File @Arguments
-    if ($LASTEXITCODE -ne 0) { throw "$File failed with exit code $LASTEXITCODE" }
+    $exitCode = $LASTEXITCODE
+    if ($File -ieq "robocopy") {
+        if ($exitCode -gt 7) { throw "$File failed with exit code $exitCode" }
+    }
+    elseif ($exitCode -ne 0) {
+        throw "$File failed with exit code $exitCode"
+    }
 }
 
 Require-Path $SourceRoot "Development source root"
