@@ -38,13 +38,27 @@ class OperationsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             log_dir = Path(directory)
             log_file = configure_production_logging(log_dir)
-            logger = logging.getLogger("operations-test")
-            logger.info("K9 logging smoke test")
-            for handler in logging.getLogger().handlers:
-                handler.flush()
+            root_logger = logging.getLogger()
+            test_handler = next(
+                handler
+                for handler in root_logger.handlers
+                if isinstance(handler, logging.handlers.RotatingFileHandler)
+                and Path(handler.baseFilename) == log_file
+            )
 
-            self.assertEqual(log_file, log_dir / "api.log")
-            self.assertIn("K9 logging smoke test", log_file.read_text(encoding="utf-8"))
+            try:
+                logger = logging.getLogger("operations-test")
+                logger.info("K9 logging smoke test")
+                test_handler.flush()
+
+                self.assertEqual(log_file, log_dir / "api.log")
+                self.assertIn(
+                    "K9 logging smoke test",
+                    log_file.read_text(encoding="utf-8"),
+                )
+            finally:
+                root_logger.removeHandler(test_handler)
+                test_handler.close()
 
 
 if __name__ == "__main__":
