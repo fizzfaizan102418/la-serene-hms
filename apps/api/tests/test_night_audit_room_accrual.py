@@ -1,5 +1,5 @@
 import unittest
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import create_engine, select
@@ -10,7 +10,7 @@ import app.financial_models  # noqa: F401
 import app.models  # noqa: F401
 import app.pms_core  # noqa: F401
 from app.financial_authority import folio_ledger_summary
-from app.models import FinancialTransaction, Folio, Guest, Reservation, Role, Room, RoomType, StayRateSegment, User
+from app.models import FinancialTransaction, Folio, FolioItem, Guest, Reservation, Role, Room, RoomType, StayRateSegment, User
 from app.pms_core import Stay
 from app.room_charge_accrual import accrue_room_charges_for_business_date
 
@@ -48,7 +48,7 @@ class NightAuditRoomAccrualTests(unittest.TestCase):
         self.db.commit()
         self.assertEqual(first, 1)
 
-        items = self.db.scalars(select(__import__("app.models", fromlist=["FolioItem"]).FolioItem).where(__import__("app.models", fromlist=["FolioItem"]).FolioItem.folio_id == 1)).all()
+        items = self.db.scalars(select(FolioItem).where(FolioItem.folio_id == 1)).all()
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0].category, "room")
         self.assertEqual(Decimal(items[0].quantity), Decimal("1.00"))
@@ -61,7 +61,13 @@ class NightAuditRoomAccrualTests(unittest.TestCase):
         second = accrue_room_charges_for_business_date(self.db, business_date=business_date, created_by=1)
         self.db.commit()
         self.assertEqual(second, 0)
-        self.assertEqual(self.db.scalar(select(FinancialTransaction.id).where(FinancialTransaction.folio_id == 1, FinancialTransaction.status == "posted").count()) if False else len(self.db.scalars(select(FinancialTransaction).where(FinancialTransaction.folio_id == 1, FinancialTransaction.status == "posted")).all()), 1)
+        posted_transactions = self.db.scalars(
+            select(FinancialTransaction).where(
+                FinancialTransaction.folio_id == 1,
+                FinancialTransaction.status == "posted",
+            )
+        ).all()
+        self.assertEqual(len(posted_transactions), 1)
 
 
 if __name__ == "__main__":
