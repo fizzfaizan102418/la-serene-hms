@@ -8,10 +8,13 @@ from sqlalchemy.orm import Session
 from .auth import create_access_token, get_current_user, hash_password, require_roles, verify_password
 from .billing import router as billing_router
 from .db import engine, get_db
+from .inventory import router as inventory_router
 from .models import AuditLog, Folio, Guest, Reservation, ReservationRoom, Role, Room, RoomType, User
+from .purchasing import router as purchasing_router
 from .phase_a_workflows import router as phase_a_workflows_router
 from .pms_core_bootstrap import ensure_pms_core_schema
 from .reservation_workflows import router as reservation_workflows_router
+from .restaurant_pos import router as restaurant_pos_router
 from .business_date import get_current_business_date
 from .sqlite_bootstrap import initialize_sqlite_database
 from .schemas import (
@@ -26,6 +29,9 @@ app = FastAPI(title="La Serene HMS API", version="0.9.1")
 app.include_router(billing_router)
 app.include_router(reservation_workflows_router)
 app.include_router(phase_a_workflows_router)
+app.include_router(inventory_router)
+app.include_router(purchasing_router)
+app.include_router(restaurant_pos_router)
 
 
 def write_audit(db: Session, action: str, entity_type: str, entity_id: int | None = None, details: dict | None = None, user_id: int | None = None):
