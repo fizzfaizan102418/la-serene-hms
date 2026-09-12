@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session
 from .auth import require_roles
 from .db import get_db
 from .financial_authority import post_folio_charge_authoritative
-from .ledger import reverse_transaction
+from .folio_integrity import expected_active_total, integrity_snapshot, ledger_total
+from .ledger import post_transaction, reverse_transaction
 from .models import AuditLog, FinancialTransaction, Folio, FolioItem, Reservation, User
 from .schemas import FolioItemResponse
 
@@ -72,6 +73,89 @@ def _validate_target(db: Session, folio_id: int, item_id: int) -> tuple[Folio, F
     if not reservation:
         raise HTTPException(status_code=404, detail="Reservation not found")
     return folio, item, reservation
+
+
+@router.post("/folios/{folio_id}/reconcile-and-reopen")
+def reconcile_and_reopen_folio(
+    folio_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("admin")),
+):
+    folio = db.get(Folio, folio_id)
+    if not folio:
+        raise HTTPException(status_code=404, detail="Folio not found")
+    if folio.status != "closed":
+        raise HTTPException(status_code=409, detail="Only a closed folio can be reopened for reconciliation")
+
+    snapshot = integrity_snapshot(db, folio_id)
+    if snapshot["ok"]:
+        raise HTTPException(status_code=409, detail="Folio is already financially consistent; no reconciliation is required")
+
+    expected = money(snapshot["expected_active_total"])
+    actual = money(snapshot["ledger_total"])
+    difference = money(expected - actual)
+    if difference < 0:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Folio ledger exceeds active folio charges by {abs(difference)}. "
+                "Automatic reconciliation will not remove or reverse financial history."
+            ),
+        )
+
+    if difference > 0:
+        post_transaction(
+            db,
+            transaction_type="folio_reconciliation",
+            description=f"Folio #{folio.id} financial reconciliation",
+            reference_type="folio_reconciliation",
+            reference_id=str(folio.id),
+            folio_id=folio.id,
+            reservation_id=folio.reservation_id,
+            created_by=user.id,
+            idempotency_key=f"folio-reconciliation:{folio.id}:{expected}:{actual}",
+            lines=[
+                {"account": "Guest Receivables", "direction": "debit", "amount": difference, "folio_id": folio.id},
+                {"account": "Revenue - reconciliation", "direction": "credit", "amount": difference, "folio_id": folio.id},
+            ],
+        )
+
+    folio.status = "open"
+    db.add(
+        AuditLog(
+            user_id=user.id,
+            action="reconcile_and_reopen",
+            entity_type="folio",
+            entity_id=str(folio.id),
+            details=(
+                '{"expected_active_total":"%s","previous_ledger_total":"%s","difference":"%s"}'
+                % (expected, actual, difference)
+            ),
+        )
+    )
+    db.commit()
+    db.refresh(folio)
+    final = integrity_snapshot(db, folio_id)
+    return {
+        "folio_id": folio.id,
+        "status": folio.status,
+        "expected_active_total": final["expected_active_total"],
+        "ledger_total": final["ledger_total"],
+        "difference": final["difference"],
+        "reconciled": final["ok"],
+        "message": "Folio reopened and financially reconciled. The remaining balance can now be settled normally." if final["ok"] else "Folio reopened, but reconciliation remains incomplete and requires manual review.",
+    }
+
+
+@router.get("/folios/{folio_id}/integrity")
+def get_folio_integrity(
+    folio_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles("admin", "reception")),
+):
+    if not db.get(Folio, folio_id):
+        raise HTTPException(status_code=404, detail="Folio not found")
+    return integrity_snapshot(db, folio_id)
 
 
 @router.post("/folios/{folio_id}/items/{item_id}/reverse", response_model=FolioItemCorrectionResponse, status_code=201)
