@@ -14,7 +14,7 @@ from .front_desk import router as front_desk_router
 from .housekeeping import router as housekeeping_router
 from .financial_authority import folio_ledger_summary, has_posted_folio_item_transaction, post_folio_charge_authoritative
 from .ledger import post_folio_payment, router as ledger_router
-from .models import AuditLog, Folio, FolioItem, Guest, Payment, Reservation, ReservationRoom, Room, StayRateSegment, User
+from .models import AuditLog, FinancialTransaction, Folio, FolioItem, Guest, Payment, Reservation, ReservationRoom, Room, StayRateSegment, User
 from .night_audit import router as night_audit_router
 from .pms_core import Stay
 from .pms_domain import router as pms_domain_router
@@ -228,7 +228,7 @@ def add_payment(folio_id: int, payload: PaymentCreate, idempotency_key: str | No
     summary = build_folio_response(db, folio)
     if payload.amount > summary.balance: raise HTTPException(status_code=400, detail=f"Payment exceeds outstanding balance of {summary.balance}")
     reservation = db.get(Reservation, folio.reservation_id)
-    payment = Payment(folio_id=folio_id, amount=payload.amount, method=payload.method, reference=payload.reference, created_by=user.id); db.add(payment); db.flush()
+    payment = Payment(folio_id=folio_id, amount=payload.amount, method=payload.method, reference=payload.reference); db.add(payment); db.flush()
     tx = post_folio_payment(db, folio_id=folio_id, reservation_id=reservation.id if reservation else 0, payment_id=payment.id, amount=payload.amount, method=payload.method, created_by=user.id, idempotency_key=idempotency_key)
     if idempotency_key and tx.idempotency_key != idempotency_key: raise HTTPException(status_code=409, detail="Financial idempotency key was not applied")
     audit(db, user.id, "add", "payment", payment.id, {"folio_id": folio_id, "amount": str(payload.amount), "method": payload.method}); db.commit(); db.refresh(payment)
