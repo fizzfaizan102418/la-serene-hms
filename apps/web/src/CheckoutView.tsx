@@ -13,14 +13,25 @@ export default function CheckoutView({ folioId, guestName, reservationId, onComp
   const [amount, setAmount] = useState('');
   const [reference, setReference] = useState('');
   const [message, setMessage] = useState('');
+  const [loadError, setLoadError] = useState('');
+  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
   async function load() {
-    await api(`/api/folios/${folioId}/room-charges`, { method: 'POST' });
-    setFolio(await api<Folio>(`/api/folios/${folioId}`));
+    setLoading(true);
+    setLoadError('');
+    try {
+      await api(`/api/folios/${folioId}/room-charges`, { method: 'POST' });
+      setFolio(await api<Folio>(`/api/folios/${folioId}`));
+    } catch (error) {
+      setFolio(null);
+      setLoadError(error instanceof Error ? error.message : 'Unable to load folio and current room charges.');
+    } finally {
+      setLoading(false);
+    }
   }
 
-  useEffect(() => { void load().catch(e => setMessage(e instanceof Error ? e.message : 'Unable to load folio')); }, [folioId]);
+  useEffect(() => { void load(); }, [folioId]);
 
   async function settle(e: React.FormEvent) {
     e.preventDefault();
@@ -39,8 +50,6 @@ export default function CheckoutView({ folioId, guestName, reservationId, onComp
     if (!window.confirm(`Complete checkout for ${guestName}?`)) return;
     setBusy(true); setMessage('');
     try {
-      // Atomic checkout owns the final state transition: validates zero balance,
-      // closes the folio, completes stays, dirties occupied rooms, audits, commits.
       await api(`/api/reservations/${reservationId}/checkout`, { method: 'POST' });
       setMessage('Checkout completed.');
       await printFolio();
@@ -51,16 +60,22 @@ export default function CheckoutView({ folioId, guestName, reservationId, onComp
   }
 
   async function printFolio() {
-    const receipt = await api<Record<string, unknown>>(`/api/folios/${folioId}/receipt`);
-    const popup = window.open('', '_blank', 'width=900,height=750');
-    if (!popup) { setMessage('Pop-up blocked. Allow pop-ups to print the final folio.'); return; }
-    const items = (receipt.items as Array<Record<string, unknown>>).map(item => `<tr><td>${String(item.description)}</td><td>${String(item.category)}</td><td>${Number(item.quantity).toFixed(2)}</td><td>${money(Number(item.line_total))}</td></tr>`).join('');
-    const payments = (receipt.payments as Array<Record<string, unknown>>).map(p => `<tr><td>${String(p.method)}</td><td>${String(p.reference || '')}</td><td>${money(Number(p.amount))}</td></tr>`).join('');
-    popup.document.write(`<!doctype html><html><head><title>Folio #${folioId}</title><style>body{font-family:Arial,sans-serif;padding:28px;color:#17211b}h1,h2{margin:0 0 8px}p{margin:5px 0}table{width:100%;border-collapse:collapse;margin-top:18px}th,td{border-bottom:1px solid #ddd;padding:8px;text-align:left}.total{margin-top:18px;width:320px;margin-left:auto}.total div{display:flex;justify-content:space-between;padding:6px}.grand{font-size:18px;font-weight:700}.meta{margin-bottom:18px}@media print{button{display:none}}</style></head><body><h1>LA SERENE HOTEL</h1><h2>Final Guest Folio #${folioId}</h2><div class="meta"><p><b>Guest:</b> ${guestName}</p><p><b>Reservation:</b> #${reservationId}</p><p><b>Status:</b> Settled / Checked out</p></div><table><thead><tr><th>Description</th><th>Category</th><th>Qty</th><th>Amount</th></tr></thead><tbody>${items}</tbody></table><h3>Payments</h3><table><thead><tr><th>Method</th><th>Reference</th><th>Amount</th></tr></thead><tbody>${payments}</tbody></table><div class="total"><div><span>Subtotal</span><b>${money(Number(receipt.subtotal))}</b></div><div><span>Discounts</span><b>- ${money(Number(receipt.discounts))}</b></div><div><span>Food service charge</span><b>${money(Number(receipt.food_service_charge))}</b></div><div class="grand"><span>Total</span><b>${money(Number(receipt.total))}</b></div><div><span>Paid</span><b>${money(Number(receipt.paid))}</b></div><div class="grand"><span>Balance</span><b>${money(Number(receipt.balance))}</b></div></div><script>window.onload=()=>window.print()</script></body></html>`);
-    popup.document.close();
+    try {
+      const receipt = await api<Record<string, unknown>>(`/api/folios/${folioId}/receipt`);
+      const popup = window.open('', '_blank', 'width=900,height=750');
+      if (!popup) { setMessage('Pop-up blocked. Allow pop-ups to print the final folio.'); return; }
+      const items = (receipt.items as Array<Record<string, unknown>>).map(item => `<tr><td>${String(item.description)}</td><td>${String(item.category)}</td><td>${Number(item.quantity).toFixed(2)}</td><td>${money(Number(item.line_total))}</td></tr>`).join('');
+      const payments = (receipt.payments as Array<Record<string, unknown>>).map(p => `<tr><td>${String(p.method)}</td><td>${String(p.reference || '')}</td><td>${money(Number(p.amount))}</td></tr>`).join('');
+      popup.document.write(`<!doctype html><html><head><title>Folio #${folioId}</title><style>body{font-family:Arial,sans-serif;padding:28px;color:#17211b}h1,h2{margin:0 0 8px}p{margin:5px 0}table{width:100%;border-collapse:collapse;margin-top:18px}th,td{border-bottom:1px solid #ddd;padding:8px;text-align:left}.total{margin-top:18px;width:320px;margin-left:auto}.total div{display:flex;justify-content:space-between;padding:6px}.grand{font-size:18px;font-weight:700}.meta{margin-bottom:18px}@media print{button{display:none}}</style></head><body><h1>LA SERENE HOTEL</h1><h2>Final Guest Folio #${folioId}</h2><div class="meta"><p><b>Guest:</b> ${guestName}</p><p><b>Reservation:</b> #${reservationId}</p><p><b>Status:</b> Settled / Checked out</p></div><table><thead><tr><th>Description</th><th>Category</th><th>Qty</th><th>Amount</th></tr></thead><tbody>${items}</tbody></table><h3>Payments</h3><table><thead><tr><th>Method</th><th>Reference</th><th>Amount</th></tr></thead><tbody>${payments}</tbody></table><div class="total"><div><span>Subtotal</span><b>${money(Number(receipt.subtotal))}</b></div><div><span>Discounts</span><b>- ${money(Number(receipt.discounts))}</b></div><div><span>Food service charge</span><b>${money(Number(receipt.food_service_charge))}</b></div><div class="grand"><span>Total</span><b>${money(Number(receipt.total))}</b></div><div><span>Paid</span><b>${money(Number(receipt.paid))}</b></div><div class="grand"><span>Balance</span><b>${money(Number(receipt.balance))}</b></div></div><script>window.onload=()=>window.print()</script></body></html>`);
+      popup.document.close();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to prepare the folio for printing.');
+    }
   }
 
-  if (!folio) return <section className="panel"><div className="panel-head"><h2>Checkout · {guestName}</h2><button className="link-button" onClick={onClose}>Close</button></div><p className="muted">Loading folio and current room charges…</p></section>;
+  if (loading) return <section className="panel"><div className="panel-head"><h2>Checkout · {guestName}</h2><button className="link-button" onClick={onClose}>Close</button></div><p className="muted">Loading folio and current room charges…</p></section>;
+  if (loadError || !folio) return <section className="panel"><div className="panel-head"><div><p className="muted">Checkout unavailable</p><h2>Checkout · {guestName}</h2></div><button className="link-button" onClick={onClose}>Back</button></div><p className="notice" style={{ borderColor: '#d28b8b' }}>{loadError || 'Unable to load the folio.'}</p><p className="muted">The stay may be historical, already closed, or otherwise not eligible for the checkout workflow.</p><div className="billing-actions"><button className="secondary-button" onClick={() => void load()}>Retry</button><button className="primary-button" onClick={onClose}>Back to Front Desk</button></div></section>;
+
   return <section className="panel checkout-panel">
     <div className="panel-head"><div><p className="muted">Final settlement</p><h2>Checkout · {guestName}</h2></div><button className="link-button" onClick={onClose}>Back</button></div>
     {message && <p className="notice">{message}</p>}
