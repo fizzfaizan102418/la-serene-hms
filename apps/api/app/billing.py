@@ -127,7 +127,7 @@ def get_receipt(folio_id: int, db: Session = Depends(get_db), _: User = Depends(
     summary = build_folio_response(db, folio)
     room_ids = db.scalars(select(ReservationRoom.room_id).where(ReservationRoom.reservation_id == reservation.id)).all()
     rooms = [db.get(Room, room_id) for room_id in room_ids]
-    return {"folio_id": folio.id, "reservation_id": reservation.id, "status": folio.status, "guest": {"full_name": guest.full_name, "phone": guest.phone, "email": guest.email, "address": guest.address}, "stay": {"check_in": reservation.check_in, "check_out": reservation.check_out, "nights": (reservation.check_out - reservation.check_in).days}, "rooms": [{"id": room.id, "number": room.number, "room_type_id": room.room_type_id} for room in rooms if room], "items": [{"id": item.id, "description": item.description, "category": item.category, "quantity": float(item.quantity), "unit_price": float(item.unit_price), "discount": float(item.discount), "line_total": float(item_line_total(item))} for item in summary.items], "payments": [{"id": payment.id, "amount": float(payment.amount), "method": payment.method, "reference": payment.reference} for payment in summary.payments], "refunds": [{"id": refund.id, "payment_id": refund.payment_id, "amount": float(refund.amount), "method": refund.method, "reference": refund.reference, "reason": refund.reason} for refund in db.scalars(select(PaymentRefund).where(PaymentRefund.folio_id == folio.id).order_by(PaymentRefund.id)).all()], "subtotal": float(summary.subtotal), "discounts": float(summary.discounts), "food_service_charge": float(summary.food_service_charge), "total": float(summary.total), "paid": float(summary.paid), "balance": float(summary.balance)}
+    return {"folio_id": folio.id, "reservation_id": reservation.id, "status": folio.status, "guest": {"full_name": guest.full_name, "phone": guest.phone, "email": guest.email, "address": guest.address}, "stay": {"check_in": reservation.check_in, "check_out": reservation.check_out, "nights": (reservation.check_out - reservation.check_in).days}, "rooms": [{"id": room.id, "number": room.number, "room_type_id": room.room_type_id} for room in rooms if room], "items": [{"id": item.id, "description": item.description, "category": item.category, "quantity": float(item.quantity), "unit_price": float(item.unit_price), "discount": float(item.discount), "line_total": float(item_line_total(item))} for item in summary.items], "payments": [{"id": payment.id, "amount": float(payment.amount), "method": payment.method, "reference": payment.reference} for payment in summary.payments], "refunds": [{"id": refund.id, "payment_id": refund.payment_id, "amount": refund.amount, "method": refund.method, "reference": refund.reference, "reason": refund.reason} for refund in db.scalars(select(PaymentRefund).where(PaymentRefund.folio_id == folio.id).order_by(PaymentRefund.id)).all()], "subtotal": float(summary.subtotal), "discounts": float(summary.discounts), "food_service_charge": float(summary.food_service_charge), "total": float(summary.total), "paid": float(summary.paid), "balance": float(summary.balance)}
 
 
 @router.post("/folios/{folio_id}/room-charges", response_model=FolioResponse)
@@ -205,10 +205,11 @@ def update_folio_item(folio_id: int, item_id: int, payload: FolioItemUpdate, db:
 def remove_folio_item(folio_id: int, item_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "reception"))):
     folio = db.get(Folio, folio_id); item = db.get(FolioItem, item_id)
     if not folio or not item or item.folio_id != folio_id: raise HTTPException(status_code=404, detail="Folio item not found")
+    if folio.status != "open": raise HTTPException(status_code=409, detail="Folio item not found")
     if folio.status != "open": raise HTTPException(status_code=409, detail="Folio is already closed")
     if has_posted_folio_item_transaction(db, item.id): raise HTTPException(status_code=409, detail="Posted folio charges are immutable; use a ledger adjustment or reversal")
-    if item.stay_id is not None: raise HTTPException(status_code=409, detail="Stay-generated room charges cannot be manually removed")
-    db.delete(item); audit(db, user.id, "remove", "folio_item", item_id, {"folio_id": folio_id}); db.commit()
+    if item.stay_id is not None: raise HTTPException(status_code=409, detail="Stay-generated room charges cannot be manually deleted")
+    audit(db, user.id, "delete", "folio_item", item.id, {"folio_id": folio_id, "description": item.description}); db.delete(item); db.commit()
 
 
 @router.post("/folios/{folio_id}/payments", response_model=PaymentResponse, status_code=201)
@@ -217,20 +218,20 @@ def add_payment(folio_id: int, payload: PaymentCreate, idempotency_key: str | No
     if not folio: raise HTTPException(status_code=404, detail="Folio not found")
     if folio.status != "open": raise HTTPException(status_code=409, detail="Folio is already closed")
     if idempotency_key:
-        from .models import FinancialTransaction
         existing = db.scalar(select(FinancialTransaction).where(FinancialTransaction.idempotency_key == idempotency_key))
         if existing:
-            if existing.transaction_type != "folio_payment" or existing.folio_id != folio_id: raise HTTPException(status_code=409, detail="Idempotency key is already bound to another financial operation")
+            if existing.transaction_type != "folio_payment" or existing.folio_id != folio_id:
+                raise HTTPException(status_code=409, detail="Idempotency key is already bound to a different financial transaction")
             payment = db.get(Payment, int(existing.reference_id)) if existing.reference_id else None
-            if not payment: raise HTTPException(status_code=409, detail="Idempotent payment record is missing")
+            if not payment: raise HTTPException(status_code=409, detail="Financial idempotency record has no payment")
             return payment
     summary = build_folio_response(db, folio)
     if payload.amount > summary.balance: raise HTTPException(status_code=400, detail=f"Payment exceeds outstanding balance of {summary.balance}")
     reservation = db.get(Reservation, folio.reservation_id)
-    payment = Payment(folio_id=folio_id, amount=payload.amount, method=payload.method, reference=payload.reference); db.add(payment); db.flush()
-    tx = post_folio_payment(db, folio_id=folio.id, reservation_id=reservation.id if reservation else 0, payment_id=payment.id, amount=payload.amount, method=payload.method, created_by=user.id)
+    payment = Payment(folio_id=folio_id, amount=payload.amount, method=payload.method, reference=payload.reference, created_by=user.id); db.add(payment); db.flush()
+    tx = post_folio_payment(db, folio_id=folio_id, reservation_id=reservation.id if reservation else 0, payment_id=payment.id, amount=payload.amount, method=payload.method, created_by=user.id, idempotency_key=idempotency_key)
     if idempotency_key and tx.idempotency_key != idempotency_key: raise HTTPException(status_code=409, detail="Financial idempotency key was not applied")
-    audit(db, user.id, "payment", "folio", folio_id, {"amount": str(payload.amount), "method": payload.method, "reference": payload.reference}); db.commit(); db.refresh(payment)
+    audit(db, user.id, "add", "payment", payment.id, {"folio_id": folio_id, "amount": str(payload.amount), "method": payload.method}); db.commit(); db.refresh(payment)
     return payment
 
 
