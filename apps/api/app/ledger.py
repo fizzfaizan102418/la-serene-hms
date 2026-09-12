@@ -219,9 +219,9 @@ def post_folio_charge(db: Session, *, folio_id: int, reservation_id: int, item_i
     return transaction
 
 
-def post_folio_payment(db: Session, *, folio_id: int, reservation_id: int, payment_id: int, amount: Decimal, method: str, created_by: int) -> FinancialTransaction:
+def post_folio_payment(db: Session, *, folio_id: int, reservation_id: int, payment_id: int, amount: Decimal, method: str, created_by: int, idempotency_key: str | None = None) -> FinancialTransaction:
     account = {"cash": "Cash", "card": "Card Clearing", "bank_transfer": "Bank", "other": "Other Payment"}.get(method, "Other Payment")
-    return post_transaction(db, transaction_type="folio_payment", description=f"Folio payment #{payment_id} ({method})", reference_type="payment", reference_id=str(payment_id), folio_id=folio_id, reservation_id=reservation_id, created_by=created_by, idempotency_key=f"folio-payment:{payment_id}", lines=[{"account": account, "direction": "debit", "amount": amount, "folio_id": folio_id, "payment_method": method}, {"account": "Guest Receivables", "direction": "credit", "amount": amount, "folio_id": folio_id, "payment_method": method}])
+    return post_transaction(db, transaction_type="folio_payment", description=f"Folio payment #{payment_id} ({method})", reference_type="payment", reference_id=str(payment_id), folio_id=folio_id, reservation_id=reservation_id, created_by=created_by, idempotency_key=idempotency_key or f"folio-payment:{payment_id}", lines=[{"account": account, "direction": "debit", "amount": amount, "folio_id": folio_id, "payment_method": method}, {"account": "Guest Receivables", "direction": "credit", "amount": amount, "folio_id": folio_id, "payment_method": method}])
 
 
 def post_deposit_received(db: Session, *, stay_id: int, folio_id: int | None, reservation_id: int, deposit_id: int, amount: Decimal, method: str | None, created_by: int) -> FinancialTransaction:
@@ -259,21 +259,9 @@ def list_transactions(limit: int = 100, db: Session = Depends(get_db), _: User =
 @router.post("/transactions", status_code=201)
 def create_ledger_transaction(payload: LedgerTransactionCreate, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"), db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
     try:
-        tx = post_transaction(db, transaction_type=payload.transaction_type, description=payload.description, reference_type=payload.reference_type, reference_id=payload.reference_id, folio_id=payload.folio_id, reservation_id=payload.reservation_id, created_by=user.id, idempotency_key=idempotency_key, lines=payload.lines)
-        db.commit(); db.refresh(tx)
-        return {"id": tx.id, "transaction_no": tx.transaction_no, "idempotency_key": tx.idempotency_key, "business_date": tx.business_date, "status": tx.status}
-    except (ValueError, IntegrityError) as exc:
-        db.rollback(); raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
-@router.post("/transactions/{transaction_id}/reverse", status_code=201)
-def reverse_transaction_endpoint(transaction_id: int, reason: str = "Correction", db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
-    try:
-        reversal = reverse_transaction(db, transaction_id=transaction_id, created_by=user.id, reason=reason); db.commit(); db.refresh(reversal)
-        return {"id": reversal.id, "transaction_no": reversal.transaction_no, "reversal_of_id": reversal.reversal_of_id, "status": reversal.status}
-    except (ValueError, IntegrityError) as exc:
-        db.rollback(); raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
-from .finance_controls import router as finance_controls_router
-router.include_router(finance_controls_router)
+        tx = post_transaction(db, transaction_type=payload.transaction_type, description=payload.description, lines=payload.lines, created_by=user.id, reference_type=payload.reference_type, reference_id=payload.reference_id, folio_id=payload.folio_id, reservation_id=payload.reservation_id, idempotency_key=idempotency_key)
+        db.commit()
+        db.refresh(tx)
+        return {"id": tx.id, "transaction_no": tx.transaction_no, "status": tx.status}
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
