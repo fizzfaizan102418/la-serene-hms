@@ -80,6 +80,10 @@ print("fresh" if row == (None, None) else "initialized")
         if ($LASTEXITCODE -ne 0) {
             throw "Pre-upgrade backup failed; migration was not attempted."
         }
+        # run-backup.ps1 intentionally clears process environment variables in its finally block.
+        # Restore the migration connection variables before invoking Alembic.
+        $env:HMS_DATABASE_URL = ($databaseLine -split '=', 2)[1].Trim().Trim('"').Trim("'")
+        $env:PYTHONPATH = $InstallRoot
     }
 
     Push-Location $ApiRoot
