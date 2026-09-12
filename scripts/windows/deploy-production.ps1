@@ -46,11 +46,11 @@ if (-not $SkipGitPull) {
 
 Push-Location $SourceRoot
 try {
-    $branch = (& git branch --show-current).Trim()
+    $branch = ((& git branch --show-current) | Out-String).Trim()
     if ($branch -ne "main") { throw "Development source must be on main; found '$branch'." }
-    $dirty = (& git status --porcelain).Trim()
+    $dirty = ((& git status --porcelain) | Out-String).Trim()
     if ($dirty) { throw "Development source has uncommitted changes. Commit/stash them before production deployment.`n$dirty" }
-    $ReleaseSha = (& git rev-parse HEAD).Trim()
+    $ReleaseSha = ((& git rev-parse HEAD) | Out-String).Trim()
 }
 finally { Pop-Location }
 
