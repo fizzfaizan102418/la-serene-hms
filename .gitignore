@@ -7,9 +7,11 @@ node_modules/
 *.db
 *.sqlite
 *.sqlite3
+*.tsbuildinfo
 .DS_Store
 dist/
 build/
 coverage/
 backups/
 data/
+logs/
