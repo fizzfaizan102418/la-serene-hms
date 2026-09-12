@@ -23,9 +23,6 @@ from .rate_lifecycle import router as rate_lifecycle_router
 from .reports import router as reports_router
 from .schemas import BillingSummaryResponse, FolioItemCreate, FolioItemResponse, FolioItemUpdate, FolioResponse, PaymentCreate, PaymentResponse
 from .stay_lifecycle import router as stay_lifecycle_router
-from .restaurant_pos import router as restaurant_pos_router
-from .inventory import router as inventory_router
-from .purchasing import router as purchasing_router
 from .folio_corrections import router as folio_corrections_router
 
 router = APIRouter(prefix="/api", tags=["billing"])
@@ -44,21 +41,6 @@ router.include_router(rate_lifecycle_router)
 router.include_router(phase_a_completion_router)
 router.include_router(front_desk_router)
 router.include_router(folio_corrections_router)
-for restaurant_route in restaurant_pos_router.routes:
-    restaurant_route.path = restaurant_route.path.removeprefix("/api")
-    if hasattr(restaurant_route, "path_format"):
-        restaurant_route.path_format = restaurant_route.path_format.removeprefix("/api")
-    router.routes.append(restaurant_route)
-for inventory_route in inventory_router.routes:
-    inventory_route.path = inventory_route.path.removeprefix("/api")
-    if hasattr(inventory_route, "path_format"):
-        inventory_route.path_format = inventory_route.path_format.removeprefix("/api")
-    router.routes.append(inventory_route)
-for purchasing_route in purchasing_router.routes:
-    purchasing_route.path = purchasing_route.path.removeprefix("/api")
-    if hasattr(purchasing_route, "path_format"):
-        purchasing_route.path_format = purchasing_route.path_format.removeprefix("/api")
-    router.routes.append(purchasing_route)
 
 
 def money(value: Decimal) -> Decimal:
