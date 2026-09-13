@@ -112,7 +112,15 @@ class Expense(TimestampMixin, Base):
     description: Mapped[str] = mapped_column(String(200))
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     payment_method: Mapped[str] = mapped_column(String(30))
-
+    expense_date: Mapped[date] = mapped_column(Date, index=True)
+    expense_no: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    category: Mapped[str] = mapped_column(String(80), index=True)
+    paid_to: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    reference: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    department: Mapped[str] = mapped_column(String(60), index=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="posted", index=True)
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"

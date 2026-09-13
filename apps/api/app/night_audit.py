@@ -160,8 +160,8 @@ def build_summary(db: Session, business_date: date, finance: dict | None = None)
     ) or 0
     expenses = db.scalar(
         select(func.coalesce(func.sum(Expense.amount), 0)).where(
-            Expense.created_at >= day_start,
-            Expense.created_at < day_end,
+            Expense.expense_date == business_date,
+            Expense.status == "posted",
         )
     ) or Decimal("0.00")
 

@@ -22,19 +22,6 @@ class ExpensesModuleTests(unittest.TestCase):
         Base.metadata.drop_all(bind=self.engine)
         Base.metadata.create_all(bind=self.engine)
         self.db = Session(self.engine)
-        for statement in (
-            "ALTER TABLE expenses ADD COLUMN expense_date DATE",
-            "ALTER TABLE expenses ADD COLUMN expense_no VARCHAR(40)",
-            "ALTER TABLE expenses ADD COLUMN category VARCHAR(80)",
-            "ALTER TABLE expenses ADD COLUMN paid_to VARCHAR(160)",
-            "ALTER TABLE expenses ADD COLUMN reference VARCHAR(100)",
-            "ALTER TABLE expenses ADD COLUMN department VARCHAR(60)",
-            "ALTER TABLE expenses ADD COLUMN notes TEXT",
-            "ALTER TABLE expenses ADD COLUMN created_by INTEGER",
-            "ALTER TABLE expenses ADD COLUMN status VARCHAR(20)",
-        ):
-            self.db.execute(text(statement))
-        self.db.commit()
         role = Role(id=1, name="admin")
         user = User(id=1, username="admin", password_hash="test", role_id=1)
         self.db.add_all([role, user]); self.db.commit(); self.user = user
