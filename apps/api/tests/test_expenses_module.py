@@ -2,7 +2,7 @@ import unittest
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
 from app.db import Base
@@ -22,15 +22,18 @@ class ExpensesModuleTests(unittest.TestCase):
         Base.metadata.drop_all(bind=self.engine)
         Base.metadata.create_all(bind=self.engine)
         self.db = Session(self.engine)
-        self.db.execute(text("ALTER TABLE expenses ADD COLUMN expense_date DATE"))
-        self.db.execute(text("ALTER TABLE expenses ADD COLUMN expense_no VARCHAR(40)"))
-        self.db.execute(text("ALTER TABLE expenses ADD COLUMN category VARCHAR(80)"))
-        self.db.execute(text("ALTER TABLE expenses ADD COLUMN paid_to VARCHAR(160)"))
-        self.db.execute(text("ALTER TABLE expenses ADD COLUMN reference VARCHAR(100)"))
-        self.db.execute(text("ALTER TABLE expenses ADD COLUMN department VARCHAR(60)"))
-        self.db.execute(text("ALTER TABLE expenses ADD COLUMN notes TEXT"))
-        self.db.execute(text("ALTER TABLE expenses ADD COLUMN created_by INTEGER"))
-        self.db.execute(text("ALTER TABLE expenses ADD COLUMN status VARCHAR(20)"))
+        for statement in (
+            "ALTER TABLE expenses ADD COLUMN expense_date DATE",
+            "ALTER TABLE expenses ADD COLUMN expense_no VARCHAR(40)",
+            "ALTER TABLE expenses ADD COLUMN category VARCHAR(80)",
+            "ALTER TABLE expenses ADD COLUMN paid_to VARCHAR(160)",
+            "ALTER TABLE expenses ADD COLUMN reference VARCHAR(100)",
+            "ALTER TABLE expenses ADD COLUMN department VARCHAR(60)",
+            "ALTER TABLE expenses ADD COLUMN notes TEXT",
+            "ALTER TABLE expenses ADD COLUMN created_by INTEGER",
+            "ALTER TABLE expenses ADD COLUMN status VARCHAR(20)",
+        ):
+            self.db.execute(text(statement))
         self.db.commit()
         role = Role(id=1, name="admin")
         user = User(id=1, username="admin", password_hash="test", role_id=1)
@@ -41,15 +44,10 @@ class ExpensesModuleTests(unittest.TestCase):
 
     def test_create_expense_and_summary(self):
         payload = type("Payload", (), {
-            "expense_date": date(2026, 9, 13),
-            "category": "Electricity",
-            "description": "Monthly electricity bill",
-            "amount": Decimal("75000.00"),
-            "payment_method": "Bank",
-            "paid_to": "WAPDA",
-            "reference": "ELEC-SEP",
-            "department": "Administration",
-            "notes": "Main hotel meter",
+            "expense_date": date(2026, 9, 13), "category": "Electricity",
+            "description": "Monthly electricity bill", "amount": Decimal("75000.00"),
+            "payment_method": "Bank", "paid_to": "WAPDA", "reference": "ELEC-SEP",
+            "department": "Administration", "notes": "Main hotel meter",
         })()
         created = create_expense(payload, self.db, self.user)
         self.assertEqual(created["expense_no"], "EXP-000001")
