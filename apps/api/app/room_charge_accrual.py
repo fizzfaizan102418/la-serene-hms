@@ -17,6 +17,78 @@ def money(value: Decimal | int | float | str) -> Decimal:
     return Decimal(str(value)).quantize(MONEY, rounding=ROUND_HALF_UP)
 
 
+def preview_room_charges_for_business_date(db: Session, *, business_date: date) -> list[dict]:
+    """Return room-night charges that Night Audit would post, without mutating data."""
+    stays = db.scalars(
+        select(Stay).where(
+            Stay.status == "checked_in",
+            Stay.check_in <= business_date,
+            Stay.check_out > business_date,
+        ).order_by(Stay.id)
+    ).all()
+
+    preview: list[dict] = []
+    for stay in stays:
+        folio = db.scalar(
+            select(Folio)
+            .where(Folio.reservation_id == stay.reservation_id)
+            .order_by(Folio.id)
+            .limit(1)
+        )
+        if folio is None or folio.status != "open":
+            continue
+
+        room = db.get(Room, stay.room_id)
+        if room is None:
+            continue
+
+        description = f"Night audit · {business_date.isoformat()} · stay #{stay.id} · room {room.number}"
+        existing = db.scalar(
+            select(FolioItem.id).where(
+                FolioItem.folio_id == folio.id,
+                FolioItem.stay_id == stay.id,
+                FolioItem.category == "room",
+                FolioItem.description == description,
+            ).limit(1)
+        )
+        if existing is not None:
+            continue
+
+        segment = db.scalar(
+            select(StayRateSegment)
+            .where(
+                StayRateSegment.stay_id == stay.id,
+                StayRateSegment.from_date <= business_date,
+                StayRateSegment.to_date > business_date,
+            )
+            .order_by(StayRateSegment.from_date, StayRateSegment.id)
+            .limit(1)
+        )
+        if segment is not None:
+            gross_rate = money(segment.rate)
+            discount = money(segment.discount_amount)
+        else:
+            gross_rate = money(stay.agreed_rate)
+            discount = money(stay.discount_amount)
+
+        net_rate = money(max(Decimal("0.00"), gross_rate - discount))
+        if net_rate <= 0:
+            continue
+
+        preview.append({
+            "stay_id": stay.id,
+            "reservation_id": stay.reservation_id,
+            "folio_id": folio.id,
+            "room_id": room.id,
+            "room": room.number,
+            "gross_amount": gross_rate,
+            "discount_amount": discount,
+            "amount": net_rate,
+            "description": description,
+        })
+    return preview
+
+
 def accrue_room_charges_for_business_date(db: Session, *, business_date: date, created_by: int) -> int:
     """Post exactly one authoritative room-night per active stay for a business date.
 
