@@ -72,8 +72,6 @@ def initialize_database():
             if not db.scalar(select(Role).where(Role.name == name)):
                 db.add(Role(name=name))
         db.commit()
-    # Existing local installations receive the PMS Core backfill/triggers on startup.
-    # The SQLite bootstrap above guarantees the required tables exist first.
     ensure_pms_core_schema()
 
 
@@ -209,6 +207,28 @@ def list_guests(q: str | None = Query(default=None, min_length=1, max_length=160
 def create_guest(payload: GuestCreate, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "reception"))):
     guest = Guest(**payload.model_dump()); db.add(guest); db.flush()
     write_audit(db, "create", "guest", guest.id, {"full_name": guest.full_name}, user.id)
+    db.commit(); db.refresh(guest); return guest
+
+
+@app.patch("/api/guests/{guest_id}", response_model=GuestResponse)
+def update_guest(guest_id: int, payload: GuestCreate, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "reception"))):
+    guest = db.get(Guest, guest_id)
+    if not guest:
+        raise HTTPException(status_code=404, detail="Guest not found")
+    old = {
+        "full_name": guest.full_name,
+        "phone": guest.phone,
+        "email": guest.email,
+        "address": guest.address,
+        "id_document": guest.id_document,
+    }
+    values = payload.model_dump()
+    guest.full_name = values["full_name"]
+    guest.phone = values["phone"]
+    guest.email = values["email"]
+    guest.address = values["address"]
+    guest.id_document = values["id_document"]
+    write_audit(db, "update", "guest", guest.id, {"from": old, "to": values}, user.id)
     db.commit(); db.refresh(guest); return guest
 
 
