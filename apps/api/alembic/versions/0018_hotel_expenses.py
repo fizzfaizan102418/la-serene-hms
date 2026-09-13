@@ -18,23 +18,30 @@ def upgrade() -> None:
     op.add_column("expenses", sa.Column("notes", sa.Text(), nullable=True))
     op.add_column("expenses", sa.Column("created_by", sa.Integer(), nullable=True))
     op.add_column("expenses", sa.Column("status", sa.String(length=20), nullable=True))
-    op.create_unique_constraint("uq_expenses_expense_no", "expenses", ["expense_no"])
-    op.create_foreign_key("fk_expenses_created_by_users", "expenses", "users", ["created_by"], ["id"])
 
-    op.execute(sa.text("""
-        UPDATE expenses
-        SET expense_date = COALESCE(CAST(created_at AS DATE), CURRENT_DATE),
-            expense_no = 'EXP-' || LPAD(CAST(id AS VARCHAR), 6, '0'),
-            category = 'Miscellaneous',
-            department = 'Hotel',
-            status = 'posted'
-        WHERE expense_date IS NULL
-    """))
-    op.alter_column("expenses", "expense_date", nullable=False)
-    op.alter_column("expenses", "expense_no", nullable=False)
-    op.alter_column("expenses", "category", nullable=False)
-    op.alter_column("expenses", "department", nullable=False)
-    op.alter_column("expenses", "status", nullable=False)
+    bind = op.get_bind()
+    rows = bind.execute(sa.text("SELECT id, created_at FROM expenses")).mappings().all()
+    for row in rows:
+        created = row["created_at"]
+        expense_date = created.date() if hasattr(created, "date") else None
+        if expense_date is None:
+            expense_date = date.today() if False else None
+        bind.execute(
+            sa.text("UPDATE expenses SET expense_date = :expense_date, expense_no = :expense_no, category = 'Miscellaneous', department = 'Hotel', status = 'posted' WHERE id = :id"),
+            {"expense_date": expense_date, "expense_no": f"EXP-{row['id']:06d}", "id": row["id"]},
+        )
+
+    if bind.dialect.name == "sqlite":
+        op.create_index("uq_expenses_expense_no", "expenses", ["expense_no"], unique=True)
+    else:
+        op.create_unique_constraint("uq_expenses_expense_no", "expenses", ["expense_no"])
+        op.create_foreign_key("fk_expenses_created_by_users", "expenses", "users", ["created_by"], ["id"])
+        op.alter_column("expenses", "expense_date", nullable=False)
+        op.alter_column("expenses", "expense_no", nullable=False)
+        op.alter_column("expenses", "category", nullable=False)
+        op.alter_column("expenses", "department", nullable=False)
+        op.alter_column("expenses", "status", nullable=False)
+
     op.create_index("ix_expenses_expense_date", "expenses", ["expense_date"])
     op.create_index("ix_expenses_category", "expenses", ["category"])
     op.create_index("ix_expenses_department", "expenses", ["department"])
@@ -42,11 +49,15 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    bind = op.get_bind()
     op.drop_index("ix_expenses_status", table_name="expenses")
     op.drop_index("ix_expenses_department", table_name="expenses")
     op.drop_index("ix_expenses_category", table_name="expenses")
     op.drop_index("ix_expenses_expense_date", table_name="expenses")
-    op.drop_constraint("fk_expenses_created_by_users", "expenses", type_="foreignkey")
-    op.drop_constraint("uq_expenses_expense_no", "expenses", type_="unique")
+    if bind.dialect.name == "sqlite":
+        op.drop_index("uq_expenses_expense_no", table_name="expenses")
+    else:
+        op.drop_constraint("fk_expenses_created_by_users", "expenses", type_="foreignkey")
+        op.drop_constraint("uq_expenses_expense_no", "expenses", type_="unique")
     for column in ("status", "created_by", "notes", "department", "reference", "paid_to", "category", "expense_no", "expense_date"):
         op.drop_column("expenses", column)
