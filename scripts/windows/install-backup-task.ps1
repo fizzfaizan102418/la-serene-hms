@@ -11,9 +11,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$ApiRoot = Join-Path $InstallRoot "apps\api"
 $Runner = Join-Path $InstallRoot "scripts\windows\run-backup.ps1"
 if (-not (Test-Path -LiteralPath $Runner -PathType Leaf)) { throw "Backup runner not found: $Runner" }
-if (-not $PythonExe) { $PythonExe = Join-Path $InstallRoot ".venv\Scripts\python.exe" }
+# Production virtualenv lives beside the API, matching the service/deployment layout.
+if (-not $PythonExe) { $PythonExe = Join-Path $ApiRoot ".venv\Scripts\python.exe" }
+if (-not (Test-Path -LiteralPath $PythonExe -PathType Leaf)) { throw "Production Python executable not found: $PythonExe" }
 if (-not $BackupDir) { $BackupDir = Join-Path $InstallRoot "backups" }
 
 $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$Runner`" -InstallRoot `"$InstallRoot`" -PythonExe `"$PythonExe`" -BackupDir `"$BackupDir`" -Retain $Retain"
