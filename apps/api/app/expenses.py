@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import Numeric, bindparam, text
 from sqlalchemy.orm import Session
@@ -73,10 +73,10 @@ def expense_meta(_: User = Depends(require_roles("admin", "reception"))):
 def list_expenses(
     from_date: date | None = None,
     to_date: date | None = None,
-    category: str | None = Query(default=None, max_length=80),
-    department: str | None = Query(default=None, max_length=60),
-    payment_method: str | None = Query(default=None, max_length=30),
-    status: str = Query(default="posted", max_length=20),
+    category: str | None = None,
+    department: str | None = None,
+    payment_method: str | None = None,
+    status: str = "posted",
     db: Session = Depends(get_db),
     _: User = Depends(require_roles("admin", "reception")),
 ):
