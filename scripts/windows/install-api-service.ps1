@@ -27,10 +27,12 @@ if (-not (Test-Path -LiteralPath $ApiRoot -PathType Container)) {
 }
 Require-File $EnvFile "Production environment file"
 
+# Production virtualenv lives beside the API, not at the install root.
+# This matches deploy-production.ps1 and the documented C:\LaSereneHMS layout.
 if (-not $PythonExe) {
-    $PythonExe = Join-Path $InstallRoot ".venv\Scripts\python.exe"
+    $PythonExe = Join-Path $ApiRoot ".venv\Scripts\python.exe"
 }
-Require-File $PythonExe "Python executable"
+Require-File $PythonExe "Production Python executable"
 
 if (-not $NssmExe) {
     $NssmExe = (Get-Command nssm.exe -ErrorAction SilentlyContinue).Source
