@@ -45,7 +45,7 @@ if ($RunAsSystem) { $backupArgs += "-RunAsSystem" }
 if ($LASTEXITCODE -ne 0) { throw "Backup task installation failed." }
 
 Write-Host "Running final read-only go-live validation..."
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "validate-go-live.ps1") -InstallRoot $InstallRoot -ServiceName "LaSereneHMSApi" -RequireRecentBackup:$false
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "validate-go-live.ps1") -InstallRoot $InstallRoot -ServiceName "LaSereneHMSApi"
 if ($LASTEXITCODE -ne 0) { throw "Go-live validation failed." }
 
 Write-Host "HOTEL INSTALLATION COMPLETE"
