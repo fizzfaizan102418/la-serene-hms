@@ -1,4 +1,6 @@
 """Expand hotel expenses into a first-class operational expense module."""
+from datetime import date, datetime
+
 from alembic import op
 import sqlalchemy as sa
 
@@ -23,9 +25,17 @@ def upgrade() -> None:
     rows = bind.execute(sa.text("SELECT id, created_at FROM expenses")).mappings().all()
     for row in rows:
         created = row["created_at"]
-        expense_date = created.date() if hasattr(created, "date") else None
-        if expense_date is None:
-            expense_date = date.today() if False else None
+        if isinstance(created, datetime):
+            expense_date = created.date()
+        elif isinstance(created, date):
+            expense_date = created
+        elif isinstance(created, str):
+            try:
+                expense_date = datetime.fromisoformat(created).date()
+            except ValueError:
+                expense_date = date.today()
+        else:
+            expense_date = date.today()
         bind.execute(
             sa.text("UPDATE expenses SET expense_date = :expense_date, expense_no = :expense_no, category = 'Miscellaneous', department = 'Hotel', status = 'posted' WHERE id = :id"),
             {"expense_date": expense_date, "expense_no": f"EXP-{row['id']:06d}", "id": row["id"]},
