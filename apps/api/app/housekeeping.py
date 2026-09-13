@@ -1,4 +1,4 @@
-from datetime import date, datetime
+﻿from datetime import date, datetime
 import json
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -6,7 +6,6 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from .auth import require_roles
-from .backup import router as backup_router
 from .db import get_db
 from . import pms_core as _pms_core_models
 from .pms_core import router as pms_core_router
@@ -26,7 +25,6 @@ from .inventory import lock_business_date
 from .models import AuditLog, Reservation, ReservationRoom, Room, RoomType, User
 
 router = APIRouter(prefix="", tags=["housekeeping"])
-router.include_router(backup_router)
 router.include_router(pms_core_router)
 router.include_router(housekeeping_control_router)
 
@@ -119,3 +117,4 @@ def release_room_from_out_of_order(room_id: int, db: Session = Depends(get_db), 
         raise HTTPException(status_code=409, detail=f"Room {room_id} has no active maintenance block")
     result = resolve_maintenance_block(block["id"], db, user)
     return {"room_id": room_id, "status": result["room_status"], "maintenance_block_id": block["id"], "housekeeping_task_id": result["housekeeping_task_id"]}
+

@@ -1,4 +1,4 @@
-from datetime import date
+﻿from datetime import date
 import json
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from .auth import create_access_token, get_current_user, hash_password, require_roles, verify_password
 from .billing import router as billing_router
+from .backup import router as backup_router
 from .db import engine, get_db
 from .inventory import router as inventory_router
 from .models import AuditLog, Folio, Guest, Reservation, ReservationRoom, Role, Room, RoomType, User
@@ -27,6 +28,7 @@ from .schemas import (
 
 app = FastAPI(title="La Serene HMS API", version="0.9.1")
 app.include_router(billing_router)
+app.include_router(backup_router)
 app.include_router(reservation_workflows_router)
 app.include_router(phase_a_workflows_router)
 app.include_router(inventory_router)
@@ -349,3 +351,4 @@ def transfer_room(reservation_id: int, payload: RoomTransferRequest, db: Session
     write_audit(db, "room_transfer", "room", source.id, {"reservation_id": reservation.id, "to_room_id": target.id, "new_status": "dirty"}, user.id)
     write_audit(db, "room_transfer", "room", target.id, {"reservation_id": reservation.id, "from_room_id": source.id, "new_status": "occupied"}, user.id)
     db.commit(); db.refresh(reservation); return reservation_response(db, reservation)
+
