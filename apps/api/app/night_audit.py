@@ -23,14 +23,15 @@ from .db import DATA_DIR, get_db
 from .financial_ops import ledger_reconciliation
 from .finance_controls import payment_reconciliation, revenue_report, trial_balance
 from .financial_authority import post_folio_charge_authoritative
-from .models import AuditLog, BusinessDateState, Expense, Folio, FolioItem, Payment, Reservation, Room, User
+from .models import AuditLog, BusinessDateState, Expense, FinancialTransaction, Folio, FolioItem, LedgerEntry, Payment, Reservation, Room, User
 from .business_date import get_current_business_date, lock_current_business_date
-from .room_charge_accrual import accrue_room_charges_for_business_date
+from .room_charge_accrual import accrue_room_charges_for_business_date, preview_room_charges_for_business_date
 
 router = APIRouter(prefix="/night-audit", tags=["night-audit"])
 MONEY = Decimal("0.01")
 FOOD_SERVICE_CHARGE_RATE = Decimal("0.10")
 FOOD_CATEGORIES = {"food", "restaurant", "room_service", "beverage", "drink", "snack"}
+CASH_ACCOUNTS = {"Cash", "Card Clearing", "Bank", "Other Payment"}
 PACK_ROOT = DATA_DIR / "daily_closing"
 
 
@@ -209,6 +210,69 @@ def build_summary(db: Session, business_date: date, finance: dict | None = None)
     }
 
 
+def ledger_account_delta(db: Session, business_date: date, accounts: set[str], before: bool) -> Decimal:
+    query = (
+        select(LedgerEntry.direction, func.coalesce(func.sum(LedgerEntry.amount), 0))
+        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
+        .where(
+            LedgerEntry.account.in_(accounts),
+            FinancialTransaction.status.in_(("posted", "reversed")),
+        )
+    )
+    if before:
+        query = query.where(FinancialTransaction.business_date < business_date)
+    else:
+        query = query.where(FinancialTransaction.business_date == business_date)
+    rows = db.execute(query.group_by(LedgerEntry.direction)).all()
+    debit = sum((Decimal(amount) for direction, amount in rows if direction == "debit"), Decimal("0.00"))
+    credit = sum((Decimal(amount) for direction, amount in rows if direction == "credit"), Decimal("0.00"))
+    return money(debit - credit)
+
+
+def build_pre_close_preview(db: Session, business_date: date, summary: dict) -> dict:
+    pending = preview_room_charges_for_business_date(db, business_date=business_date)
+    pending_total = money(sum((row["amount"] for row in pending), Decimal("0.00")))
+    opening_cash = ledger_account_delta(db, business_date, CASH_ACCOUNTS, True)
+    opening_receivables = ledger_account_delta(db, business_date, {"Guest Receivables"}, True)
+    today_cash = ledger_account_delta(db, business_date, CASH_ACCOUNTS, False)
+    today_receivables = ledger_account_delta(db, business_date, {"Guest Receivables"}, False)
+    projected_cash = money(opening_cash + today_cash)
+    projected_receivables = money(max(Decimal("0.00"), opening_receivables + today_receivables + pending_total))
+    return {
+        "business_date": business_date,
+        "opening": {
+            "cash": money(opening_cash),
+            "guest_receivables": money(opening_receivables),
+            "outstanding": money(max(Decimal("0.00"), opening_receivables)),
+        },
+        "activity": {
+            "room_revenue": money(summary["revenue"]["room"]),
+            "payments_received": money(summary["payments"]["total"]),
+            "cash_received": money(today_cash),
+            "expenses": money(summary["expenses"]),
+            "ledger_transactions": summary["finance"]["ledger_transactions"],
+            "guest_receivables_delta": money(today_receivables),
+        },
+        "pending_night_audit": {
+            "room_charges_count": len(pending),
+            "room_charges_total": pending_total,
+            "items": pending,
+        },
+        "projected_close": {
+            "room_revenue": money(summary["revenue"]["room"] + pending_total),
+            "cash": projected_cash,
+            "guest_receivables": projected_receivables,
+            "outstanding": projected_receivables,
+            "gross_revenue": money(summary["revenue"]["gross"] + pending_total),
+        },
+        "controls": {
+            "trial_balance": "balanced" if summary["finance"]["trial_balance"]["balanced"] else "review",
+            "revenue_difference": money(summary["finance"]["revenue_difference"]),
+            "cash_difference": money(summary["finance"]["cash_difference"]),
+        },
+    }
+
+
 def pack_dir(business_date: date) -> Path:
     path = PACK_ROOT / business_date.isoformat()
     path.mkdir(parents=True, exist_ok=True)
@@ -305,7 +369,9 @@ def get_pack_file(business_date: date, filename: str) -> Path:
 @router.get("/preview")
 def preview(db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception"))):
     business_date = get_business_date(db)
-    return build_summary(db, business_date)
+    summary = build_summary(db, business_date)
+    summary["pre_close"] = build_pre_close_preview(db, business_date, summary)
+    return summary
 
 
 @router.post("/close")
