@@ -16,11 +16,12 @@ function Require-File([string]$Path, [string]$Label) {
 
 $ApiRoot = Join-Path $InstallRoot "apps\api"
 $EnvFile = Join-Path $ApiRoot ".env"
-if (-not $PythonExe) { $PythonExe = Join-Path $InstallRoot ".venv\Scripts\python.exe" }
+# Keep the default identical to the production service and backup-task layout.
+if (-not $PythonExe) { $PythonExe = Join-Path $ApiRoot ".venv\Scripts\python.exe" }
 if (-not $BackupDir) { $BackupDir = Join-Path $InstallRoot "backups" }
 
 Require-File $EnvFile "Production environment file"
-Require-File $PythonExe "Python executable"
+Require-File $PythonExe "Production Python executable"
 New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
 
 $databaseLine = Get-Content -LiteralPath $EnvFile | Where-Object { $_ -match '^\s*HMS_DATABASE_URL\s*=' } | Select-Object -First 1
