@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import './reports.css';
 import NightAuditView from './NightAuditView';
+import ExpensesView from './ExpensesView';
 
 type ReportsApi = <T>(path: string, options?: RequestInit) => Promise<T>;
 type Report = { from_date: string; to_date: string; period_days: number; rooms: { total: number; operational: number; available_room_nights: number; booked_room_nights: number; occupied_room_nights: number; occupancy_rate: number }; operations: { scheduled_arrivals: number; scheduled_departures: number; actual_check_ins: number; actual_check_outs: number; checked_in_guests: number; completed_stays: number; stays_overlapping_period: number; legacy_lifecycle_records: number }; revenue: { gross: number; discounts: number; net: number; payments_received: number; outstanding_balance: number }; payment_breakdown: { method: string; amount: number }[]; top_guests: { guest_name: string; stays: number }[] };
@@ -9,7 +10,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 const money = (value: number) => Number(value || 0).toFixed(2);
 
 export default function ReportsView({ api }: { api: ReportsApi }) {
-  const [mode, setMode] = useState<'reports' | 'night-audit'>('reports');
+  const [mode, setMode] = useState<'reports' | 'night-audit' | 'expenses'>('reports');
   const [fromDate, setFromDate] = useState(today());
   const [toDate, setToDate] = useState(today());
   const [report, setReport] = useState<Report | null>(null);
@@ -38,9 +39,10 @@ export default function ReportsView({ api }: { api: ReportsApi }) {
   }
   useEffect(() => { void load(); }, []);
 
-  if (mode === 'night-audit') return <section className="page"><div className="page-heading"><div><p className="muted">Management controls</p><h2>Daily Closing</h2></div><button className="secondary-button" onClick={() => setMode('reports')}>← Reports & Analytics</button></div><NightAuditView api={api}/></section>;
+  if (mode === 'expenses') return <ExpensesView api={api}/>;
+  if (mode === 'night-audit') return <section className="page"><div className="page-heading"><div><p className="muted">Management controls</p><h2>Daily Closing</h2></div><div className="desk-actions"><button className="secondary-button" onClick={() => setMode('reports')}>← Reports & Analytics</button><button className="secondary-button" onClick={() => setMode('expenses')}>Expenses</button></div></div><NightAuditView api={api}/></section>;
 
-  return <section className="page"><div className="page-heading"><div><p className="muted">Management overview</p><h2>Reports & Analytics</h2></div><div className="desk-actions"><button className="secondary-button" onClick={() => setMode('night-audit')}>Night Audit / Daily Closing</button><button className="secondary-button" onClick={() => void load()} disabled={loading}>{loading ? 'Refreshing…' : 'Refresh report'}</button></div></div>
+  return <section className="page"><div className="page-heading"><div><p className="muted">Management overview</p><h2>Reports & Analytics</h2></div><div className="desk-actions"><button className="secondary-button" onClick={() => setMode('expenses')}>Expenses</button><button className="secondary-button" onClick={() => setMode('night-audit')}>Night Audit / Daily Closing</button><button className="secondary-button" onClick={() => void load()} disabled={loading}>{loading ? 'Refreshing…' : 'Refresh report'}</button></div></div>
     <div className="panel report-filters"><label>From<input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} /></label><label>To<input type="date" value={toDate} onChange={e => setToDate(e.target.value)} /></label><button className="primary-button" onClick={() => void load()} disabled={loading}>Run report</button></div>
     {message && <p className="notice">{message}</p>}
     {report && <><section className="report-stat-grid"><article className="stat"><span>Occupancy</span><strong>{report.rooms.occupancy_rate.toFixed(1)}%</strong></article><article className="stat"><span>Net revenue</span><strong>{money(report.revenue.net)}</strong></article><article className="stat"><span>Payments received</span><strong>{money(report.revenue.payments_received)}</strong></article><article className="stat"><span>Outstanding</span><strong>{money(report.revenue.outstanding_balance)}</strong></article><article className="stat"><span>Actual check-ins</span><strong>{report.operations.actual_check_ins}</strong></article><article className="stat"><span>Actual check-outs</span><strong>{report.operations.actual_check_outs}</strong></article></section>
