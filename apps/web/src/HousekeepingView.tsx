@@ -19,11 +19,12 @@ type Board = {
 type Props = {
   userRole: string;
   api: <T>(path: string, options?: RequestInit) => Promise<T>;
+  onRefresh: () => Promise<void>;
 };
 
 const label = (value: string) => value.replace(/_/g, ' ');
 
-export default function HousekeepingView({ userRole, api }: Props) {
+export default function HousekeepingView({ userRole, api, onRefresh }: Props) {
   const [board, setBoard] = useState<Board | null>(null);
   const [filter, setFilter] = useState('actionable');
   const [message, setMessage] = useState('');
@@ -48,6 +49,7 @@ export default function HousekeepingView({ userRole, api }: Props) {
     try {
       await api(`/api/housekeeping/rooms/${room.room_id}/clean`, { method: 'POST' });
       setMessage(`Room ${room.room_number} marked clean and returned to available.`);
+      await onRefresh();
       await load();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'Unable to mark room clean');
@@ -58,6 +60,7 @@ export default function HousekeepingView({ userRole, api }: Props) {
     try {
       await api(`/api/housekeeping/rooms/${room.room_id}/out-of-order`, { method: 'POST' });
       setMessage(`Room ${room.room_number} is now out of order.`);
+      await onRefresh();
       await load();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'Unable to take room out of order');
@@ -68,6 +71,7 @@ export default function HousekeepingView({ userRole, api }: Props) {
     try {
       await api(`/api/housekeeping/rooms/${room.room_id}/release`, { method: 'POST' });
       setMessage(`Room ${room.room_number} released and available.`);
+      await onRefresh();
       await load();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'Unable to release room');
