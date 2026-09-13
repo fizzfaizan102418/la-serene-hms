@@ -5,7 +5,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import text
+from sqlalchemy import Numeric, bindparam, text
 from sqlalchemy.orm import Session
 
 from .auth import require_roles
@@ -112,7 +112,9 @@ def create_expense(payload: ExpenseCreate, db: Session = Depends(get_db), user: 
     result = db.execute(
         text("""INSERT INTO expenses (description, amount, payment_method, expense_date, expense_no, category, paid_to, reference, department, notes, created_by, status)
                VALUES (:description, :amount, :payment_method, :expense_date, NULL, :category, :paid_to, :reference, :department, :notes, :created_by, 'posted')
-               RETURNING id"""),
+               RETURNING id""").bindparams(
+            bindparam("amount", type_=Numeric(12, 2))
+        ),
         {"description": payload.description.strip(), "amount": amount, "payment_method": payment_method, "expense_date": expense_date, "category": category, "paid_to": payload.paid_to.strip() if payload.paid_to else None, "reference": payload.reference.strip() if payload.reference else None, "department": department, "notes": payload.notes.strip() if payload.notes else None, "created_by": user.id},
     )
     expense_id = int(result.scalar_one())
