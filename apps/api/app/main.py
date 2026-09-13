@@ -1,4 +1,4 @@
-﻿from datetime import date
+from datetime import date
 import json
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
