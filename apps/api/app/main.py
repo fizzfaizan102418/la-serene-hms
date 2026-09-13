@@ -17,6 +17,7 @@ from .phase_a_workflows import router as phase_a_workflows_router
 from .pms_core_bootstrap import ensure_pms_core_schema
 from .reservation_workflows import router as reservation_workflows_router
 from .restaurant_pos import router as restaurant_pos_router
+from .reports import router as reports_router
 from .business_date import get_current_business_date
 from .sqlite_bootstrap import initialize_sqlite_database
 from .schemas import (
@@ -31,6 +32,7 @@ app = FastAPI(title="La Serene HMS API", version="0.9.1")
 app.include_router(billing_router)
 app.include_router(backup_router)
 app.include_router(expenses_router)
+app.include_router(reports_router, prefix="/api")
 app.include_router(reservation_workflows_router)
 app.include_router(phase_a_workflows_router)
 app.include_router(inventory_router)
