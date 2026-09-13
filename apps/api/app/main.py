@@ -9,6 +9,7 @@ from .auth import create_access_token, get_current_user, hash_password, require_
 from .billing import router as billing_router
 from .backup import router as backup_router
 from .db import engine, get_db
+from .expenses import router as expenses_router
 from .inventory import router as inventory_router
 from .models import AuditLog, Folio, Guest, Reservation, ReservationRoom, Role, Room, RoomType, User
 from .purchasing import router as purchasing_router
@@ -16,6 +17,7 @@ from .phase_a_workflows import router as phase_a_workflows_router
 from .pms_core_bootstrap import ensure_pms_core_schema
 from .reservation_workflows import router as reservation_workflows_router
 from .restaurant_pos import router as restaurant_pos_router
+from .reports import router as reports_router
 from .business_date import get_current_business_date
 from .sqlite_bootstrap import initialize_sqlite_database
 from .schemas import (
@@ -29,6 +31,8 @@ from .schemas import (
 app = FastAPI(title="La Serene HMS API", version="0.9.1")
 app.include_router(billing_router)
 app.include_router(backup_router)
+app.include_router(expenses_router)
+app.include_router(reports_router, prefix="/api")
 app.include_router(reservation_workflows_router)
 app.include_router(phase_a_workflows_router)
 app.include_router(inventory_router)
@@ -344,11 +348,9 @@ def transfer_room(reservation_id: int, payload: RoomTransferRequest, db: Session
     db.delete(link); db.add(ReservationRoom(reservation_id=reservation.id, room_id=target.id))
     from .pms_core import Stay
     stay = db.scalar(select(Stay).where(Stay.reservation_id == reservation.id, Stay.room_id == source.id, Stay.status == "checked_in"))
-    if stay:
-        stay.room_id = target.id
+    if stay: stay.room_id = target.id
     source.status = "dirty"; target.status = "occupied"
     write_audit(db, "room_transfer", "reservation", reservation.id, {"from_room_id": source.id, "to_room_id": target.id}, user.id)
     write_audit(db, "room_transfer", "room", source.id, {"reservation_id": reservation.id, "to_room_id": target.id, "new_status": "dirty"}, user.id)
     write_audit(db, "room_transfer", "room", target.id, {"reservation_id": reservation.id, "from_room_id": source.id, "new_status": "occupied"}, user.id)
     db.commit(); db.refresh(reservation); return reservation_response(db, reservation)
-
