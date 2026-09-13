@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -109,13 +109,14 @@ def create_expense(payload: ExpenseCreate, db: Session = Depends(get_db), user: 
     if payment_method not in PAYMENT_METHODS:
         raise HTTPException(status_code=400, detail="Unsupported payment method")
     amount = money(payload.amount)
+    created_at = datetime.utcnow()
     result = db.execute(
-        text("""INSERT INTO expenses (description, amount, payment_method, expense_date, expense_no, category, paid_to, reference, department, notes, created_by, status)
-               VALUES (:description, :amount, :payment_method, :expense_date, NULL, :category, :paid_to, :reference, :department, :notes, :created_by, 'posted')
+        text("""INSERT INTO expenses (description, amount, payment_method, expense_date, expense_no, category, paid_to, reference, department, notes, created_by, status, created_at)
+               VALUES (:description, :amount, :payment_method, :expense_date, NULL, :category, :paid_to, :reference, :department, :notes, :created_by, 'posted', :created_at)
                RETURNING id""").bindparams(
             bindparam("amount", type_=Numeric(12, 2))
         ),
-        {"description": payload.description.strip(), "amount": amount, "payment_method": payment_method, "expense_date": expense_date, "category": category, "paid_to": payload.paid_to.strip() if payload.paid_to else None, "reference": payload.reference.strip() if payload.reference else None, "department": department, "notes": payload.notes.strip() if payload.notes else None, "created_by": user.id},
+        {"description": payload.description.strip(), "amount": amount, "payment_method": payment_method, "expense_date": expense_date, "category": category, "paid_to": payload.paid_to.strip() if payload.paid_to else None, "reference": payload.reference.strip() if payload.reference else None, "department": department, "notes": payload.notes.strip() if payload.notes else None, "created_by": user.id, "created_at": created_at},
     )
     expense_id = int(result.scalar_one())
     expense_no = f"EXP-{expense_id:06d}"
