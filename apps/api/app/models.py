@@ -200,6 +200,7 @@ class BusinessDateState(Base):
     current_business_date: Mapped[date] = mapped_column(Date)
     opened_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     last_closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_closed_business_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 

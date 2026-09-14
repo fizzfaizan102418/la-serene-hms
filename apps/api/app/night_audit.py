@@ -179,7 +179,7 @@ def build_summary(db: Session, business_date: date, finance: dict | None = None)
 
     finance = finance or finance_snapshot(db, business_date)
     state = db.get(BusinessDateState, 1)
-    posting_open = not bool(state and state.last_closed_at and state.last_closed_at.date() >= business_date)
+    posting_open = not bool(state and state.last_closed_business_date and state.last_closed_business_date >= business_date)
 
     return {
         "business_date": business_date,
@@ -382,7 +382,7 @@ def close_day(payload: ClosingConfirm | None = None, db: Session = Depends(get_d
     # race with a newly committed financial transaction for the closing date.
     state = lock_current_business_date(db)
     business_date = state.current_business_date
-    if state.last_closed_at and state.last_closed_at.date() >= business_date:
+    if state.last_closed_business_date and state.last_closed_business_date >= business_date:
         raise HTTPException(status_code=409, detail=f"Business date {business_date.isoformat()} is already closed")
 
     active_departures = db.scalar(
@@ -409,6 +409,7 @@ def close_day(payload: ClosingConfirm | None = None, db: Session = Depends(get_d
     pack = create_pack(summary, payload.notes if payload else None, user.username, closed_at)
 
     state.last_closed_at = closed_at
+    state.last_closed_business_date = business_date
     state.current_business_date = business_date + timedelta(days=1)
     state.opened_at = closed_at
     audit(db, user.id, "daily_close", business_date, {"business_date": business_date, "summary": summary, "notes": payload.notes if payload else None, "pack": pack, "closed_by": user.username, "closed_at": closed_at, "next_business_date": state.current_business_date})

@@ -160,7 +160,7 @@ def post_transaction(
     tx_date = business_date or state.current_business_date
     if business_date is not None and tx_date != state.current_business_date:
         raise ValueError(f"Financial posting date {tx_date.isoformat()} is not the current business date")
-    if state.last_closed_at is not None and state.last_closed_at.date() >= tx_date:
+    if state.last_closed_business_date is not None and state.last_closed_business_date >= tx_date:
         raise ValueError(f"Business date {tx_date.isoformat()} is closed for financial posting")
 
     transaction = FinancialTransaction(

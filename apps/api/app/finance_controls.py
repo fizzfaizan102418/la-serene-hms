@@ -32,7 +32,7 @@ def current_business_date(db: Session) -> date:
 def require_open_business_date(db: Session) -> date:
     state = lock_current_business_date(db)
     current = state.current_business_date
-    if state.last_closed_at is not None and state.last_closed_at.date() >= current:
+    if state.last_closed_business_date is not None and state.last_closed_business_date >= current:
         raise HTTPException(status_code=409, detail=f"Business date {current.isoformat()} is closed for posting")
     return current
 
@@ -67,7 +67,7 @@ def period_status(db: Session = Depends(get_db), _: User = Depends(require_roles
     if state is None or state.current_business_date is None:
         raise HTTPException(status_code=503, detail="Business date is not initialized")
     current = state.current_business_date
-    closed = bool(state.last_closed_at and state.last_closed_at.date() >= current)
+    closed = bool(state.last_closed_business_date and state.last_closed_business_date >= current)
     return {"business_date": current, "opened_at": state.opened_at, "last_closed_at": state.last_closed_at, "posting_open": not closed}
 
 
