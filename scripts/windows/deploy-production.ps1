@@ -1,4 +1,4 @@
-[CmdletBinding(SupportsShouldProcess=$true)]
+﻿[CmdletBinding(SupportsShouldProcess=$true)]
 param(
     [string]$SourceRoot = "E:\La_Serene_Test_HMS\la-serene-hms",
     [string]$InstallRoot = "C:\LaSereneHMS",
@@ -87,6 +87,34 @@ try {
     Invoke-Checked "robocopy" @($SourceRoot, $InstallRoot, "/E", "/COPY:DAT", "/DCOPY:DAT", "/R:1", "/W:1", "/XJ", "/XD", (Join-Path $SourceRoot ".git"), (Join-Path $SourceRoot ".venv"), (Join-Path $SourceRoot "node_modules"), (Join-Path $SourceRoot "apps\api\.venv"), (Join-Path $SourceRoot "apps\web\node_modules"), (Join-Path $SourceRoot "data"), (Join-Path $SourceRoot "backups"), (Join-Path $SourceRoot "logs"), (Join-Path $InstallRoot "data"), (Join-Path $InstallRoot "backups"), (Join-Path $InstallRoot "logs"), "/XF", (Join-Path $SourceRoot "apps\api\.env"), (Join-Path $InstallRoot "apps\api\.env"))
     if ($LASTEXITCODE -gt 7) { throw "Application copy failed (robocopy exit $LASTEXITCODE)." }
 
+        # Synchronize Alembic migration files exactly with the source tree.
+    # The main robocopy deployment uses /E, which does not remove files
+    # deleted from Git. Without this mirror, obsolete Alembic revisions
+    # can survive in the installation and create multiple heads.
+    Write-Host "Synchronizing Alembic migration versions..."
+    $SourceMigrationVersions = Join-Path $SourceRoot "apps\api\alembic\versions"
+    $InstallMigrationVersions = Join-Path $InstallRoot "apps\api\alembic\versions"
+
+    Require-Path $SourceMigrationVersions "Development Alembic versions directory"
+    New-Item -ItemType Directory -Force -Path $InstallMigrationVersions | Out-Null
+
+    Invoke-Checked "robocopy" @(
+        $SourceMigrationVersions,
+        $InstallMigrationVersions,
+        "/MIR",
+        "/COPY:DAT",
+        "/DCOPY:DAT",
+        "/R:1",
+        "/W:1",
+        "/XJ",
+        "/XD", "__pycache__"
+    )
+
+    if ($LASTEXITCODE -gt 7) {
+        throw "Alembic migration synchronization failed (robocopy exit $LASTEXITCODE)."
+    }
+
+    Write-Host "Alembic migration versions synchronized."
     Write-Host "Installing production Python dependencies..."
     Push-Location $ApiRoot
     try {
@@ -142,3 +170,4 @@ catch {
     }
     throw
 }
+
