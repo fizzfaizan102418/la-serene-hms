@@ -56,14 +56,313 @@ function GuestsView({ user, guests, setGuests, onRefresh }: { user: User; guests
 }
 
 function RoomsView({ user, rooms, setRooms, roomTypes, onRefresh }: { user: User; rooms: Room[]; setRooms: React.Dispatch<React.SetStateAction<Room[]>>; roomTypes: RoomType[]; onRefresh: () => Promise<void> }) {
-  const [filter, setFilter] = useState('all'); const [message, setMessage] = useState(''); const [typeName, setTypeName] = useState(''); const [rate, setRate] = useState(''); const [desc, setDesc] = useState(''); const [number, setNumber] = useState(''); const [typeId, setTypeId] = useState(''); const typeById = useMemo(() => new Map(roomTypes.map(t => [t.id, t])), [roomTypes]); const admin = user.role === 'admin';
-  async function createType(e: React.FormEvent) { e.preventDefault(); try { await api('/api/room-types', { method: 'POST', body: JSON.stringify({ name: typeName, base_rate: Number(rate || 0), description: desc || null }) }); setTypeName(''); setRate(''); setDesc(''); setMessage('Room type created.'); await onRefresh(); } catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to create room type'); } }
-  async function createRoom(e: React.FormEvent) { e.preventDefault(); try { await api('/api/rooms', { method: 'POST', body: JSON.stringify({ number, room_type_id: Number(typeId) }) }); setNumber(''); setTypeId(''); setMessage('Room added.'); await onRefresh(); } catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to add room'); } }
-  async function changeStatus(room: Room, next: string) { try { const updated = await api<Room>(`/api/rooms/${room.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: next }) }); setRooms(cur => cur.map(r => r.id === updated.id ? updated : r)); await onRefresh(); setMessage(`Room ${updated.number} is now ${next.replace(/_/g, ' ')}.`); } catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to change status'); } }
-  const visible = filter === 'all' ? rooms : rooms.filter(r => r.status === filter);
-  return <section className="page"><div className="page-heading"><div><p className="muted">Inventory & housekeeping</p><h2>Rooms</h2></div><span className="room-count">{rooms.length} rooms</span></div>{message && <p className="notice">{message}</p>}<div className="room-layout"><div className="panel"><div className="panel-head"><h2>Room map</h2><select value={filter} onChange={e => setFilter(e.target.value)}><option value="all">All statuses</option>{statuses.map(s => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}</select></div><div className="room-map">{visible.length ? visible.map(room => <article className={`room-card room-${room.status}`} key={room.id}><div className="room-card-top"><strong>{room.number}</strong><span>{typeById.get(room.room_type_id)?.name ?? 'Unknown type'}</span></div><small>{typeById.get(room.room_type_id) ? Number(typeById.get(room.room_type_id)!.base_rate).toFixed(2) : 'No rate'}</small><select value={room.status} onChange={e => void changeStatus(room, e.target.value)}>{statuses.map(s => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}</select></article>) : <p className="muted">No rooms match this filter.</p>}</div></div><div className="side-stack"><div className="panel"><div className="panel-head"><h2>Room types</h2><span>{roomTypes.length}</span></div><div className="type-list">{roomTypes.map(t => <div key={t.id}><div><strong>{t.name}</strong><span>{t.description || 'Standard room type'}</span></div><b>{Number(t.base_rate).toFixed(2)}</b></div>)}</div></div>{admin && <><form className="panel form-panel" onSubmit={createType}><div className="panel-head"><h2>Add room type</h2></div><label>Name<input value={typeName} onChange={e => setTypeName(e.target.value)} required /></label><label>Base rate<input type="number" min="0" step="0.01" value={rate} onChange={e => setRate(e.target.value)} required /></label><label>Description<textarea value={desc} onChange={e => setDesc(e.target.value)} rows={2} /></label><button className="primary-button">Create room type</button></form><form className="panel form-panel" onSubmit={createRoom}><div className="panel-head"><h2>Add room</h2></div><label>Room number<input value={number} onChange={e => setNumber(e.target.value)} required /></label><label>Room type<select value={typeId} onChange={e => setTypeId(e.target.value)} required><option value="">Select type</option>{roomTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></label><button className="primary-button" disabled={!roomTypes.length}>Add room</button></form></>}</div></div></section>;
-}
+    const [filter, setFilter] = useState('all');
+    const [message, setMessage] = useState('');
+    const [typeName, setTypeName] = useState('');
+    const [rate, setRate] = useState('');
+    const [desc, setDesc] = useState('');
+    const [number, setNumber] = useState('');
+    const [typeId, setTypeId] = useState('');
+    const [editingRoom, setEditingRoom] = useState<Room | null>(null);
+    const [editNumber, setEditNumber] = useState('');
+    const [editTypeId, setEditTypeId] = useState('');
+    const [savingEdit, setSavingEdit] = useState(false);
 
+    const typeById = useMemo(() => new Map(roomTypes.map(t => [t.id, t])), [roomTypes]);
+    const admin = user.role === 'admin';
+
+    async function createType(e: React.FormEvent) {
+        e.preventDefault();
+        try {
+            await api('/api/room-types', {
+                method: 'POST',
+                body: JSON.stringify({
+                    name: typeName,
+                    base_rate: Number(rate || 0),
+                    description: desc || null
+                })
+            });
+            setTypeName('');
+            setRate('');
+            setDesc('');
+            setMessage('Room type created.');
+            await onRefresh();
+        } catch (err) {
+            setMessage(err instanceof Error ? err.message : 'Unable to create room type');
+        }
+    }
+
+    async function createRoom(e: React.FormEvent) {
+        e.preventDefault();
+        try {
+            await api('/api/rooms', {
+                method: 'POST',
+                body: JSON.stringify({
+                    number,
+                    room_type_id: Number(typeId)
+                })
+            });
+            setNumber('');
+            setTypeId('');
+            setMessage('Room added.');
+            await onRefresh();
+        } catch (err) {
+            setMessage(err instanceof Error ? err.message : 'Unable to add room');
+        }
+    }
+
+    async function changeStatus(room: Room, next: string) {
+        try {
+            const updated = await api<Room>(`/api/rooms/${room.id}/status`, {
+                method: 'PATCH',
+                body: JSON.stringify({ status: next })
+            });
+            setRooms(cur => cur.map(r => r.id === updated.id ? updated : r));
+            await onRefresh();
+            setMessage(`Room ${updated.number} is now ${next.replace(/_/g, ' ')}.`);
+        } catch (err) {
+            setMessage(err instanceof Error ? err.message : 'Unable to change status');
+        }
+    }
+
+    function beginEdit(room: Room) {
+        if (!admin || room.status !== 'available') return;
+        setEditingRoom(room);
+        setEditNumber(room.number);
+        setEditTypeId(String(room.room_type_id));
+        setMessage('');
+    }
+
+    function cancelEdit() {
+        if (savingEdit) return;
+        setEditingRoom(null);
+        setEditNumber('');
+        setEditTypeId('');
+    }
+
+    async function saveEdit(e: React.FormEvent) {
+        e.preventDefault();
+
+        if (!editingRoom) return;
+
+        const trimmedNumber = editNumber.trim();
+        const selectedTypeId = Number(editTypeId);
+
+        if (!trimmedNumber) {
+            setMessage('Room number is required.');
+            return;
+        }
+
+        if (!Number.isInteger(selectedTypeId) || selectedTypeId <= 0) {
+            setMessage('Please select a room type.');
+            return;
+        }
+
+        setSavingEdit(true);
+
+        try {
+            const updated = await api<Room>(`/api/rooms/${editingRoom.id}`, {
+                method: 'PATCH',
+                body: JSON.stringify({
+                    number: trimmedNumber,
+                    room_type_id: selectedTypeId
+                })
+            });
+
+            setRooms(cur => cur.map(r => r.id === updated.id ? updated : r));
+            setEditingRoom(null);
+            setEditNumber('');
+            setEditTypeId('');
+            setMessage(`Room ${updated.number} updated successfully.`);
+            await onRefresh();
+        } catch (err) {
+            setMessage(err instanceof Error ? err.message : 'Unable to update room');
+        } finally {
+            setSavingEdit(false);
+        }
+    }
+
+    const visible = filter === 'all' ? rooms : rooms.filter(r => r.status === filter);
+
+    return <section className="page">
+        <div className="page-heading">
+            <div>
+                <p className="muted">Inventory & housekeeping</p>
+                <h2>Rooms</h2>
+            </div>
+            <span className="room-count">{rooms.length} rooms</span>
+        </div>
+
+        {message && <p className="notice">{message}</p>}
+
+        <div className="room-layout">
+            <div className="panel">
+                <div className="panel-head">
+                    <h2>Room map</h2>
+                    <select value={filter} onChange={e => setFilter(e.target.value)}>
+                        <option value="all">All statuses</option>
+                        {statuses.map(s => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
+                    </select>
+                </div>
+
+                <div className="room-map">
+                    {visible.length ? visible.map(room => <article
+                        className={`room-card room-${room.status}`}
+                        key={room.id}
+                    >
+                        <div className="room-card-top">
+                            <strong>{room.number}</strong>
+                            <span>{typeById.get(room.room_type_id)?.name ?? 'Unknown type'}</span>
+                        </div>
+
+                        <small>
+                            {typeById.get(room.room_type_id)
+                                ? Number(typeById.get(room.room_type_id)!.base_rate).toFixed(2)
+                                : 'No rate'}
+                        </small>
+
+                        <select
+                            value={room.status}
+                            onChange={e => void changeStatus(room, e.target.value)}
+                        >
+                            {statuses.map(s => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
+                        </select>
+
+                        {admin && (
+                            <button
+                                type="button"
+                                className="secondary-button"
+                                onClick={() => beginEdit(room)}
+                                disabled={room.status !== 'available'}
+                                title={room.status === 'available'
+                                    ? 'Edit room number and room type'
+                                    : 'Only available rooms can be edited'}
+                            >
+                                Edit
+                            </button>
+                        )}
+                    </article>) : <p className="muted">No rooms match this filter.</p>}
+                </div>
+            </div>
+
+            <div className="side-stack">
+                <div className="panel">
+                    <div className="panel-head">
+                        <h2>Room types</h2>
+                        <span>{roomTypes.length}</span>
+                    </div>
+
+                    <div className="type-list">
+                        {roomTypes.map(t => <div key={t.id}>
+                            <div>
+                                <strong>{t.name}</strong>
+                                <span>{t.description || 'Standard room type'}</span>
+                            </div>
+                            <b>{Number(t.base_rate).toFixed(2)}</b>
+                        </div>)}
+                    </div>
+                </div>
+
+                {admin && <form className="panel form-panel" onSubmit={createType}>
+                    <div className="panel-head">
+                        <h2>Add room type</h2>
+                    </div>
+
+                    <label>
+                        Name
+                        <input value={typeName} onChange={e => setTypeName(e.target.value)} required />
+                    </label>
+
+                    <label>
+                        Base rate
+                        <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={rate}
+                            onChange={e => setRate(e.target.value)}
+                            required
+                        />
+                    </label>
+
+                    <label>
+                        Description
+                        <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={2} />
+                    </label>
+
+                    <button className="primary-button">Create room type</button>
+                </form>}
+
+                {admin && <form className="panel form-panel" onSubmit={createRoom}>
+                    <div className="panel-head">
+                        <h2>Add room</h2>
+                    </div>
+
+                    <label>
+                        Room number
+                        <input value={number} onChange={e => setNumber(e.target.value)} required />
+                    </label>
+
+                    <label>
+                        Room type
+                        <select value={typeId} onChange={e => setTypeId(e.target.value)} required>
+                            <option value="">Select type</option>
+                            {roomTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                        </select>
+                    </label>
+
+                    <button className="primary-button" disabled={!roomTypes.length}>Add room</button>
+                </form>}
+
+                {admin && editingRoom && <form className="panel form-panel" onSubmit={saveEdit}>
+                    <div className="panel-head">
+                        <h2>Edit room {editingRoom.number}</h2>
+                    </div>
+
+                    <label>
+                        Room number
+                        <input
+                            value={editNumber}
+                            onChange={e => setEditNumber(e.target.value)}
+                            required
+                        />
+                    </label>
+
+                    <label>
+                        Room type
+                        <select
+                            value={editTypeId}
+                            onChange={e => setEditTypeId(e.target.value)}
+                            required
+                        >
+                            <option value="">Select type</option>
+                            {roomTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                        </select>
+                    </label>
+
+                    <div className="form-actions">
+                        <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={cancelEdit}
+                            disabled={savingEdit}
+                        >
+                            Cancel
+                        </button>
+
+                        <button
+                            type="submit"
+                            className="primary-button"
+                            disabled={savingEdit || !roomTypes.length}
+                        >
+                            {savingEdit ? 'Saving...' : 'Save room changes'}
+                        </button>
+                    </div>
+                </form>}
+            </div>
+        </div>
+    </section>;
+}
 function App() {
   const [user, setUser] = useState<User | null>(null); const [authMode, setAuthMode] = useState<AuthMode>('login'); const [checking, setChecking] = useState(true); const [dashboard, setDashboard] = useState<Dashboard | null>(null); const [rooms, setRooms] = useState<Room[]>([]); const [roomTypes, setRoomTypes] = useState<RoomType[]>([]); const [guests, setGuests] = useState<Guest[]>([]); const [reservations, setReservations] = useState<Reservation[]>([]); const [frontDesk, setFrontDesk] = useState<FrontDeskData>({ arrivals: [], departures: [], in_house: [] }); const [billing, setBilling] = useState<BillingSummary[]>([]); const [view, setView] = useState<View>('Dashboard'); const [error, setError] = useState('');
   const visibleModules = user?.role === 'admin' ? modules : user?.role === 'reception' ? modules.filter(module => module !== 'Backup') : modules.filter(module => module !== 'Billing' && module !== 'Reports' && module !== 'Backup');
