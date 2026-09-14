@@ -8,7 +8,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0019_business_date_closure_semantics"
+revision = "0019_business_date_closure"
 down_revision = "0018_hotel_expenses"
 branch_labels = None
 depends_on = None

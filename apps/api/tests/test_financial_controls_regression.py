@@ -304,6 +304,7 @@ class FinancialControlsRegressionTests(unittest.TestCase):
 
     def test_closed_business_date_blocks_financial_posting(self):
         state = self.db.get(BusinessDateState, 1)
+        state.last_closed_business_date = date(2026, 9, 8)
         state.last_closed_at = datetime(2026, 9, 8, 23, 59)
         self.db.commit()
 

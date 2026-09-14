@@ -55,6 +55,7 @@ class NightAuditControlTests(unittest.TestCase):
 
     def test_closed_business_date_is_not_posting_open(self):
         state = self.db.get(BusinessDateState, 1)
+        state.last_closed_business_date = date(2026, 9, 8)
         state.last_closed_at = datetime(2026, 9, 8, 23, 59, 0)
         self.db.commit()
         summary = build_summary(self.db, date(2026, 9, 8))

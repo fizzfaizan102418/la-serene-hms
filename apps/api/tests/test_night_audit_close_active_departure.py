@@ -23,7 +23,7 @@ class NightAuditCloseActiveDepartureTests(unittest.TestCase):
         self.db = Session(self.engine)
         self.business_date = date(2026, 9, 11)
         self.state = SimpleNamespace(
-            current_business_date=self.business_date,
+            current_business_date=self.business_date, last_closed_business_date=None,
             last_closed_at=None,
             opened_at=datetime(2026, 9, 10, 5, 0, 0),
         )

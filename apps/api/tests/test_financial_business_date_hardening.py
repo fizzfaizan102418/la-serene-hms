@@ -55,6 +55,7 @@ class FinancialBusinessDateHardeningTests(unittest.TestCase):
                     id=1,
                     current_business_date=business_date,
                     opened_at=datetime(2026, 9, 10, 5, 0, 0),
+                    last_closed_business_date=business_date,
                     last_closed_at=datetime(2026, 9, 10, 23, 59, 0),
                 )
             )
