@@ -3,11 +3,13 @@ from datetime import datetime, timedelta, timezone
 
 import jwt
 from fastapi import HTTPException
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.auth import ALGORITHM, SECRET_KEY, create_access_token, get_current_user, require_roles
 from app.db import Base
+from app.main import app
 from app.models import Role, User
 
 
@@ -47,8 +49,6 @@ class AuthSecurityTests(unittest.TestCase):
 
     @staticmethod
     def credentials(token):
-        from fastapi.security import HTTPAuthorizationCredentials
-
         return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
 
     def test_missing_credentials_are_rejected(self):
@@ -123,6 +123,33 @@ class AuthSecurityTests(unittest.TestCase):
 
         reception_allowed = require_roles("admin", "reception")
         self.assertIs(reception_allowed(self.user, self.db), self.user)
+
+    def test_api_routes_have_an_authentication_boundary(self):
+        public_paths = {
+            "/api/health",
+            "/api/auth/setup-status",
+            "/api/auth/bootstrap-admin",
+            "/api/auth/login",
+        }
+
+        def dependency_names(dependant):
+            names = set()
+            for dependency in dependant.dependencies:
+                call = dependency.call
+                names.add(getattr(call, "__name__", ""))
+                names.update(dependency_names(dependency))
+            return names
+
+        unprotected = []
+        for route in app.routes:
+            path = getattr(route, "path", "")
+            if not path.startswith("/api/") or path in public_paths:
+                continue
+            names = dependency_names(route.dependant)
+            if "get_current_user" not in names:
+                unprotected.append(f"{','.join(sorted(getattr(route, 'methods', set())))} {path}")
+
+        self.assertEqual([], unprotected, f"API routes without authentication: {unprotected}")
 
 
 if __name__ == "__main__":
