@@ -90,8 +90,12 @@ def main() -> int:
 
     source = make_url(source_url)
     source_db = source.database
+    source_user = source.username
     if not source_db:
         print("ERROR: HMS_DATABASE_URL has no database name.")
+        return 2
+    if not source_user:
+        print("ERROR: HMS_DATABASE_URL has no database username.")
         return 2
 
     admin = make_url(admin_url)
@@ -110,12 +114,17 @@ def main() -> int:
 
     try:
         try:
+            # Make the disposable database owned by the same role used by HMS_DATABASE_URL.
+            # This preserves the production app role's least privilege while allowing Alembic
+            # to create its tables in the isolated test database. The admin connection is used
+            # only for database lifecycle operations.
+            owner_identifier = source_user.replace('"', '""')
             with admin_engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
-                connection.execute(text(f'CREATE DATABASE "{test_db}"'))
+                connection.execute(text(f'CREATE DATABASE "{test_db}" OWNER "{owner_identifier}"'))
         except SQLAlchemyError as exc:
             print("ERROR: Could not create the disposable PostgreSQL test database.")
             print(f"       {exc.__class__.__name__}: {str(exc).splitlines()[0]}")
-            print("       Verify HMS_POSTGRES_ADMIN_URL uses a PostgreSQL role with CREATEDB or equivalent database-admin privileges.")
+            print("       Verify HMS_POSTGRES_ADMIN_URL uses a PostgreSQL role with CREATEDB or equivalent database-admin privileges and that the HMS application role exists.")
             return 2
 
         created = True
