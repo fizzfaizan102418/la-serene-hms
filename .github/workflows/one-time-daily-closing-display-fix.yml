@@ -2,39 +2,41 @@ name: One-time daily closing display fix
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
 
 permissions:
   contents: write
 
 jobs:
   fix:
-    if: github.event.head_commit.message != 'fix: daily closing uses net trial balance totals'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
 
-      - name: Apply smallest display fix
+      - name: Apply display fix
+        shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
-
           path = Path('apps/web/src/NightAuditView.tsx')
           text = path.read_text(encoding='utf-8')
           old = 'Debits / credits today</span><strong>{money(f.total_debits)} / {money(f.total_credits)}</strong>'
           new = 'Debits / credits today</span><strong>{money(f.trial_balance.total_debit)} / {money(f.trial_balance.total_credit)}</strong>'
           if old not in text:
-              raise SystemExit('Expected Daily Closing display expression was not found; no change made.')
+              raise SystemExit('Expected expression not found')
           path.write_text(text.replace(old, new, 1), encoding='utf-8')
           PY
 
-      - name: Commit and remove one-time workflow
+      - name: Commit fix and remove workflow
+        shell: bash
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git rm .github/workflows/one-time-daily-closing-display-fix.yml
           git add apps/web/src/NightAuditView.tsx
+          git rm .github/workflows/one-time-daily-closing-display-fix.yml
           git commit -m 'fix: daily closing uses net trial balance totals'
-          git push
+          git push origin HEAD:main
