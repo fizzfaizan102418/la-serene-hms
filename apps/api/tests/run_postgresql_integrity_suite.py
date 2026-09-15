@@ -1,0 +1,94 @@
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+import uuid
+from pathlib import Path
+
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import URL, make_url
+
+
+ROOT = Path(__file__).resolve().parents[3]
+API_ROOT = ROOT / "apps" / "api"
+
+
+def run(command: list[str], *, cwd: Path, env: dict[str, str]) -> None:
+    print("$", " ".join(command))
+    completed = subprocess.run(command, cwd=cwd, env=env)
+    if completed.returncode != 0:
+        raise SystemExit(completed.returncode)
+
+
+def main() -> int:
+    os.chdir(ROOT)
+    os.environ.setdefault("PYTHONPATH", str(ROOT))
+
+    source_url = os.environ.get("HMS_DATABASE_URL", "").strip()
+    if not source_url:
+        # Load the same root .env file used by the production deployment.
+        from app.config import settings
+
+        source_url = settings.database_url
+
+    if not source_url.startswith(("postgresql://", "postgresql+psycopg://")):
+        print("ERROR: HMS_DATABASE_URL must point to PostgreSQL.")
+        return 2
+
+    source = make_url(source_url)
+    source_db = source.database
+    if not source_db:
+        print("ERROR: HMS_DATABASE_URL has no database name.")
+        return 2
+
+    test_db = f"la_serene_hms_pg_integrity_{uuid.uuid4().hex[:10]}"
+    if test_db == source_db:
+        print("ERROR: Refusing to use the source database as the destructive test database.")
+        return 2
+
+    maintenance = source.set(database="postgres")
+    source_engine = create_engine(maintenance, future=True, pool_pre_ping=True)
+    test_url: URL = source.set(database=test_db)
+    created = False
+
+    try:
+        with source_engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+            connection.execute(text(f'CREATE DATABASE "{test_db}"'))
+        created = True
+        print(f"Created isolated PostgreSQL test database: {test_db}")
+
+        env = os.environ.copy()
+        env["HMS_DATABASE_URL"] = test_url.render_as_string(hide_password=False)
+        env["HMS_ENVIRONMENT"] = "test"
+        env["PYTHONPATH"] = str(ROOT)
+
+        run([sys.executable, "-m", "alembic", "upgrade", "head"], cwd=API_ROOT, env=env)
+        run(
+            [sys.executable, "-m", "unittest", "tests.test_postgresql_data_integrity_destructive", "-v"],
+            cwd=API_ROOT,
+            env={**env, "HMS_TEST_DATABASE_URL": env["HMS_DATABASE_URL"]},
+        )
+        print("PostgreSQL data-integrity suite: PASS")
+        return 0
+    finally:
+        if created:
+            try:
+                with source_engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+                    connection.execute(
+                        text(
+                            "SELECT pg_terminate_backend(pid) "
+                            "FROM pg_stat_activity "
+                            "WHERE datname = :database AND pid <> pg_backend_pid()"
+                        ),
+                        {"database": test_db},
+                    )
+                    connection.execute(text(f'DROP DATABASE IF EXISTS "{test_db}"'))
+                print(f"Removed isolated PostgreSQL test database: {test_db}")
+            except Exception as exc:  # pragma: no cover - cleanup failure is reported explicitly
+                print(f"WARNING: Could not remove test database {test_db}: {exc}")
+        source_engine.dispose()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
