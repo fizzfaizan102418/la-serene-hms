@@ -8,13 +8,19 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Require-Directory([string]$Path, [string]$Label) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        throw "$Label not found: $Path"
+    }
+}
+
 function Require-File([string]$Path, [string]$Label) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         throw "$Label not found: $Path"
     }
 }
 
-Require-File $BackupDir "Local backup directory"
+Require-Directory $BackupDir "Local backup directory"
 New-Item -ItemType Directory -Force -Path $OffsiteDir | Out-Null
 
 $latestDump = Get-ChildItem -LiteralPath $BackupDir -Filter "*.dump" -File |
