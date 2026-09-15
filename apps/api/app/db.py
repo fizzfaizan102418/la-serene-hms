@@ -32,6 +32,20 @@ def ensure_schema_compatibility() -> None:
         return
     inspector = inspect(engine)
     tables = set(inspector.get_table_names())
+
+    if "business_date_state" in tables:
+        business_date_columns = {
+            column["name"] for column in inspector.get_columns("business_date_state")
+        }
+        if "last_closed_business_date" not in business_date_columns:
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "ALTER TABLE business_date_state "
+                        "ADD COLUMN last_closed_business_date DATE"
+                    )
+                )
+
     if "reservations" not in tables:
         return
 
