@@ -12,6 +12,7 @@ from sqlalchemy.engine import URL, make_url
 
 ROOT = Path(__file__).resolve().parents[3]
 API_ROOT = ROOT / "apps" / "api"
+sys.path.insert(0, str(API_ROOT))
 
 
 def run(command: list[str], *, cwd: Path, env: dict[str, str]) -> None:
@@ -21,16 +22,28 @@ def run(command: list[str], *, cwd: Path, env: dict[str, str]) -> None:
         raise SystemExit(completed.returncode)
 
 
+def load_database_url() -> str:
+    value = os.environ.get("HMS_DATABASE_URL", "").strip()
+    if value:
+        return value
+
+    env_file = API_ROOT / ".env"
+    if not env_file.exists():
+        return ""
+
+    for raw_line in env_file.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, raw_value = line.split("=", 1)
+        if key.strip() == "HMS_DATABASE_URL":
+            return raw_value.strip().strip('"').strip("'")
+    return ""
+
+
 def main() -> int:
     os.chdir(ROOT)
-    os.environ.setdefault("PYTHONPATH", str(ROOT))
-
-    source_url = os.environ.get("HMS_DATABASE_URL", "").strip()
-    if not source_url:
-        # Load the same root .env file used by the production deployment.
-        from app.config import settings
-
-        source_url = settings.database_url
+    source_url = load_database_url()
 
     if not source_url.startswith(("postgresql://", "postgresql+psycopg://")):
         print("ERROR: HMS_DATABASE_URL must point to PostgreSQL.")
@@ -61,7 +74,7 @@ def main() -> int:
         env = os.environ.copy()
         env["HMS_DATABASE_URL"] = test_url.render_as_string(hide_password=False)
         env["HMS_ENVIRONMENT"] = "test"
-        env["PYTHONPATH"] = str(ROOT)
+        env["PYTHONPATH"] = str(API_ROOT)
 
         run([sys.executable, "-m", "alembic", "upgrade", "head"], cwd=API_ROOT, env=env)
         run(
