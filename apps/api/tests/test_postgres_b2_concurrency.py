@@ -28,12 +28,13 @@ class PostgreSQLB2ConcurrencyTests(unittest.TestCase):
 
     def _fixture(self, *, charge_amount=100, deposit_amount=100):
         suffix = uuid4().hex[:10]
+        business_date = date.today()
         with Session(engine) as db:
             state = db.get(BusinessDateState, 1)
             if state is None:
-                db.add(BusinessDateState(id=1, current_business_date=date(2026, 9, 8), opened_at=datetime.utcnow()))
+                db.add(BusinessDateState(id=1, current_business_date=business_date, opened_at=datetime.utcnow()))
             else:
-                state.current_business_date = date(2026, 9, 8)
+                state.current_business_date = business_date
                 state.last_closed_at = None
             role = db.scalar(select(Role).where(Role.name == "b2_concurrency_admin"))
             if role is None:
@@ -46,7 +47,7 @@ class PostgreSQLB2ConcurrencyTests(unittest.TestCase):
             db.add_all([user, guest, room_type])
             db.flush()
             room = Room(number=f"B{suffix[:7]}", room_type_id=room_type.id, status="occupied")
-            reservation = Reservation(guest_id=guest.id, check_in=date(2026, 9, 8), check_out=date(2026, 9, 10), status="checked_in")
+            reservation = Reservation(guest_id=guest.id, check_in=business_date, check_out=business_date.replace(day=business_date.day + 2), status="checked_in")
             db.add_all([room, reservation])
             db.flush()
             db.add(ReservationRoom(reservation_id=reservation.id, room_id=room.id))
@@ -95,8 +96,8 @@ class PostgreSQLB2ConcurrencyTests(unittest.TestCase):
                     db, transaction_type="folio_payment", description=f"B2 refund seed payment {suffix}", reference_type="payment", reference_id=str(refund_payment.id),
                     folio_id=folio.id, reservation_id=reservation.id, created_by=user.id,
                     lines=[
-                        {"account": "Cash", "direction": "debit", "amount": Decimal("100.00"), "folio_id": folio.id, "payment_method": "cash"},
-                        {"account": "Guest Receivables", "direction": "credit", "amount": Decimal("100.00"), "folio_id": folio.id, "payment_method": "cash"},
+                        {"account": "Cash", "direction": "debit", "amount": Decimal("100.00"), "folio_id": folio.id, "payment_method":"cash"},
+                        {"account": "Guest Receivables", "direction": "credit", "amount": Decimal("100.00"), "folio_id": folio.id, "payment_method":"cash"},
                     ],
                 )
                 for n in (1, 2):
