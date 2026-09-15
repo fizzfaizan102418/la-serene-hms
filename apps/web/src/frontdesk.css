@@ -84,6 +84,21 @@ body:has(.desk-grid) .page > .panel:last-child > div:last-child > button:focus-v
 body:has(.desk-grid) .page > .panel:last-child > div:last-child > button strong { display: inline-block; font-size: 11px; line-height: 1.1; letter-spacing: .01em; }
 body:has(.desk-grid) .page > .panel:last-child > div:last-child > button span { line-height: 1.2; }
 
+/* Status language: the room label stays visible while the rack cells remain uncluttered. */
+body:has(.desk-grid) .page > .panel:last-child > div:last-child > div:nth-child(15n + 1) { border-left: 3px solid #c7c4bc; }
+body:has(.desk-grid) .page > .panel:last-child > div:last-child > div:nth-child(15n + 1) small { font-weight: 650; }
+body:has(.desk-grid) .page > .panel:last-child > div:last-child > div:nth-child(15n + 1) small::before { content: '• '; }
+
+/* Booked cells are intentionally stronger than free cells. */
+body:has(.desk-grid) .page > .panel:last-child > div:last-child > button:has(strong) { background: #e7f2e5 !important; border-color: #b9cfb5 !important; box-shadow: inset 3px 0 0 #73956f; }
+body:has(.desk-grid) .page > .panel:last-child > div:last-child > button:has(strong) span { color: #405a43; font-weight: 650; }
+body:has(.desk-grid) .page > .panel:last-child > div:last-child > button:has(strong)::after { content: 'Reserved / in-house'; display: block; margin-top: 4px; font-size: 8px; letter-spacing: .02em; text-transform: uppercase; color: #667568; }
+body:has(.desk-grid) .page > .panel:last-child > div:last-child > button:not(:has(strong)) { color: #737a73; }
+body:has(.desk-grid) .page > .panel:last-child > div:last-child > button:not(:has(strong)):hover { background: #f4f6f1; }
+
+/* Legend keeps the room-rack status language visible without changing any reservation semantics. */
+body:has(.desk-grid) .page > .panel:last-child .panel-head::after { content: 'Booked  •  Current room status shown at left  •  Free cells can be used for walk-in'; display: block; margin-left: auto; max-width: 430px; font-size: 11px; line-height: 1.35; color: #69716a; text-align: right; }
+
 /* Keep the rack usable when the 14-day grid overflows horizontally. */
 body:has(.desk-grid) .page > .panel:last-child { overflow-x: auto; }
 body:has(.desk-grid) .page > .panel:last-child .panel-head { min-width: 760px; }
@@ -96,10 +111,13 @@ body:has(.desk-grid) .notice { margin-bottom: 14px; }
 @media (max-width: 760px) {
   body:has(.desk-grid) .stats { grid-template-columns: repeat(2,1fr); }
   body:has(.desk-grid) .desk-grid { grid-template-columns: 1fr; }
+  body:has(.desk-grid) .page > .panel:last-child .panel-head::after { max-width: 300px; }
 }
 @media (max-width: 520px) {
   body:has(.desk-grid) .stats { grid-template-columns: 1fr 1fr; }
   body:has(.desk-grid) .page > .panel:first-of-type .search-bar { display: grid; padding: 8px; }
   body:has(.desk-grid) .page > .panel:first-of-type .search-bar .secondary-button { width: 100%; }
   body:has(.desk-grid) .desk-card .desk-actions { justify-content: stretch; }
+  body:has(.desk-grid) .page > .panel:last-child .panel-head { min-width: 620px; }
+  body:has(.desk-grid) .page > .panel:last-child .panel-head::after { display: none; }
 }
