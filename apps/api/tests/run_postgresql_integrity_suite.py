@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import os
 import subprocess
 import sys
@@ -22,15 +23,9 @@ def run(command: list[str], *, cwd: Path, env: dict[str, str]) -> None:
         raise SystemExit(completed.returncode)
 
 
-def load_database_url() -> str:
-    value = os.environ.get("HMS_DATABASE_URL", "").strip()
-    if value:
-        return value
-
-    env_file = API_ROOT / ".env"
+def read_database_url(env_file: Path) -> str:
     if not env_file.exists():
         return ""
-
     for raw_line in env_file.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
@@ -41,9 +36,39 @@ def load_database_url() -> str:
     return ""
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run PostgreSQL destructive integrity tests in an isolated database.")
+    default_root = Path(r"C:\LaSereneHMS") if os.name == "nt" else None
+    parser.add_argument(
+        "--production-root",
+        type=Path,
+        default=default_root,
+        help="Installed production root containing apps/api/.env (default: C:\\LaSereneHMS on Windows).",
+    )
+    return parser.parse_args()
+
+
+def load_database_url(production_root: Path | None) -> str:
+    value = os.environ.get("HMS_DATABASE_URL", "").strip()
+    if value:
+        return value
+
+    candidates: list[Path] = []
+    if production_root is not None:
+        candidates.append(production_root / "apps" / "api" / ".env")
+    candidates.append(API_ROOT / ".env")
+
+    for env_file in candidates:
+        value = read_database_url(env_file)
+        if value:
+            return value
+    return ""
+
+
 def main() -> int:
+    args = parse_args()
     os.chdir(ROOT)
-    source_url = load_database_url()
+    source_url = load_database_url(args.production_root)
 
     if not source_url.startswith(("postgresql://", "postgresql+psycopg://")):
         print("ERROR: HMS_DATABASE_URL must point to PostgreSQL.")
