@@ -23,6 +23,7 @@ from .db import DATA_DIR, get_db
 from .financial_ops import ledger_reconciliation
 from .finance_controls import payment_reconciliation, revenue_report, trial_balance
 from .financial_authority import post_folio_charge_authoritative
+from .folio_integrity import item_has_active_charge
 from .models import AuditLog, BusinessDateState, Expense, FinancialTransaction, Folio, FolioItem, LedgerEntry, Payment, Reservation, Room, User
 from .business_date import get_current_business_date, lock_current_business_date
 from .room_charge_accrual import accrue_room_charges_for_business_date, preview_room_charges_for_business_date
@@ -117,6 +118,8 @@ def build_summary(db: Session, business_date: date, finance: dict | None = None)
     other_revenue = Decimal("0.00")
     food_revenue = Decimal("0.00")
     for item in daily_items:
+        if not item_has_active_charge(db, item.id):
+            continue
         net = max(Decimal("0.00"), Decimal(item.quantity) * Decimal(item.unit_price) - Decimal(item.discount))
         category = item.category.strip().lower()
         if category == "room":
@@ -170,7 +173,11 @@ def build_summary(db: Session, business_date: date, finance: dict | None = None)
 
     outstanding = Decimal("0.00")
     for folio in db.scalars(select(Folio)).all():
-        items = db.scalars(select(FolioItem).where(FolioItem.folio_id == folio.id)).all()
+        items = [
+            item
+            for item in db.scalars(select(FolioItem).where(FolioItem.folio_id == folio.id)).all()
+            if item_has_active_charge(db, item.id)
+        ]
         total = sum((max(Decimal("0.00"), Decimal(i.quantity) * Decimal(i.unit_price) - Decimal(i.discount)) for i in items), Decimal("0.00"))
         food_net = sum((max(Decimal("0.00"), Decimal(i.quantity) * Decimal(i.unit_price) - Decimal(i.discount)) for i in items if i.category.strip().lower() in FOOD_CATEGORIES), Decimal("0.00"))
         total += food_net * FOOD_SERVICE_CHARGE_RATE
