@@ -1,11 +1,13 @@
 """Read-only diagnostic for Folio #1 financial/reversal history.
 
 Run from the repository root or apps/api. The script adds apps/api to the
-Python import path so it uses the normal HMS database configuration.
+Python import path and uses the same working directory as the production API,
+so the normal HMS database configuration is loaded (including apps/api/.env).
 This script NEVER writes to the database and NEVER prints the database URL.
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -13,6 +15,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 API_DIR = REPO_ROOT / "apps" / "api"
 if str(API_DIR) not in sys.path:
     sys.path.insert(0, str(API_DIR))
+
+# app.config uses a repository-local .env via pydantic-settings. Match the
+# production API working directory without hardcoding or exposing credentials.
+os.chdir(API_DIR)
 
 from decimal import Decimal
 from sqlalchemy import select
