@@ -1,9 +1,18 @@
 """Read-only diagnostic for Folio #1 financial/reversal history.
 
-Run from apps/api so the normal HMS_DATABASE_URL configuration is used.
+Run from the repository root or apps/api. The script adds apps/api to the
+Python import path so it uses the normal HMS database configuration.
 This script NEVER writes to the database and NEVER prints the database URL.
 """
 from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+API_DIR = REPO_ROOT / "apps" / "api"
+if str(API_DIR) not in sys.path:
+    sys.path.insert(0, str(API_DIR))
 
 from decimal import Decimal
 from sqlalchemy import select
@@ -75,7 +84,6 @@ def main() -> None:
                 f"tx_id={tx.id} | type={tx.transaction_type} | status={tx.status} | "
                 f"ref={tx.reference_type}:{tx.reference_id} | "
                 f"reversal_of_id={tx.reversal_of_id} | "
-                f"item_ref={tx.reference_id if tx.reference_type in {'folio_item','folio_item_discount','folio_item_service_charge'} else '-'} | "
                 f"description={tx.description!r}"
             )
             entries = db.scalars(
