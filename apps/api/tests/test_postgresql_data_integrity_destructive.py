@@ -5,6 +5,7 @@ import unittest
 from datetime import date, datetime
 from decimal import Decimal
 from unittest.mock import patch
+from uuid import uuid4
 
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.exc import IntegrityError
@@ -39,23 +40,31 @@ class PostgreSQLDataIntegrityDestructiveTests(unittest.TestCase):
 
     def setUp(self):
         self.db = Session(self.engine)
-        self.admin_role = Role(name="admin")
+
+        # The runner deliberately reuses one disposable database for the whole
+        # unittest class. Reset only the financial test data between methods so
+        # each test starts from a clean financial state without touching the
+        # application implementation or the production database.
+        self.db.execute(text("DELETE FROM ledger_entries"))
+        self.db.execute(text("DELETE FROM financial_transactions"))
+
+        self.admin_role = Role(name=f"integrity-admin-{uuid4().hex[:10]}")
         self.db.add(self.admin_role)
         self.db.flush()
         self.user = User(
-            username="integrity-admin",
+            username=f"integrity-admin-{uuid4().hex[:10]}",
             password_hash="not-used-by-these-tests",
             role_id=self.admin_role.id,
         )
         self.db.add(self.user)
-        self.db.add(
-            BusinessDateState(
-                id=1,
-                current_business_date=date(2026, 9, 15),
-                last_closed_business_date=None,
-                last_closed_at=None,
-            )
-        )
+
+        state = self.db.get(BusinessDateState, 1)
+        if state is None:
+            state = BusinessDateState(id=1)
+            self.db.add(state)
+        state.current_business_date = date(2026, 9, 15)
+        state.last_closed_business_date = None
+        state.last_closed_at = None
         self.db.commit()
         self.db.refresh(self.user)
 
