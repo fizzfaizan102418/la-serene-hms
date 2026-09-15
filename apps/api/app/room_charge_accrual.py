@@ -7,7 +7,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .financial_authority import post_folio_charge_authoritative
-from .models import Folio, FolioItem, ReservationRoom, Room, StayRateSegment
+from .folio_integrity import item_has_active_charge
+from .models import Folio, FolioItem, FinancialTransaction, ReservationRoom, Room, StayRateSegment
 from .pms_core import Stay
 
 MONEY = Decimal("0.01")
@@ -15,6 +16,28 @@ MONEY = Decimal("0.01")
 
 def money(value: Decimal | int | float | str) -> Decimal:
     return Decimal(str(value)).quantize(MONEY, rounding=ROUND_HALF_UP)
+
+
+def _has_active_room_charge_for_date(db: Session, *, stay_id: int, business_date: date) -> bool:
+    """Return whether an active folio room charge already covers this stay/date.
+
+    Night Audit idempotency is based on the authoritative financial transaction,
+    not the human-readable folio-item description. This keeps manual/operational
+    room charges from being duplicated by Night Audit while remaining date-scoped
+    for multi-night stays.
+    """
+    transactions = db.scalars(
+        select(FinancialTransaction)
+        .where(
+            FinancialTransaction.transaction_type == "folio_charge",
+            FinancialTransaction.status == "posted",
+            FinancialTransaction.business_date == business_date,
+            FinancialTransaction.reference_type == "folio_item",
+            FinancialTransaction.reference_id.is_not(None),
+            FinancialTransaction.stay_id == stay_id,
+        )
+    ).all()
+    return any(item_has_active_charge(db, int(tx.reference_id)) for tx in transactions if tx.reference_id.isdigit())
 
 
 def preview_room_charges_for_business_date(db: Session, *, business_date: date) -> list[dict]:
@@ -42,18 +65,10 @@ def preview_room_charges_for_business_date(db: Session, *, business_date: date) 
         if room is None:
             continue
 
-        description = f"Night audit · {business_date.isoformat()} · stay #{stay.id} · room {room.number}"
-        existing = db.scalar(
-            select(FolioItem.id).where(
-                FolioItem.folio_id == folio.id,
-                FolioItem.stay_id == stay.id,
-                FolioItem.category == "room",
-                FolioItem.description == description,
-            ).limit(1)
-        )
-        if existing is not None:
+        if _has_active_room_charge_for_date(db, stay_id=stay.id, business_date=business_date):
             continue
 
+        description = f"Night audit · {business_date.isoformat()} · stay #{stay.id} · room {room.number}"
         segment = db.scalar(
             select(StayRateSegment)
             .where(
@@ -114,18 +129,10 @@ def accrue_room_charges_for_business_date(db: Session, *, business_date: date, c
         if room is None:
             continue
 
-        description = f"Night audit · {business_date.isoformat()} · stay #{stay.id} · room {room.number}"
-        existing = db.scalar(
-            select(FolioItem.id).where(
-                FolioItem.folio_id == folio.id,
-                FolioItem.stay_id == stay.id,
-                FolioItem.category == "room",
-                FolioItem.description == description,
-            ).limit(1)
-        )
-        if existing is not None:
+        if _has_active_room_charge_for_date(db, stay_id=stay.id, business_date=business_date):
             continue
 
+        description = f"Night audit · {business_date.isoformat()} · stay #{stay.id} · room {room.number}"
         segment = db.scalar(
             select(StayRateSegment)
             .where(
