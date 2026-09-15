@@ -26,12 +26,13 @@ def money(value: Decimal | int | float | str) -> Decimal:
 
 
 def folio_ledger_summary(db: Session, folio_id: int) -> FolioLedgerSummary:
-    debit_total = db.scalar(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(LedgerEntry.folio_id == folio_id, LedgerEntry.account == "Guest Receivables", LedgerEntry.direction == "debit", FinancialTransaction.status == "posted")) or Decimal("0.00")
-    credit_total = db.scalar(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(LedgerEntry.folio_id == folio_id, LedgerEntry.account == "Guest Receivables", LedgerEntry.direction == "credit", FinancialTransaction.status == "posted")) or Decimal("0.00")
+    active_transaction_types = ("folio_charge", "folio_discount", "service_charge", "folio_payment", "deposit_applied", "payment_refund")
+    debit_total = db.scalar(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(LedgerEntry.folio_id == folio_id, LedgerEntry.account == "Guest Receivables", LedgerEntry.direction == "debit", FinancialTransaction.status == "posted", FinancialTransaction.transaction_type.in_(active_transaction_types))) or Decimal("0.00")
+    credit_total = db.scalar(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(LedgerEntry.folio_id == folio_id, LedgerEntry.account == "Guest Receivables", LedgerEntry.direction == "credit", FinancialTransaction.status == "posted", FinancialTransaction.transaction_type.in_(active_transaction_types))) or Decimal("0.00")
     settlement_credits = db.scalar(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(LedgerEntry.folio_id == folio_id, LedgerEntry.account == "Guest Receivables", LedgerEntry.direction == "credit", FinancialTransaction.status == "posted", FinancialTransaction.transaction_type.in_(("folio_payment", "deposit_applied")))) or Decimal("0.00")
     refund_debits = db.scalar(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(LedgerEntry.folio_id == folio_id, LedgerEntry.account == "Guest Receivables", LedgerEntry.direction == "debit", FinancialTransaction.status == "posted", FinancialTransaction.transaction_type == "payment_refund")) or Decimal("0.00")
     raw_balance = Decimal(debit_total) - Decimal(credit_total)
-    paid = money(Decimal(settlement_credits) - Decimal(refund_debits))
+    paid = money(Decimal(settlement_credits) - Decimal(refund_debits)
     total = money(max(Decimal("0.00"), raw_balance + paid))
     balance = money(max(Decimal("0.00"), raw_balance))
     return FolioLedgerSummary(total=total, paid=paid, balance=balance)
@@ -67,9 +68,10 @@ def _has_deposit_transaction(connection, target: DepositTransaction) -> bool:
 
 
 def _posted_receivable_balance(connection, folio_id: int) -> tuple[Decimal, bool]:
-    has_history = connection.execute(select(FinancialTransaction.id).join(LedgerEntry, LedgerEntry.transaction_id == FinancialTransaction.id).where(LedgerEntry.folio_id == folio_id, LedgerEntry.account == "Guest Receivables", FinancialTransaction.status == "posted").limit(1)).scalar_one_or_none() is not None
-    debits = connection.execute(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(LedgerEntry.folio_id == folio_id, LedgerEntry.account == "Guest Receivables", LedgerEntry.direction == "debit", FinancialTransaction.status == "posted")).scalar_one() or Decimal("0.00")
-    credits = connection.execute(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(LedgerEntry.folio_id == folio_id, LedgerEntry.account == "Guest Receivables", LedgerEntry.direction == "credit", FinancialTransaction.status == "posted")).scalar_one() or Decimal("0.00")
+    active_transaction_types = ("folio_charge", "folio_discount", "service_charge", "folio_payment", "deposit_applied", "payment_refund")
+    has_history = connection.execute(select(FinancialTransaction.id).join(LedgerEntry, LedgerEntry.transaction_id == FinancialTransaction.id).where(LedgerEntry.folio_id == folio_id, LedgerEntry.account == "Guest Receivables", FinancialTransaction.status == "posted", FinancialTransaction.transaction_type.in_(active_transaction_types)).limit(1)).scalar_one_or_none() is not None
+    debits = connection.execute(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(LedgerEntry.folio_id == folio_id, LedgerEntry.account == "Guest Receivables", LedgerEntry.direction == "debit", FinancialTransaction.status == "posted", FinancialTransaction.transaction_type.in_(active_transaction_types))).scalar_one() or Decimal("0.00")
+    credits = connection.execute(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(LedgerEntry.folio_id == folio_id, LedgerEntry.account == "Guest Receivables", LedgerEntry.direction == "credit", FinancialTransaction.status == "posted", FinancialTransaction.transaction_type.in_(active_transaction_types))).scalar_one() or Decimal("0.00")
     return money(max(Decimal("0.00"), Decimal(debits) - Decimal(credits))), has_history
 
 
@@ -164,5 +166,5 @@ def derive_invoice_total_from_ledger(mapper, connection, target: Invoice) -> Non
     target.total = money(max(Decimal("0.00"), Decimal(debit_total) - Decimal(credit_total) + Decimal(settlement_credits) - Decimal(refund_debits)))
 
 def _receivable_sum(connection, *, folio_id: int, direction: str) -> Decimal:
-    value = connection.execute(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(LedgerEntry.folio_id == folio_id, LedgerEntry.account == "Guest Receivables", LedgerEntry.direction == direction, FinancialTransaction.status == "posted")).scalar_one()
+    value = connection.execute(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(LedgerEntry.folio_id == folio_id, LedgerEntry.account == "Guest Receivables", LedgerEntry.direction == direction, FinancialTransaction.status == "posted", FinancialTransaction.transaction_type.in_(("folio_charge", "folio_discount", "service_charge", "folio_payment", "deposit_applied", "payment_refund")))).scalar_one()
     return Decimal(value or 0)
