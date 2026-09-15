@@ -88,6 +88,14 @@ class GuestResponse(GuestCreate):
     id: int
 
 
+class GuestListResponse(BaseModel):
+    items: list[GuestResponse]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
 class ReservationCreate(BaseModel):
     guest_id: int
     check_in: date
