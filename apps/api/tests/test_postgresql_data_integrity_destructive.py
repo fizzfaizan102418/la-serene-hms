@@ -41,12 +41,16 @@ class PostgreSQLDataIntegrityDestructiveTests(unittest.TestCase):
     def setUp(self):
         self.db = Session(self.engine)
 
-        # The runner deliberately reuses one disposable database for the whole
-        # unittest class. Reset only the financial test data between methods so
-        # each test starts from a clean financial state without touching the
-        # application implementation or the production database.
+        # Ledger rows are intentionally immutable in PostgreSQL, so ordinary
+        # DELETE cannot be used to reset this disposable test database between
+        # unittest methods. Disable only the two immutability triggers for the
+        # fixture cleanup, then immediately restore them before the test runs.
+        self.db.execute(text("ALTER TABLE ledger_entries DISABLE TRIGGER trg_ledger_entries_immutable"))
+        self.db.execute(text("ALTER TABLE financial_transactions DISABLE TRIGGER trg_financial_transactions_immutable"))
         self.db.execute(text("DELETE FROM ledger_entries"))
         self.db.execute(text("DELETE FROM financial_transactions"))
+        self.db.execute(text("ALTER TABLE financial_transactions ENABLE TRIGGER trg_financial_transactions_immutable"))
+        self.db.execute(text("ALTER TABLE ledger_entries ENABLE TRIGGER trg_ledger_entries_immutable"))
 
         self.admin_role = Role(name=f"integrity-admin-{uuid4().hex[:10]}")
         self.db.add(self.admin_role)
