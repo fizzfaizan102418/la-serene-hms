@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/apply-guest-master-pagination.yml'
+      - 'apps/api/app/schemas.py'
 
 jobs:
   apply:
@@ -23,22 +24,8 @@ jobs:
           schemas = Path('apps/api/app/schemas.py')
           text = schemas.read_text()
           if 'class GuestListResponse' not in text:
-              marker = '''class GuestResponse(GuestCreate):
-              model_config = ConfigDict(from_attributes=True)
-              id: int
-          '''
-              marker = marker.replace('              ', '', 0)
-              # The source uses four-space indentation inside the class.
               marker = "class GuestResponse(GuestCreate):\n    model_config = ConfigDict(from_attributes=True)\n    id: int\n"
-              addition = marker + '''
-
-class GuestListResponse(BaseModel):
-    items: list[GuestResponse]
-    total: int
-    page: int
-    page_size: int
-    pages: int
-'''
+              addition = marker + "\n\nclass GuestListResponse(BaseModel):\n    items: list[GuestResponse]\n    total: int\n    page: int\n    page_size: int\n    pages: int\n"
               if marker not in text:
                   raise SystemExit('GuestResponse marker not found')
               schemas.write_text(text.replace(marker, addition, 1))
@@ -112,12 +99,10 @@ function RoomsView'''
           text, count = gpat.subn(gnew, text, count=1)
           if count != 1:
               raise SystemExit('GuestsView marker not found')
-
           old_refresh_type = "api<Guest[]>('/api/guests')"
           if old_refresh_type not in text:
               raise SystemExit('initial guest fetch marker not found')
           text = text.replace(old_refresh_type, "api<GuestListResponse>('/api/guests?page=1&page_size=25')", 1)
-
           old_assignment = "setDashboard(d); setRooms(sortRooms(r)); setRoomTypes(rt); setGuests(g); setReservations(rs); setFrontDesk(fd);"
           new_assignment = "setDashboard(d); setRooms(sortRooms(r)); setRoomTypes(rt); setGuests(g.items); setReservations(rs); setFrontDesk(fd);"
           if old_assignment not in text:
