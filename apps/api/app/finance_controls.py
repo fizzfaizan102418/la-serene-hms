@@ -138,13 +138,38 @@ def _stay_deposit_ledger_balance(db: Session, stay_id: int) -> Decimal:
 @router.get("/reports/trial-balance")
 def trial_balance(business_date: date | None = None, db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception"))):
     target = business_date or current_business_date(db)
-    rows = db.execute(select(LedgerEntry.account, LedgerEntry.direction, func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(FinancialTransaction.business_date == target, FinancialTransaction.status.in_(("posted", "reversed"))).group_by(LedgerEntry.account, LedgerEntry.direction).order_by(LedgerEntry.account, LedgerEntry.direction)).all()
+    rows = db.execute(
+        select(LedgerEntry.account, LedgerEntry.direction, func.coalesce(func.sum(LedgerEntry.amount), 0))
+        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
+        .where(
+            FinancialTransaction.business_date == target,
+            FinancialTransaction.status.in_(("posted", "reversed")),
+        )
+        .group_by(LedgerEntry.account, LedgerEntry.direction)
+        .order_by(LedgerEntry.account, LedgerEntry.direction)
+    ).all()
     accounts: dict[str, dict[str, Decimal]] = {}
-    for account, direction, amount in rows: accounts.setdefault(account, {"debit": Decimal("0.00"), "credit": Decimal("0.00")})[direction] = money(amount)
-    result = []; total_debit = Decimal("0.00"); total_credit = Decimal("0.00")
+    for account, direction, amount in rows:
+        accounts.setdefault(account, {"debit": Decimal("0.00"), "credit": Decimal("0.00")})[direction] += money(amount)
+
+    result = []
+    total_debit = Decimal("0.00")
+    total_credit = Decimal("0.00")
     for account, values in accounts.items():
-        total_debit += values["debit"]; total_credit += values["credit"]; result.append({"account": account, "debit": money(values["debit"]), "credit": money(values["credit"]), "net": money(values["debit"] - values["credit"])})
-    return {"business_date": target, "balanced": money(total_debit) == money(total_credit), "total_debit": money(total_debit), "total_credit": money(total_credit), "accounts": result}
+        net = money(values["debit"] - values["credit"])
+        debit = max(net, Decimal("0.00"))
+        credit = max(-net, Decimal("0.00"))
+        total_debit += debit
+        total_credit += credit
+        result.append({"account": account, "debit": money(debit), "credit": money(credit), "net": net})
+
+    return {
+        "business_date": target,
+        "balanced": money(total_debit) == money(total_credit),
+        "total_debit": money(total_debit),
+        "total_credit": money(total_credit),
+        "accounts": result,
+    }
 
 
 @router.get("/reports/payment-reconciliation")
