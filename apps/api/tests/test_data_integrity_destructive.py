@@ -3,8 +3,9 @@ from __future__ import annotations
 import unittest
 from datetime import date, datetime
 from decimal import Decimal
+from unittest.mock import patch
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session
 
 from app.ledger import post_transaction, reverse_transaction
@@ -15,6 +16,13 @@ from app.pms_core import Stay  # noqa: F401 - register the stays table on Base.m
 class DataIntegrityDestructiveTests(unittest.TestCase):
     def setUp(self):
         self.engine = create_engine("sqlite:///:memory:", future=True)
+
+        @event.listens_for(self.engine, "connect")
+        def _enable_sqlite_foreign_keys(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+
         Base.metadata.create_all(self.engine)
         self.db = Session(self.engine)
         self.admin_role = Role(name="admin")
@@ -93,15 +101,15 @@ class DataIntegrityDestructiveTests(unittest.TestCase):
         tx_count_before = self.db.query(FinancialTransaction).count()
         entry_count_before = self.db.query(LedgerEntry).count()
 
-        with self.assertRaisesRegex(Exception, "UNIQUE|unique|IntegrityError"):
-            post_transaction(
-                self.db,
-                transaction_type="integrity-test",
-                description="Collision",
-                created_by=self.user.id,
-                lines=self._balanced_lines("30.00"),
-            )
-            self.db.flush()
+        with patch("app.ledger.new_transaction_no", return_value=original.transaction_no):
+            with self.assertRaisesRegex(Exception, "UNIQUE|unique|IntegrityError"):
+                post_transaction(
+                    self.db,
+                    transaction_type="integrity-test",
+                    description="Collision",
+                    created_by=self.user.id,
+                    lines=self._balanced_lines("30.00"),
+                )
 
         self.db.rollback()
         self.assertEqual(self.db.query(FinancialTransaction).count(), tx_count_before)
