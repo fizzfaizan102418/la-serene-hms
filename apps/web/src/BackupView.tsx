@@ -13,16 +13,23 @@ const formatSize = (bytes: number) => {
 
 export default function BackupView({ api }: { api: BackupApi }) {
   const [backups, setBackups] = useState<BackupInfo[]>([]);
+  const [database, setDatabase] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
   const [restoring, setRestoring] = useState(false);
 
+  const isPostgres = database === 'PostgreSQL';
+  const backupExtension = isPostgres ? '.dump' : '.sqlite3';
+
   async function refresh() {
     setLoading(true); setError('');
-    try { const result = await api<BackupList>('/api/backup'); setBackups(result.backups); }
-    catch (err) { setError(err instanceof Error ? err.message : 'Unable to load backups'); }
+    try {
+      const result = await api<BackupList>('/api/backup');
+      setDatabase(result.database);
+      setBackups(result.backups);
+    } catch (err) { setError(err instanceof Error ? err.message : 'Unable to load backups'); }
     finally { setLoading(false); }
   }
 
@@ -47,7 +54,7 @@ export default function BackupView({ api }: { api: BackupApi }) {
   }
 
   async function restore() {
-    if (!restoreFile) { setError('Choose a SQLite backup file first.'); return; }
+    if (!restoreFile) { setError(`Choose a ${isPostgres ? 'PostgreSQL .dump' : 'SQLite'} backup file first.`); return; }
     if (!window.confirm('Restore this database? The current database will be backed up automatically before replacement.')) return;
     setRestoring(true); setError(''); setMessage('');
     try {
@@ -64,9 +71,9 @@ export default function BackupView({ api }: { api: BackupApi }) {
     <div className="page-heading"><div><p className="muted">Local data protection</p><h2>Backup & Restore</h2></div><span className="room-count">Admin only</span></div>
     {message && <p className="notice">{message}</p>}{error && <p className="error">{error}</p>}
     <div className="backup-grid">
-      <section className="panel"><div className="panel-head"><h2>Create backup</h2></div><p className="muted">Creates a validated SQLite snapshot of the current hotel database without changing operational data.</p><button className="primary-button" onClick={createBackup} disabled={loading}>{loading ? 'Creating…' : 'Create database backup'}</button></section>
-      <section className="panel"><div className="panel-head"><h2>Restore database</h2></div><p className="muted">Only valid SQLite files containing the required PMS tables are accepted. The current database is backed up before replacement.</p><input type="file" accept=".sqlite3,.db,.sqlite" onChange={e => setRestoreFile(e.target.files?.[0] ?? null)} /><div className="backup-restore-actions"><span>{restoreFile?.name ?? 'No file selected'}</span><button className="primary-button" onClick={restore} disabled={!restoreFile || restoring}>{restoring ? 'Restoring…' : 'Restore selected backup'}</button></div></section>
+      <section className="panel"><div className="panel-head"><h2>Create backup</h2></div><p className="muted">Creates a validated {isPostgres ? 'PostgreSQL backup' : 'SQLite snapshot'} of the current hotel database without changing operational data.</p><button className="primary-button" onClick={createBackup} disabled={loading}>{loading ? 'Creating…' : 'Create database backup'}</button></section>
+      <section className="panel"><div className="panel-head"><h2>Restore database</h2></div><p className="muted">Only valid {isPostgres ? 'PostgreSQL custom-format dumps (.dump or .backup)' : 'SQLite files containing the required PMS tables'} are accepted. The current database is backed up before replacement.</p><input type="file" accept={isPostgres ? '.dump,.backup' : '.sqlite3,.db,.sqlite'} onChange={e => setRestoreFile(e.target.files?.[0] ?? null)} /><div className="backup-restore-actions"><span>{restoreFile?.name ?? 'No file selected'}</span><button className="primary-button" onClick={restore} disabled={!restoreFile || restoring}>{restoring ? 'Restoring…' : 'Restore selected backup'}</button></div></section>
     </div>
-    <section className="panel backup-history"><div className="panel-head"><h2>Available backups</h2><button className="secondary-button" onClick={refresh} disabled={loading}>{loading ? 'Refreshing…' : 'Refresh'}</button></div>{backups.length ? <div className="backup-list">{backups.map(backup => <article key={backup.filename}><div><strong>{backup.filename}</strong><span>{formatSize(backup.size_bytes)} · {new Date(backup.created_at).toLocaleString()}</span></div><button className="secondary-button small-button" onClick={() => downloadBackup(backup.filename)}>Download</button></article>)}</div> : <p className="muted">No backups have been created yet.</p>}</section>
+    <section className="panel backup-history"><div className="panel-head"><h2>Available backups</h2><button className="secondary-button" onClick={refresh} disabled={loading}>{loading ? 'Refreshing…' : 'Refresh'}</button></div>{backups.length ? <div className="backup-list">{backups.map(backup => <article key={backup.filename}><div><strong>{backup.filename}</strong><span>{formatSize(backup.size_bytes)} · {new Date(backup.created_at).toLocaleString()}</span></div><button className="secondary-button small-button" onClick={() => downloadBackup(backup.filename)}>Download</button></article>)}</div> : <p className="muted">No {isPostgres ? 'PostgreSQL' : 'database'} backups have been created yet.</p>}</section>
   </section>;
 }
