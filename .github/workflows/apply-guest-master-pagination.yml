@@ -1,0 +1,93 @@
+name: Apply Guest Master pagination
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-guest-master-pagination.yml'
+
+jobs:
+  apply:
+    if: "!contains(github.event.head_commit.message, 'Apply Guest Master pagination')"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch Guest Master
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          schemas = Path('apps/api/app/schemas.py')
+          text = schemas.read_text()
+          marker = '''class GuestResponse(GuestCreate):\n    model_config = ConfigDict(from_attributes=True)\n    id: int\n'''
+          addition = marker + '''\n\nclass GuestListResponse(BaseModel):\n    items: list[GuestResponse]\n    total: int\n    page: int\n    page_size: int\n    pages: int\n'''
+          if 'class GuestListResponse' not in text:
+              if marker not in text:
+                  raise SystemExit('GuestResponse marker not found')
+              text = text.replace(marker, addition, 1)
+              schemas.write_text(text)
+
+          main = Path('apps/api/app/main.py')
+          text = main.read_text()
+          old_import = 'AvailabilityResponse, BootstrapAdminRequest, CheckInResponse, CheckOutResponse,\n    DashboardResponse, FrontDeskResponse, GuestCreate, GuestResponse, HealthResponse,'
+          new_import = 'AvailabilityResponse, BootstrapAdminRequest, CheckInResponse, CheckOutResponse,\n    DashboardResponse, FrontDeskResponse, GuestCreate, GuestListResponse, GuestResponse, HealthResponse,'
+          if 'GuestListResponse' not in text:
+              if old_import not in text:
+                  raise SystemExit('schema import marker not found')
+              text = text.replace(old_import, new_import, 1)
+
+          pattern = re.compile(r'@app\.get\("/api/guests", response_model=list\[GuestResponse\]\)\ndef list_guests\(.*?\n\n\n@app\.post\("/api/guests"', re.S)
+          replacement = '''@app.get("/api/guests", response_model=GuestListResponse)\ndef list_guests(\n    q: str | None = Query(default=None, min_length=1, max_length=160),\n    page: int = Query(default=1, ge=1),\n    page_size: int = Query(default=25, ge=1, le=100),\n    db: Session = Depends(get_db),\n    _: User = Depends(get_current_user),\n):\n    stmt = select(Guest)\n    if q:\n        pattern = f"%{q.strip()}%"\n        stmt = stmt.where(\n            (Guest.full_name.ilike(pattern))\n            | (Guest.phone.ilike(pattern))\n            | (Guest.email.ilike(pattern))\n            | (Guest.id_document.ilike(pattern))\n        )\n    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0\n    pages = max(1, (total + page_size - 1) // page_size)\n    page = min(page, pages)\n    offset = (page - 1) * page_size\n    items = db.scalars(stmt.order_by(Guest.full_name).offset(offset).limit(page_size)).all()\n    return GuestListResponse(items=items, total=total, page=page, page_size=page_size, pages=pages)\n\n\n@app.post("/api/guests"'''
+          text2, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit('guest list endpoint marker not found')
+          main.write_text(text2)
+
+          web = Path('apps/web/src/main.tsx')
+          text = web.read_text()
+          text = text.replace("type Guest = { id: number; full_name: string; phone?: string | null; email?: string | null; address?: string | null; id_document?: string | null };", "type Guest = { id: number; full_name: string; phone?: string | null; email?: string | null; address?: string | null; id_document?: string | null };\ntype GuestListResponse = { items: Guest[]; total: number; page: number; page_size: number; pages: number };")
+
+          gpat = re.compile(r'function GuestsView\(.*?\n\}\n\nfunction RoomsView', re.S)
+          gnew = r'''function GuestsView({ user, guests, setGuests, onRefresh }: { user: User; guests: Guest[]; setGuests: React.Dispatch<React.SetStateAction<Guest[]>>; onRefresh: () => Promise<void> }) {
+  const emptyForm = { full_name: '', phone: '', email: '', address: '', id_document: '' };
+  const [query, setQuery] = useState(''); const [form, setForm] = useState(emptyForm); const [editingId, setEditingId] = useState<number | null>(null); const [message, setMessage] = useState(''); const [busy, setBusy] = useState(false); const [page, setPage] = useState(1); const [pages, setPages] = useState(1); const [total, setTotal] = useState(0); const canManage = user.role === 'admin' || user.role === 'reception';
+  async function loadGuests(nextPage = 1, nextQuery = query) { try { const data = await api<GuestListResponse>(`/api/guests?page=${nextPage}&page_size=25${nextQuery.trim() ? `&q=${encodeURIComponent(nextQuery.trim())}` : ''}`); setGuests(data.items); setPage(data.page); setPages(data.pages); setTotal(data.total); } catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to load guests'); } }
+  async function search(event: React.FormEvent) { event.preventDefault(); await loadGuests(1, query); }
+  async function create(event: React.FormEvent) { event.preventDefault(); setBusy(true); try { await api('/api/guests', { method: 'POST', body: JSON.stringify({ ...form, phone: form.phone || null, email: form.email || null, address: form.address || null, id_document: form.id_document || null }) }); setForm(emptyForm); setMessage('Guest created.'); await onRefresh(); await loadGuests(1, query); } catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to create guest'); } finally { setBusy(false); } }
+  function startEdit(guest: Guest) { setEditingId(guest.id); setForm({ full_name: guest.full_name, phone: guest.phone || '', email: guest.email || '', address: guest.address || '', id_document: guest.id_document || '' }); setMessage('Editing guest profile.'); }
+  function cancelEdit() { setEditingId(null); setForm(emptyForm); setMessage(''); }
+  async function update(event: React.FormEvent) { event.preventDefault(); if (editingId === null) return; setBusy(true); try { await api<Guest>(`/api/guests/${editingId}`, { method: 'PATCH', body: JSON.stringify({ ...form, phone: form.phone || null, email: form.email || null, address: form.address || null, id_document: form.id_document || null }) }); setMessage('Guest profile updated.'); setEditingId(null); setForm(emptyForm); await onRefresh(); await loadGuests(page, query); } catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to update guest'); } finally { setBusy(false); } }
+  const editingGuest = editingId === null ? null : guests.find(g => g.id === editingId) || null;
+  const rangeStart = total ? ((page - 1) * 25) + 1 : 0; const rangeEnd = Math.min(page * 25, total);
+  return <section className="page"><div className="page-heading"><div><p className="muted">Guest master records</p><h2>Guests</h2></div><div className="guest-heading-actions"><span className="room-count">{total} records</span>{canManage && <button className="primary-button" type="button" onClick={() => { cancelEdit(); document.querySelector('.guest-form-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>+ New guest</button>}</div></div>{message && <p className="notice">{message}</p>}<div className="content-layout"><div className="panel"><form className="search-bar" onSubmit={search}><input placeholder="Search name, phone, email or ID document" value={query} onChange={e => setQuery(e.target.value)} /><button className="secondary-button">Search</button></form><div className="guest-list">{guests.length ? guests.map(g => <article key={g.id}><div><strong>{g.full_name}</strong><span>{g.phone || 'No phone'} · {g.email || 'No email'}</span><small>{g.address || 'No address'} · {g.id_document || 'No ID document'}</small></div>{canManage && <button className="secondary-button" type="button" onClick={() => startEdit(g)}>{editingId === g.id ? 'Editing' : 'Edit'}</button>}</article>) : <p className="muted">No guests found.</p>}</div><div className="guest-pagination"><span>Showing {rangeStart}–{rangeEnd} of {total}</span><div><button className="secondary-button small-button" type="button" disabled={page <= 1} onClick={() => void loadGuests(page - 1)}>← Previous</button><span>Page {page} of {pages}</span><button className="secondary-button small-button" type="button" disabled={page >= pages} onClick={() => void loadGuests(page + 1)}>Next →</button></div></div></div>{canManage && <form className="panel form-panel guest-form-panel" onSubmit={editingGuest ? update : create}><div className="panel-head"><h2>{editingGuest ? 'Edit guest' : 'New guest'}</h2>{editingGuest && <button className="link-button" type="button" onClick={cancelEdit}>Cancel</button>}</div>{([['full_name','Full name'],['phone','Phone'],['email','Email'],['address','Address'],['id_document','ID document']] as const).map(([key,label]) => <label key={key}>{label}{key === 'address' ? <textarea value={form[key]} onChange={e => setForm({ ...form, [key]: e.target.value })} rows={3} /> : <input type={key === 'email' ? 'email' : 'text'} value={form[key]} onChange={e => setForm({ ...form, [key]: e.target.value })} required={key === 'full_name'} />}</label>)}<p className="muted">Guest identity and contact details are maintained here. Reservations, Front Desk and Billing use this master record.</p><button className="primary-button" disabled={busy}>{busy ? 'Saving…' : editingGuest ? 'Save guest changes' : 'Create guest'}</button></form>}</div></section>;
+}
+
+function RoomsView'''
+          text2, count = gpat.subn(gnew, text, count=1)
+          if count != 1:
+              raise SystemExit('GuestsView marker not found')
+          text = text2
+          text = text.replace("api<Guest[]>('/api/guests')", "api<GuestListResponse>('/api/guests?page=1&page_size=25')")
+          text = text.replace("setDashboard(d); setRooms(sortRooms(r)); setRoomTypes(rt); setGuests(g); setReservations(rs); setFrontDesk(fd);", "setDashboard(d); setRooms(sortRooms(r)); setRoomTypes(rt); setGuests(g.items); setReservations(rs); setFrontDesk(fd);")
+          marker = "setDashboard(d); setRooms(sortRooms(r)); setRoomTypes(rt); setGuests(g.items); setReservations(rs); setFrontDesk(fd);"
+          if marker not in text:
+              raise SystemExit('guest refresh assignment marker not found')
+          web.write_text(text)
+      - name: Commit changes
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add apps/api/app/schemas.py apps/api/app/main.py apps/web/src/main.tsx
+          git diff --cached --quiet && exit 0
+          git commit -m 'Apply Guest Master pagination'
+          git push
+      - name: Remove one-time workflow
+        if: success()
+        run: |
+          git rm .github/workflows/apply-guest-master-pagination.yml
+          git commit -m 'Remove one-time Guest Master migration workflow'
+          git push
