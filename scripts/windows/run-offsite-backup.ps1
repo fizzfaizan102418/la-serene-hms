@@ -35,8 +35,8 @@ $manifest = [System.IO.Path]::ChangeExtension($latestDump.FullName, ".manifest.j
 Require-File $manifest "Backup manifest"
 
 $manifestData = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json
-if ($manifestData.status -ne "verified") {
-    throw "Latest backup is not marked verified: $($latestDump.Name)"
+if (-not $manifestData.sha256) {
+    throw "Backup manifest is missing SHA-256: $($latestDump.Name)"
 }
 
 $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $latestDump.FullName).Hash.ToLowerInvariant()
