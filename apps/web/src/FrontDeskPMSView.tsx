@@ -39,6 +39,7 @@ export default function FrontDeskPMSView({ user, data, rooms, reservations, gues
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [walkInGuest, setWalkInGuest] = useState('');
+  const [walkInGuestQuery, setWalkInGuestQuery] = useState('');
   const [walkInCheckout, setWalkInCheckout] = useState(addDays(today, 1));
   const [walkInPolicy, setWalkInPolicy] = useState('at_checkout');
   const [walkInDeposit, setWalkInDeposit] = useState('0');
@@ -51,6 +52,12 @@ export default function FrontDeskPMSView({ user, data, rooms, reservations, gues
   const selected = selectedId ? reservations.find(r => r.id === selectedId) ?? null : null;
   const rackDays = useMemo(() => Array.from({ length: 14 }, (_, index) => addDays(rackStart, index)), [rackStart]);
   const availableRooms = useMemo(() => rooms.filter(room => room.status === 'available'), [rooms]);
+  const walkInGuestMatches = useMemo(() => {
+    const query = walkInGuestQuery.trim().toLowerCase();
+    if (!query) return [];
+    return guests.filter(guest => `${guest.full_name} ${guest.phone ?? ''} ${guest.email ?? ''}`.toLowerCase().includes(query)).slice(0, 20);
+  }, [guests, walkInGuestQuery]);
+  const selectedWalkInGuest = useMemo(() => guests.find(guest => String(guest.id) === walkInGuest) ?? null, [guests, walkInGuest]);
 
   function selectReservation(id: number) { setSelectedId(id); setError(''); setMessage(''); }
 
@@ -70,6 +77,18 @@ export default function FrontDeskPMSView({ user, data, rooms, reservations, gues
     try { const result = await api<{ results: SearchResult[] }>(`/api/front-desk/search?q=${encodeURIComponent(query)}`); setSearchResults(result.results); }
     catch (e) { setError(e instanceof Error ? e.message : 'Search failed'); }
     finally { setBusy(false); }
+  }
+
+  function selectWalkInGuest(guestId: number) {
+    setWalkInGuest(String(guestId));
+    const guest = guests.find(item => item.id === guestId);
+    setWalkInGuestQuery(guest?.full_name ?? '');
+    setWalkInRooms(current => current.map(room => ({ ...room, occupantGuestId: room.occupantGuestId || String(guestId) })));
+  }
+
+  function clearWalkInGuest() {
+    setWalkInGuest('');
+    setWalkInGuestQuery('');
   }
 
   function addWalkInRoom(room: Room) {
@@ -108,7 +127,7 @@ export default function FrontDeskPMSView({ user, data, rooms, reservations, gues
         }),
       });
       setMessage(`Walk-in reservation #${result.reservation_id} checked in. Estimated stay value: PKR ${money(result.estimated_total)}.`);
-      setWalkInRooms([]); setWalkInGuest(''); setWalkInDeposit('0'); setWalkInNotes(''); setWalkInCheckout(addDays(today, 1));
+      setWalkInRooms([]); setWalkInGuest(''); setWalkInGuestQuery(''); setWalkInDeposit('0'); setWalkInNotes(''); setWalkInCheckout(addDays(today, 1));
       await onRefresh();
       selectReservation(result.reservation_id);
     } catch (e) { setError(e instanceof Error ? e.message : 'Unable to create walk-in'); }
@@ -168,7 +187,21 @@ export default function FrontDeskPMSView({ user, data, rooms, reservations, gues
       <div className="panel-head"><div><p className="muted">Guest → Room → Rate → Occupant → Payment policy</p><h2>Walk-in check-in</h2></div><button className="secondary-button small-button" type="button" onClick={() => setShowWalkIn(value => !value)}>{showWalkIn ? 'Collapse' : 'Open'}</button></div>
       {showWalkIn && <form onSubmit={createWalkIn}>
         <div className="two-col">
-          <label>Guest<select value={walkInGuest} onChange={e => { setWalkInGuest(e.target.value); setWalkInRooms(current => current.map(room => ({ ...room, occupantGuestId: room.occupantGuestId || e.target.value }))); }} required><option value="">Select guest</option>{guests.map(guest => <option key={guest.id} value={guest.id}>{guest.full_name}{guest.phone ? ` · ${guest.phone}` : ''}</option>)}</select></label>
+          <label>Guest
+            {selectedWalkInGuest ? <div style={{ border: '1px solid #dedbd2', padding: 10, borderRadius: 10, display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
+              <span><strong>{selectedWalkInGuest.full_name}</strong>{selectedWalkInGuest.phone ? <small className="muted"> · {selectedWalkInGuest.phone}</small> : null}</span>
+              <button type="button" className="link-button" onClick={clearWalkInGuest}>Change</button>
+            </div> : <>
+              <input value={walkInGuestQuery} onChange={e => setWalkInGuestQuery(e.target.value)} placeholder="Search guest by name or phone" aria-label="Search guest for walk-in check-in" autoComplete="off" required />
+              {walkInGuestQuery.trim() && <div className="reservation-list" style={{ marginTop: 8 }}>
+                {walkInGuestMatches.length ? walkInGuestMatches.map(guest => <article key={guest.id}>
+                  <div><strong>{guest.full_name}</strong><span>{guest.phone || guest.email || 'No contact details'}</span></div>
+                  <button type="button" className="secondary-button small-button" onClick={() => selectWalkInGuest(guest.id)}>Select</button>
+                </article>) : <p className="muted" style={{ margin: 8 }}>No matching guest. Create the guest record first.</p>}
+              </div>}
+              <small className="muted">Historical guests remain searchable, but are not shown in the list until searched.</small>
+            </>}
+          </label>
           <label>Check-out<input type="date" min={addDays(today, 1)} value={walkInCheckout} onChange={e => setWalkInCheckout(e.target.value)} required /></label>
         </div>
         <div className="two-col">
