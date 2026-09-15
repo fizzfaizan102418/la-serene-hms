@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.ledger import post_transaction, reverse_transaction
-from app.models import Base, BusinessDateState, FinancialTransaction, LedgerEntry, User
+from app.models import Base, BusinessDateState, FinancialTransaction, LedgerEntry, Role, User
 from app.pms_core import Stay  # noqa: F401 - register the stays table on Base.metadata
 
 
@@ -17,7 +17,14 @@ class DataIntegrityDestructiveTests(unittest.TestCase):
         self.engine = create_engine("sqlite:///:memory:", future=True)
         Base.metadata.create_all(self.engine)
         self.db = Session(self.engine)
-        self.user = User(username="integrity-admin", role="admin", is_active=True)
+        self.admin_role = Role(name="admin")
+        self.db.add(self.admin_role)
+        self.db.flush()
+        self.user = User(
+            username="integrity-admin",
+            password_hash="not-used-by-these-tests",
+            role_id=self.admin_role.id,
+        )
         self.db.add(self.user)
         self.db.add(
             BusinessDateState(
