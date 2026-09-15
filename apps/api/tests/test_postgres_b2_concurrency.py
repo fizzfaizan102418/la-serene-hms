@@ -1,6 +1,6 @@
 import unittest
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from threading import Barrier
 from uuid import uuid4
@@ -47,7 +47,7 @@ class PostgreSQLB2ConcurrencyTests(unittest.TestCase):
             db.add_all([user, guest, room_type])
             db.flush()
             room = Room(number=f"B{suffix[:7]}", room_type_id=room_type.id, status="occupied")
-            reservation = Reservation(guest_id=guest.id, check_in=business_date, check_out=business_date.replace(day=business_date.day + 2), status="checked_in")
+            reservation = Reservation(guest_id=guest.id, check_in=business_date, check_out=business_date + timedelta(days=2), status="checked_in")
             db.add_all([room, reservation])
             db.flush()
             db.add(ReservationRoom(reservation_id=reservation.id, room_id=room.id))
