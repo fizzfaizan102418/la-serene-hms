@@ -68,6 +68,26 @@ body:has(.desk-grid) .page > .panel:last-child .panel-head input[type="date"] { 
 body:has(.desk-grid) .page > .panel:last-child > div:last-child { border: 1px solid #e1ddd4; border-radius: 12px; padding: 6px; background: #fbfaf7; }
 body:has(.desk-grid) .page > .panel:last-child > div:last-child > div:first-child { background: #f0eee8; border-radius: 8px; }
 
+/* Room-rack calendar cells: make the dense planning grid easier to scan. */
+body:has(.desk-grid) .page > .panel:last-child > div:last-child { gap: 3px !important; }
+body:has(.desk-grid) .page > .panel:last-child > div:last-child > div { box-sizing: border-box; }
+body:has(.desk-grid) .page > .panel:last-child > div:last-child > div:not(:first-child) { min-height: 52px; }
+body:has(.desk-grid) .page > .panel:last-child > div:last-child > div:nth-child(-n+15) { position: sticky; top: 0; z-index: 3; }
+body:has(.desk-grid) .page > .panel:last-child > div:last-child > div:nth-child(-n+15):not(:first-child) { border: 1px solid #e2dfd7; box-shadow: 0 2px 5px rgba(40,45,40,.05); }
+body:has(.desk-grid) .page > .panel:last-child > div:last-child > div:first-child { left: 0; z-index: 5; text-transform: uppercase; letter-spacing: .04em; font-size: 11px; color: #5e665f; }
+body:has(.desk-grid) .page > .panel:last-child > div:last-child > div:nth-child(15n + 1) { position: sticky; left: 0; z-index: 4; border-right: 1px solid #d9d5cb; box-shadow: 3px 0 7px rgba(40,45,40,.05); }
+body:has(.desk-grid) .page > .panel:last-child > div:last-child > div:nth-child(15n + 1) strong { font-size: 14px; }
+body:has(.desk-grid) .page > .panel:last-child > div:last-child > div:nth-child(15n + 1) small { display: inline-block; margin-top: 4px; color: #69716a; text-transform: capitalize; line-height: 1.15; }
+body:has(.desk-grid) .page > .panel:last-child > div:last-child > button { box-sizing: border-box; min-height: 64px !important; padding: 7px 8px !important; border-color: #d9d6ce !important; background: #fffefa; transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease, filter .12s ease; }
+body:has(.desk-grid) .page > .panel:last-child > div:last-child > button:hover { transform: translateY(-1px); border-color: #aebcac !important; box-shadow: 0 3px 8px rgba(40,50,40,.08); filter: brightness(.99); }
+body:has(.desk-grid) .page > .panel:last-child > div:last-child > button:focus-visible { outline: 2px solid #607a63; outline-offset: 1px; }
+body:has(.desk-grid) .page > .panel:last-child > div:last-child > button strong { display: inline-block; font-size: 11px; line-height: 1.1; letter-spacing: .01em; }
+body:has(.desk-grid) .page > .panel:last-child > div:last-child > button span { line-height: 1.2; }
+
+/* Keep the rack usable when the 14-day grid overflows horizontally. */
+body:has(.desk-grid) .page > .panel:last-child { overflow-x: auto; }
+body:has(.desk-grid) .page > .panel:last-child .panel-head { min-width: 760px; }
+
 /* Consistent Front Desk controls */
 body:has(.desk-grid) .small-button { font-size: 13px; min-height: 38px; }
 body:has(.desk-grid) .notice { margin-bottom: 14px; }
