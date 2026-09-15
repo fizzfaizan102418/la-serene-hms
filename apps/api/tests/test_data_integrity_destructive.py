@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.ledger import post_transaction, reverse_transaction
 from app.models import Base, BusinessDateState, FinancialTransaction, LedgerEntry, User
+from app.pms_core import Stay  # noqa: F401 - register the stays table on Base.metadata
 
 
 class DataIntegrityDestructiveTests(unittest.TestCase):
