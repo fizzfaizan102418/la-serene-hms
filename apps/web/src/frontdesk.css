@@ -1,0 +1,229 @@
+/* Front Desk workspace polish. Scoped through the page's existing operational markers so other modules keep their current layout. */
+
+body:has(.desk-grid) .page {
+  max-width: 1320px;
+}
+
+body:has(.desk-grid) .page-heading {
+  margin-bottom: 20px;
+  padding: 2px 2px 0;
+}
+
+body:has(.desk-grid) .page-heading h2 {
+  font-size: clamp(28px, 3vw, 36px);
+}
+
+body:has(.desk-grid) .page-heading .room-count {
+  font-weight: 700;
+  border: 1px solid #d7e2d4;
+  background: #eef5ed;
+  color: #335c39;
+}
+
+/* Search: make the fastest daily task visually dominant. */
+body:has(.desk-grid) .page > .panel:first-of-type {
+  border-color: #d5dfd2;
+  box-shadow: 0 8px 24px rgba(38, 52, 42, .07);
+  background: linear-gradient(180deg, #ffffff 0%, #fbfcfa 100%);
+}
+
+body:has(.desk-grid) .page > .panel:first-of-type .panel-head {
+  align-items: end;
+  margin-bottom: 12px;
+}
+
+body:has(.desk-grid) .page > .panel:first-of-type .panel-head h2 {
+  font-size: 20px;
+}
+
+body:has(.desk-grid) .page > .panel:first-of-type .search-bar {
+  padding: 6px;
+  border: 1px solid #d8ded5;
+  border-radius: 14px;
+  background: #f4f7f2;
+}
+
+body:has(.desk-grid) .page > .panel:first-of-type .search-bar input {
+  min-height: 44px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding-left: 12px;
+}
+
+body:has(.desk-grid) .page > .panel:first-of-type .search-bar input:focus {
+  box-shadow: none;
+}
+
+body:has(.desk-grid) .page > .panel:first-of-type .search-bar .secondary-button {
+  min-width: 86px;
+}
+
+/* Walk-in: separate the transaction form from monitoring cards. */
+body:has(.desk-grid) .page > .panel:nth-of-type(2) {
+  background: #fffefa;
+  border-color: #e2dccd;
+}
+
+body:has(.desk-grid) .page > .panel:nth-of-type(2) form {
+  display: grid;
+  gap: 14px;
+}
+
+body:has(.desk-grid) .page > .panel:nth-of-type(2) label {
+  gap: 7px;
+}
+
+body:has(.desk-grid) .page > .panel:nth-of-type(2) input,
+body:has(.desk-grid) .page > .panel:nth-of-type(2) select,
+body:has(.desk-grid) .page > .panel:nth-of-type(2) textarea {
+  min-height: 42px;
+}
+
+body:has(.desk-grid) .page > .panel:nth-of-type(2) textarea {
+  min-height: 72px;
+}
+
+body:has(.desk-grid) .page > .panel:nth-of-type(2) > .panel-head {
+  padding-bottom: 4px;
+  border-bottom: 1px solid #ece7dc;
+}
+
+/* KPI strip: less card-like, more like a front-desk control bar. */
+body:has(.desk-grid) .stats {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+
+body:has(.desk-grid) .stats .stat {
+  min-height: 92px;
+  padding: 15px 16px;
+  border-radius: 15px;
+  box-shadow: none;
+}
+
+body:has(.desk-grid) .stats .stat span {
+  line-height: 1.25;
+}
+
+body:has(.desk-grid) .stats .stat strong {
+  font-size: 27px;
+}
+
+body:has(.desk-grid) .stats .stat:nth-child(1) { box-shadow: inset 0 3px 0 #bfc8c0; }
+body:has(.desk-grid) .stats .stat:nth-child(2) { box-shadow: inset 0 3px 0 #b9d1b5; }
+body:has(.desk-grid) .stats .stat:nth-child(3) { box-shadow: inset 0 3px 0 #9fbea0; }
+body:has(.desk-grid) .stats .stat:nth-child(4) { box-shadow: inset 0 3px 0 #d6c48f; }
+body:has(.desk-grid) .stats .stat:nth-child(5) { box-shadow: inset 0 3px 0 #caa9a4; }
+body:has(.desk-grid) .stats .stat:nth-child(6) { box-shadow: inset 0 3px 0 #d4b48d; }
+
+/* Arrivals / departures / in-house: consistent operational cards. */
+body:has(.desk-grid) .desk-grid {
+  margin-top: 14px;
+  align-items: start;
+}
+
+body:has(.desk-grid) .desk-grid > .panel {
+  min-height: 180px;
+  padding: 18px;
+}
+
+body:has(.desk-grid) .desk-grid > .panel .panel-head {
+  padding-bottom: 12px;
+  border-bottom: 1px solid #ece8df;
+  margin-bottom: 12px;
+}
+
+body:has(.desk-grid) .desk-grid > .panel .panel-head h2 {
+  font-size: 18px;
+}
+
+body:has(.desk-grid) .desk-card {
+  padding: 13px;
+  border: 1px solid #e0ddd5;
+  background: #faf9f6;
+  box-shadow: none;
+}
+
+body:has(.desk-grid) .desk-card strong {
+  font-size: 14px;
+}
+
+body:has(.desk-grid) .desk-card:hover {
+  border-color: #bdcabb;
+  background: #f7faf6;
+}
+
+body:has(.desk-grid) .desk-card .primary-button {
+  min-width: 92px;
+}
+
+/* Selected stay panels should read as a detail area below the operational queue. */
+body:has(.desk-grid) .desk-grid + .panel,
+body:has(.desk-grid) .desk-grid ~ .panel {
+  scroll-margin-top: 20px;
+}
+
+/* Room rack: improve scanability without changing its data or behavior. */
+body:has(.desk-grid) .page > .panel:last-child {
+  padding: 18px;
+}
+
+body:has(.desk-grid) .page > .panel:last-child .panel-head {
+  margin-bottom: 14px;
+  align-items: center;
+}
+
+body:has(.desk-grid) .page > .panel:last-child .panel-head h2 {
+  font-size: 19px;
+}
+
+body:has(.desk-grid) .page > .panel:last-child .panel-head input[type="date"] {
+  min-height: 40px;
+  background: #fbfaf7;
+}
+
+/* The rack is horizontally scrollable on smaller workstations; keep its header sticky while scanning. */
+body:has(.desk-grid) .page > .panel:last-child > div:last-child {
+  border: 1px solid #e1ddd4;
+  border-radius: 12px;
+  padding: 6px;
+  background: #fbfaf7;
+}
+
+body:has(.desk-grid) .page > .panel:last-child > div:last-child > div:first-child {
+  background: #f0eee8;
+  border-radius: 8px;
+}
+
+@media (max-width: 1000px) {
+  body:has(.desk-grid) .stats {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  body:has(.desk-grid) .stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  body:has(.desk-grid) .desk-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  body:has(.desk-grid) .stats {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  body:has(.desk-grid) .page > .panel:first-of-type .search-bar {
+    display: grid;
+    padding: 8px;
+  }
+
+  body:has(.desk-grid) .page > .panel:first-of-type .search-bar .secondary-button {
+    width: 100%;
+  }
+}
