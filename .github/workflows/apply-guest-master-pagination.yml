@@ -8,7 +8,7 @@ on:
 
 jobs:
   apply:
-    if: "!contains(github.event.head_commit.message, 'Fix Guest Master pagination migration workflow')"
+    if: "!contains(github.event.head_commit.message, 'Implement scalable Guest Master pagination')"
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -27,15 +27,18 @@ jobs:
               model_config = ConfigDict(from_attributes=True)
               id: int
           '''
+              marker = marker.replace('              ', '', 0)
+              # The source uses four-space indentation inside the class.
+              marker = "class GuestResponse(GuestCreate):\n    model_config = ConfigDict(from_attributes=True)\n    id: int\n"
               addition = marker + '''
 
-          class GuestListResponse(BaseModel):
-              items: list[GuestResponse]
-              total: int
-              page: int
-              page_size: int
-              pages: int
-          '''
+class GuestListResponse(BaseModel):
+    items: list[GuestResponse]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+'''
               if marker not in text:
                   raise SystemExit('GuestResponse marker not found')
               schemas.write_text(text.replace(marker, addition, 1))
