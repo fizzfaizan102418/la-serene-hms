@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import Numeric, bindparam, text
+from sqlalchemy import Numeric, bindparam, select, text
 from sqlalchemy.orm import Session
 
 from .auth import require_roles
