@@ -236,10 +236,42 @@ def ledger_account_delta(db: Session, business_date: date, accounts: set[str], b
     return money(debit - credit)
 
 
+def prior_closing_cash(db: Session, business_date: date) -> Decimal | None:
+    """Return the last closed day's physical cash for carry-forward.
+
+    The archived closing pack is the authoritative bridge for historical periods
+    that may not have a cash ledger opening transaction. Future closing packs
+    include the same projected closing cash, so each business day carries the
+    physical cash balance forward without creating synthetic revenue or expense.
+    """
+    state = db.get(BusinessDateState, 1)
+    prior_date = state.last_closed_business_date if state else None
+    if prior_date is None or prior_date >= business_date:
+        return None
+
+    path = PACK_ROOT / prior_date.isoformat() / "daily-closing.json"
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        report = payload.get("report", {})
+        projected = report.get("pre_close", {}).get("projected_close", {}).get("cash")
+        if projected is not None:
+            return money(projected)
+        historical = report.get("historical_reconciliation", {}).get("closing_cash")
+        if historical is not None:
+            return money(historical)
+    except (OSError, ValueError, TypeError):
+        return None
+    return None
+
+
 def build_pre_close_preview(db: Session, business_date: date, summary: dict) -> dict:
     pending = preview_room_charges_for_business_date(db, business_date=business_date)
     pending_total = money(sum((row["amount"] for row in pending), Decimal("0.00")))
-    opening_cash = ledger_account_delta(db, business_date, CASH_ACCOUNTS, True)
+    opening_cash = prior_closing_cash(db, business_date)
+    if opening_cash is None:
+        opening_cash = ledger_account_delta(db, business_date, CASH_ACCOUNTS, True)
     opening_receivables = ledger_account_delta(db, business_date, {"Guest Receivables"}, True)
     today_cash = ledger_account_delta(db, business_date, CASH_ACCOUNTS, False)
     today_receivables = ledger_account_delta(db, business_date, {"Guest Receivables"}, False)
@@ -412,6 +444,7 @@ def close_day(payload: ClosingConfirm | None = None, db: Session = Depends(get_d
 
     summary = build_summary(db, business_date, finance)
     summary["night_audit"] = {"room_charges_accrued": accrued_room_charges}
+    summary["pre_close"] = build_pre_close_preview(db, business_date, summary)
     closed_at = datetime.utcnow()
     pack = create_pack(summary, payload.notes if payload else None, user.username, closed_at)
 
