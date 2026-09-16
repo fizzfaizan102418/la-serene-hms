@@ -32,7 +32,7 @@ router = APIRouter(prefix="/night-audit", tags=["night-audit"])
 MONEY = Decimal("0.01")
 FOOD_SERVICE_CHARGE_RATE = Decimal("0.10")
 FOOD_CATEGORIES = {"food", "restaurant", "room_service", "beverage", "drink", "snack"}
-CASH_ACCOUNTS = {"Cash", "Card Clearing", "Bank", "Other Payment"}
+CASH_ACCOUNTS = {"Cash"}
 PACK_ROOT = DATA_DIR / "daily_closing"
 
 
