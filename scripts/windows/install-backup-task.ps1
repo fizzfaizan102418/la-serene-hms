@@ -18,7 +18,8 @@ $Runner = Join-Path $InstallRoot "scripts\windows\run-backup.ps1"
 if (-not (Test-Path -LiteralPath $Runner -PathType Leaf)) { throw "Backup runner not found: $Runner" }
 if (-not $PythonExe) { $PythonExe = Join-Path $ApiRoot ".venv\Scripts\python.exe" }
 if (-not (Test-Path -LiteralPath $PythonExe -PathType Leaf)) { throw "Production Python executable not found: $PythonExe" }
-if (-not $BackupDir) { $BackupDir = Join-Path $InstallRoot "backups" }
+# Keep scheduled backups in the same directory used by the Backup & Restore UI.
+if (-not $BackupDir) { $BackupDir = Join-Path $InstallRoot "data\backups" }
 
 $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$Runner`" -InstallRoot `"$InstallRoot`" -PythonExe `"$PythonExe`" -BackupDir `"$BackupDir`" -Retain $Retain -MirrorRetain $MirrorRetain"
 if ($MirrorDir) { $arguments += " -MirrorDir `"$MirrorDir`"" }
