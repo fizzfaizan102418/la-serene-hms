@@ -12,7 +12,8 @@ from sqlalchemy.orm import Session
 from .auth import require_roles
 from .business_date import get_current_business_date
 from .db import get_db
-from .models import AuditLog, User
+from .ledger import post_transaction, reverse_transaction
+from .models import AuditLog, FinancialTransaction, User
 
 router = APIRouter(prefix="/api/expenses", tags=["expenses"])
 MONEY = Decimal("0.01")
@@ -65,6 +66,16 @@ def _row(row) -> dict:
     }
 
 
+def _cash_account(payment_method: str) -> str:
+    return {
+        "Cash": "Cash",
+        "Bank": "Bank",
+        "Card": "Card Clearing",
+        "Bank Transfer": "Bank",
+        "Other": "Other Payment",
+    }.get(payment_method, "Other Payment")
+
+
 @router.get("/meta")
 def expense_meta(_: User = Depends(require_roles("admin", "reception"))):
     return {"categories": CATEGORIES, "departments": DEPARTMENTS, "payment_methods": PAYMENT_METHODS, "statuses": STATUSES}
@@ -100,6 +111,9 @@ def list_expenses(
 @router.post("", status_code=201)
 def create_expense(payload: ExpenseCreate, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "reception"))):
     expense_date = payload.expense_date or get_current_business_date(db, fallback_to_today=True)
+    business_date = get_current_business_date(db, fallback_to_today=True)
+    if expense_date != business_date:
+        raise HTTPException(status_code=400, detail=f"Expense date must match the current hotel business date {business_date.isoformat()}")
     category = payload.category.strip()
     department = payload.department.strip()
     payment_method = payload.payment_method.strip()
@@ -122,6 +136,23 @@ def create_expense(payload: ExpenseCreate, db: Session = Depends(get_db), user: 
     expense_id = int(result.scalar_one())
     expense_no = f"EXP-{expense_id:06d}"
     db.execute(text("UPDATE expenses SET expense_no = :expense_no WHERE id = :id"), {"expense_no": expense_no, "id": expense_id})
+    try:
+        post_transaction(
+            db,
+            transaction_type="expense",
+            description=f"Expense {expense_no}: {category}",
+            reference_type="expense",
+            reference_id=str(expense_id),
+            created_by=user.id,
+            idempotency_key=f"expense:{expense_id}",
+            lines=[
+                {"account": f"Expense - {category[:45]}", "direction": "debit", "amount": amount},
+                {"account": _cash_account(payment_method), "direction": "credit", "amount": amount, "payment_method": payment_method},
+            ],
+        )
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     db.add(AuditLog(user_id=user.id, action="create", entity_type="expense", entity_id=str(expense_id), details=f"expense_no={expense_no}; category={category}; department={department}; amount={amount}"))
     db.commit()
     row = db.execute(text("SELECT e.id, e.expense_no, e.expense_date, e.category, e.description, e.amount, e.payment_method, e.paid_to, e.reference, e.department, e.notes, e.created_by, e.status, e.created_at FROM expenses e WHERE e.id = :id"), {"id": expense_id}).mappings().one()
@@ -135,6 +166,13 @@ def void_expense(expense_id: int, db: Session = Depends(get_db), user: User = De
         raise HTTPException(status_code=404, detail="Expense not found")
     if row["status"] == "voided":
         return {"id": expense_id, "status": "voided"}
+    tx = db.scalar(select(FinancialTransaction).where(FinancialTransaction.reference_type == "expense", FinancialTransaction.reference_id == str(expense_id), FinancialTransaction.transaction_type == "expense", FinancialTransaction.status == "posted"))
+    if tx is not None:
+        try:
+            reverse_transaction(db, transaction_id=tx.id, created_by=user.id, reason=f"Expense {row['id']} voided")
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     db.execute(text("UPDATE expenses SET status = 'voided' WHERE id = :id"), {"id": expense_id})
     db.add(AuditLog(user_id=user.id, action="void", entity_type="expense", entity_id=str(expense_id), details="expense voided"))
     db.commit()
