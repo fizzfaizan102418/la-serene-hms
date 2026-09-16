@@ -19,7 +19,8 @@ function Require-File([string]$Path, [string]$Label) {
 $ApiRoot = Join-Path $InstallRoot "apps\api"
 $EnvFile = Join-Path $ApiRoot ".env"
 if (-not $PythonExe) { $PythonExe = Join-Path $ApiRoot ".venv\Scripts\python.exe" }
-if (-not $BackupDir) { $BackupDir = Join-Path $InstallRoot "backups" }
+# Keep scheduled backups in the same directory used by the Backup & Restore UI.
+if (-not $BackupDir) { $BackupDir = Join-Path $InstallRoot "data\backups" }
 
 Require-File $EnvFile "Production environment file"
 Require-File $PythonExe "Production Python executable"
