@@ -7,7 +7,7 @@ from app.db import Base
 import app.financial_models  # noqa: F401
 import app.models  # noqa: F401
 import app.pms_core  # noqa: F401
-from app.main import update_guest
+from app.main import create_guest, list_guests, update_guest
 from app.models import AuditLog, Guest, Role, User
 from app.schemas import GuestCreate
 
@@ -57,6 +57,34 @@ class GuestProfileTests(unittest.TestCase):
         )
         self.assertIsNotNone(audit)
         self.assertEqual(audit.user_id, 1)
+
+
+    def test_guest_search_is_limited_at_query_level(self):
+        self.db.add_all([
+            Guest(full_name=f"Search Guest {i:02d}", phone=f"03000000{i:03d}")
+            for i in range(25)
+        ])
+        self.db.commit()
+
+        results = list_guests("Search", 20, self.db, self.user)
+        self.assertEqual(len(results), 20)
+
+    def test_guest_create_rejects_duplicate_identity(self):
+        payload = GuestCreate(full_name="Duplicate Guest", phone="03000000000", id_document="NEW-ID")
+        with self.assertRaises(Exception) as context:
+            create_guest(payload, self.db, self.user)
+        self.assertEqual(getattr(context.exception, "status_code", None), 409)
+        detail = getattr(context.exception, "detail", {})
+        self.assertIn("Possible duplicate guest record", detail.get("message", ""))
+        self.assertEqual(detail.get("matches", [])[0]["id"], 1)
+
+    def test_guest_update_rejects_duplicate_identity(self):
+        self.db.add(Guest(id=2, full_name="Second Guest", phone="03222222222", id_document="SECOND-ID"))
+        self.db.commit()
+        payload = GuestCreate(full_name="Updated Guest", phone="03222222222", id_document="NEW-ID")
+        with self.assertRaises(Exception) as context:
+            update_guest(1, payload, self.db, self.user)
+        self.assertEqual(getattr(context.exception, "status_code", None), 409)
 
     def test_guest_profile_update_rejects_unknown_guest(self):
         payload = GuestCreate(full_name="Updated Guest")

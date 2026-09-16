@@ -201,16 +201,81 @@ def update_room_status(room_id: int, payload: RoomStatusUpdate, db: Session = De
     db.commit(); db.refresh(room); return room
 
 
+GUEST_SEARCH_DEFAULT_LIMIT = 20
+GUEST_SEARCH_MAX_LIMIT = 50
+
+
+def _guest_identifier(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
+def _guest_duplicate_matches(db: Session, payload: GuestCreate, exclude_guest_id: int | None = None) -> list[Guest]:
+    phone = _guest_identifier(payload.phone)
+    id_document = _guest_identifier(payload.id_document)
+    if not phone and not id_document:
+        return []
+
+    conditions = []
+    if phone:
+        conditions.append(func.lower(Guest.phone) == phone)
+    if id_document:
+        conditions.append(func.lower(Guest.id_document) == id_document)
+
+    stmt = select(Guest).where(conditions[0] if len(conditions) == 1 else conditions[0] | conditions[1]).order_by(Guest.full_name).limit(10)
+    if exclude_guest_id is not None:
+        stmt = stmt.where(Guest.id != exclude_guest_id)
+    return db.scalars(stmt).all()
+
+
+def _raise_guest_duplicate_warning(matches: list[Guest]) -> None:
+    if not matches:
+        return
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "message": "Possible duplicate guest record. Verify the guest before saving.",
+            "matches": [
+                {
+                    "id": guest.id,
+                    "full_name": guest.full_name,
+                    "phone": guest.phone,
+                    "id_document": guest.id_document,
+                }
+                for guest in matches
+            ],
+        },
+    )
+
+
 @app.get("/api/guests", response_model=list[GuestResponse])
-def list_guests(q: str | None = Query(default=None, min_length=1, max_length=160), db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def list_guests(
+    q: str | None = Query(default=None, min_length=1, max_length=160),
+    limit: int = Query(default=GUEST_SEARCH_DEFAULT_LIMIT, ge=1, le=GUEST_SEARCH_MAX_LIMIT),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
     stmt = select(Guest)
     if q:
-        pattern = f"%{q.strip()}%"; stmt = stmt.where((Guest.full_name.ilike(pattern)) | (Guest.phone.ilike(pattern)) | (Guest.email.ilike(pattern)))
-    return db.scalars(stmt.order_by(Guest.full_name)).all()
+        pattern = f"%{q.strip()}%"
+        stmt = stmt.where((Guest.full_name.ilike(pattern)) | (Guest.phone.ilike(pattern)) | (Guest.email.ilike(pattern)))
+    return db.scalars(stmt.order_by(Guest.full_name).limit(limit)).all()
+
+
+@app.get("/api/guests/duplicate-check", response_model=list[GuestResponse])
+def guest_duplicate_check(
+    phone: str | None = Query(default=None, max_length=40),
+    id_document: str | None = Query(default=None, max_length=100),
+    exclude_guest_id: int | None = Query(default=None, ge=1),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    payload = GuestCreate(full_name="Duplicate check", phone=phone, id_document=id_document)
+    return _guest_duplicate_matches(db, payload, exclude_guest_id=exclude_guest_id)
 
 
 @app.post("/api/guests", response_model=GuestResponse, status_code=201)
 def create_guest(payload: GuestCreate, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "reception"))):
+    _raise_guest_duplicate_warning(_guest_duplicate_matches(db, payload))
     guest = Guest(**payload.model_dump()); db.add(guest); db.flush()
     write_audit(db, "create", "guest", guest.id, {"full_name": guest.full_name}, user.id)
     db.commit(); db.refresh(guest); return guest
@@ -221,6 +286,7 @@ def update_guest(guest_id: int, payload: GuestCreate, db: Session = Depends(get_
     guest = db.get(Guest, guest_id)
     if not guest:
         raise HTTPException(status_code=404, detail="Guest not found")
+    _raise_guest_duplicate_warning(_guest_duplicate_matches(db, payload, exclude_guest_id=guest_id))
     old = {
         "full_name": guest.full_name,
         "phone": guest.phone,
