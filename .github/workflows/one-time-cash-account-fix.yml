@@ -1,0 +1,34 @@
+name: One-time cash accounting fix
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[cash-account-fix]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch daily cash account scope
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('apps/api/app/night_audit.py')
+          text = path.read_text(encoding='utf-8')
+          old = 'CASH_ACCOUNTS = {"Cash", "Card Clearing", "Bank", "Other Payment"}'
+          new = 'CASH_ACCOUNTS = {"Cash"}'
+          if text.count(old) != 1:
+              raise SystemExit('Expected exactly one daily cash account definition')
+          path.write_text(text.replace(old, new), encoding='utf-8')
+          PY
+      - name: Commit fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/api/app/night_audit.py
+          git commit -m "Fix daily cash in hand calculation [cash-account-fix]"
+          git push origin main
