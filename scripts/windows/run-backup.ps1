@@ -3,7 +3,9 @@ param(
     [string]$InstallRoot = "C:\LaSereneHMS",
     [string]$PythonExe = "",
     [string]$BackupDir = "",
-    [int]$Retain = 7
+    [int]$Retain = 7,
+    [string]$MirrorDir = "",
+    [int]$MirrorRetain = 30
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,7 +18,6 @@ function Require-File([string]$Path, [string]$Label) {
 
 $ApiRoot = Join-Path $InstallRoot "apps\api"
 $EnvFile = Join-Path $ApiRoot ".env"
-# Keep the default identical to the production service and backup-task layout.
 if (-not $PythonExe) { $PythonExe = Join-Path $ApiRoot ".venv\Scripts\python.exe" }
 if (-not $BackupDir) { $BackupDir = Join-Path $InstallRoot "backups" }
 
@@ -31,10 +32,23 @@ if (-not $env:HMS_DATABASE_URL.StartsWith('postgresql://') -and -not $env:HMS_DA
     throw "HMS_DATABASE_URL must use PostgreSQL for production backups"
 }
 
+# Optional mirror can be a USB/external drive, NAS share, or other durable location.
+if (-not $MirrorDir) {
+    $mirrorLine = Get-Content -LiteralPath $EnvFile | Where-Object { $_ -match '^\s*HMS_BACKUP_MIRROR_DIR\s*=' } | Select-Object -First 1
+    if ($mirrorLine) { $MirrorDir = ($mirrorLine -split '=', 2)[1].Trim().Trim('"').Trim("'") }
+}
+if ($MirrorDir) {
+    New-Item -ItemType Directory -Force -Path $MirrorDir | Out-Null
+}
+
 $env:PYTHONPATH = $InstallRoot
 Push-Location $InstallRoot
 try {
-    & $PythonExe -m ops.backup.scheduled --output-dir $BackupDir --retain $Retain
+    $args = @('-m', 'ops.backup.scheduled', '--output-dir', $BackupDir, '--retain', $Retain)
+    if ($MirrorDir) {
+        $args += @('--mirror-dir', $MirrorDir, '--mirror-retain', $MirrorRetain)
+    }
+    & $PythonExe @args
     if ($LASTEXITCODE -ne 0) {
         throw "Scheduled HMS backup failed. Inspect $BackupDir\backup.log."
     }
