@@ -59,8 +59,32 @@ def expected_active_total(db: Session, folio_id: int) -> Decimal:
 
 
 def ledger_total(db: Session, folio_id: int) -> Decimal:
-    from .financial_authority import folio_ledger_summary
-    return money(folio_ledger_summary(db, folio_id).total)
+    """Return authoritative posted folio charges, excluding settlements."""
+    from sqlalchemy import func
+
+    charge_debits = db.scalar(
+        select(func.coalesce(func.sum(LedgerEntry.amount), 0))
+        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
+        .where(
+            LedgerEntry.folio_id == folio_id,
+            LedgerEntry.account == "Guest Receivables",
+            LedgerEntry.direction == "debit",
+            FinancialTransaction.status == "posted",
+            FinancialTransaction.transaction_type.in_(("folio_charge", "service_charge")),
+        )
+    ) or Decimal("0.00")
+    discount_credits = db.scalar(
+        select(func.coalesce(func.sum(LedgerEntry.amount), 0))
+        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
+        .where(
+            LedgerEntry.folio_id == folio_id,
+            LedgerEntry.account == "Guest Receivables",
+            LedgerEntry.direction == "credit",
+            FinancialTransaction.status == "posted",
+            FinancialTransaction.transaction_type == "folio_discount",
+        )
+    ) or Decimal("0.00")
+    return money(max(Decimal("0.00"), Decimal(charge_debits) - Decimal(discount_credits)))
 
 
 def integrity_snapshot(db: Session, folio_id: int) -> dict:
