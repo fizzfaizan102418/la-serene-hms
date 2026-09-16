@@ -157,7 +157,7 @@ def guard_folio_close(mapper, connection, target: Folio) -> None:
     snapshot_expected += money(food_net * Decimal("0.10"))
 
     from sqlalchemy import func
-    debit_total = connection.execute(
+    charge_debits = connection.execute(
         select(func.coalesce(func.sum(LedgerEntry.amount), 0))
         .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
         .where(
@@ -165,9 +165,10 @@ def guard_folio_close(mapper, connection, target: Folio) -> None:
             LedgerEntry.account == "Guest Receivables",
             LedgerEntry.direction == "debit",
             FinancialTransaction.status == "posted",
+            FinancialTransaction.transaction_type.in_(("folio_charge", "service_charge")),
         )
     ).scalar_one() or Decimal("0.00")
-    credit_total = connection.execute(
+    discount_credits = connection.execute(
         select(func.coalesce(func.sum(LedgerEntry.amount), 0))
         .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
         .where(
@@ -175,31 +176,10 @@ def guard_folio_close(mapper, connection, target: Folio) -> None:
             LedgerEntry.account == "Guest Receivables",
             LedgerEntry.direction == "credit",
             FinancialTransaction.status == "posted",
+            FinancialTransaction.transaction_type == "folio_discount",
         )
     ).scalar_one() or Decimal("0.00")
-    settlement_credits = connection.execute(
-        select(func.coalesce(func.sum(LedgerEntry.amount), 0))
-        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
-        .where(
-            LedgerEntry.folio_id == target.id,
-            LedgerEntry.account == "Guest Receivables",
-            LedgerEntry.direction == "credit",
-            FinancialTransaction.status == "posted",
-            FinancialTransaction.transaction_type.in_(("folio_payment", "deposit_applied")),
-        )
-    ).scalar_one() or Decimal("0.00")
-    refund_debits = connection.execute(
-        select(func.coalesce(func.sum(LedgerEntry.amount), 0))
-        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
-        .where(
-            LedgerEntry.folio_id == target.id,
-            LedgerEntry.account == "Guest Receivables",
-            LedgerEntry.direction == "debit",
-            FinancialTransaction.status == "posted",
-            FinancialTransaction.transaction_type == "payment_refund",
-        )
-    ).scalar_one() or Decimal("0.00")
-    actual_total = money(max(Decimal("0.00"), Decimal(debit_total) - Decimal(credit_total) + Decimal(settlement_credits) - Decimal(refund_debits)))
+    actual_total = money(max(Decimal("0.00"), Decimal(charge_debits) - Decimal(discount_credits)))
     if money(snapshot_expected) != actual_total:
         raise HTTPException(
             status_code=409,
