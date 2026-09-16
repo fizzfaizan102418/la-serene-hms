@@ -2,6 +2,13 @@
 
 This checklist is for the hotel laptop at `D:\LaSereneHMS`. It is deliberately focused on real operational workflows rather than synthetic unit-only checks.
 
+## Automated validation already completed
+- API test suite: **165 tests passed, 6 skipped**.
+- Frontend production build: **passed**.
+- Guest search limit tests: **passed**.
+- Duplicate guest create/update protection tests: **passed**.
+- Full automated validation was run before the hardened commit was pushed.
+
 ## 1. Pre-flight
 - Pull the exact GitHub `main` commit.
 - Build the web app with `npm.cmd run build`.
