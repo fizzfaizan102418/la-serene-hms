@@ -1,0 +1,23 @@
+name: Fix reservation import
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python scripts/fix_reservation_import.py
+      - run: |
+          rm scripts/fix_reservation_import.py
+          rm .github/workflows/fix-reservation-import.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/web/src/ReservationsPMSView.tsx scripts/fix_reservation_import.py .github/workflows/fix-reservation-import.yml
+          git commit -m "Fix reservation guest search import"
+          git push origin main
