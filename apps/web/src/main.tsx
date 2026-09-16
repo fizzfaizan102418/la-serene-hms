@@ -155,6 +155,18 @@ function App() {
     if (!visibleModules.includes(view)) setView('Dashboard');
   }, [user?.role]);
 
+  useEffect(() => {
+    const stopNumberWheelChange = (event: WheelEvent) => {
+      const target = event.target;
+      if (target instanceof HTMLInputElement && target.type === 'number' && document.activeElement === target) {
+        event.preventDefault();
+      }
+    };
+    document.addEventListener('wheel', stopNumberWheelChange, { passive: false });
+    return () => document.removeEventListener('wheel', stopNumberWheelChange);
+  }, []);
+
+
   function authenticated(next: User, token: string) {
     refreshGeneration.current += 1;
     localStorage.setItem(TOKEN_KEY, token);

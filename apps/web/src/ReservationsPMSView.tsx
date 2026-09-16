@@ -37,6 +37,75 @@ const todayValue = () => new Date().toISOString().slice(0, 10);
 const ACTIVE_RESERVATION_STATUSES = new Set(['reserved', 'checked_in']);
 const HIDDEN_RESERVATION_STATUSES = new Set(['checked_out', 'cancelled', 'no_show']);
 
+
+type GuestSearchProps = {
+  guests: Guest[];
+  value: string;
+  onChange: (value: string) => void;
+  api: <T>(path: string, options?: RequestInit) => Promise<T>;
+  placeholder?: string;
+};
+
+function GuestSearch({ guests, value, onChange, api, placeholder = 'Search guest name or phone' }: GuestSearchProps) {
+  const [query, setQuery] = useState('');
+  const [matches, setMatches] = useState<Guest[]>([]);
+  const [selectedLabel, setSelectedLabel] = useState('');
+
+  useEffect(() => {
+    if (!value) {
+      setSelectedLabel('');
+      return;
+    }
+    const selected = guests.find(guest => String(guest.id) === value);
+    if (selected) setSelectedLabel(`${selected.full_name}${selected.phone ? ` · ${selected.phone}` : ''}`);
+  }, [value, guests]);
+
+  useEffect(() => {
+    const needle = query.trim();
+    if (value || needle.length < 2) {
+      setMatches([]);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      api<Guest[]>(`/api/guests?q=${encodeURIComponent(needle)}`)
+        .then(result => setMatches(result.slice(0, 20)))
+        .catch(() => setMatches([]));
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [api, query, value]);
+
+  function choose(guest: Guest) {
+    onChange(String(guest.id));
+    setSelectedLabel(`${guest.full_name}${guest.phone ? ` · ${guest.phone}` : ''}`);
+    setQuery('');
+    setMatches([]);
+  }
+
+  function clear() {
+    onChange('');
+    setSelectedLabel('');
+    setQuery('');
+    setMatches([]);
+  }
+
+  if (value) {
+    return <div style={{ border: '1px solid #dedbd2', padding: 10, borderRadius: 10, display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', background: '#fbfaf7' }}>
+      <span><strong>{selectedLabel || `Guest #${value}`}</strong></span>
+      <button type="button" className="link-button" onClick={clear}>Change</button>
+    </div>;
+  }
+
+  return <div style={{ position: 'relative' }}>
+    <input value={query} onChange={event => setQuery(event.target.value)} placeholder={placeholder} autoComplete="off" aria-label={placeholder} />
+    {query.trim().length >= 2 && <div className="reservation-list" style={{ marginTop: 8 }}>
+      {matches.length ? matches.map(guest => <article key={guest.id}>
+        <div><strong>{guest.full_name}</strong><span>{guest.phone || guest.email || 'No contact details'}</span></div>
+        <button type="button" className="secondary-button small-button" onClick={() => choose(guest)}>Select</button>
+      </article>) : <p className="muted" style={{ margin: 8 }}>No matching guest found.</p>}
+    </div>}
+  </div>;
+}
+
 export default function ReservationsPMSView({ user, guests, rooms, roomTypes, reservations, onRefresh, api }: Props) {
   const canOperate = user.role === 'admin' || user.role === 'reception';
   const today = todayValue();
@@ -296,7 +365,7 @@ export default function ReservationsPMSView({ user, guests, rooms, roomTypes, re
               </label>)}
             </div>
             <div className="two-col" style={{ marginTop: 10 }}>
-              <label>New reservation guest<select value={splitGuest} onChange={e => setSplitGuest(e.target.value)}><option value="">Same booking guest</option>{guests.map(g => <option key={g.id} value={g.id}>{g.full_name}</option>)}</select></label>
+              <label>New reservation guest<GuestSearch guests={guests} value={splitGuest} onChange={setSplitGuest} api={api} placeholder="Search guest name or phone" /></label>
               <div style={{ display: 'flex', alignItems: 'end' }}><button type="button" className="secondary-button" disabled={busy || !splitRooms.length} onClick={() => void splitReservation()}>Split selected rooms</button></div>
             </div>
           </section>}
@@ -350,11 +419,11 @@ export default function ReservationsPMSView({ user, guests, rooms, roomTypes, re
 
       {canOperate && <form className="panel form-panel" onSubmit={createReservation}>
         <div className="panel-head"><h2>New reservation</h2><span>Multi-room</span></div>
-        <label>Booking guest<select value={bookingGuest} onChange={e => { setBookingGuest(e.target.value); setAllocations(current => current.map(a => ({ ...a, occupantId: a.occupantId || e.target.value }))); }} required><option value="">Select guest</option>{guests.map(g => <option key={g.id} value={g.id}>{g.full_name}{g.phone ? ` · ${g.phone}` : ''}</option>)}</select></label>
+        <label>Booking guest<GuestSearch guests={guests} value={bookingGuest} onChange={value => { setBookingGuest(value); setAllocations(current => current.map(a => ({ ...a, occupantId: a.occupantId || value }))); }} api={api} placeholder="Search guest name or phone" /></label>
         <div className="two-col"><label>Check-in<input type="date" value={checkIn} onChange={e => setCheckIn(e.target.value)} required /></label><label>Check-out<input type="date" value={checkOut} onChange={e => setCheckOut(e.target.value)} required /></label></div>
         <button type="button" className="secondary-button" onClick={findAvailable}>Check room availability</button>
         {available.length > 0 && <div className="availability-picker">{available.map(room => <button type="button" key={room.id} className={allocations.some(a => a.roomId === room.id) ? 'selected' : ''} onClick={() => addRoom(room)}><strong>{room.number}</strong><span>{typeById.get(room.room_type_id)?.name ?? 'Room'} · {money(Number(typeById.get(room.room_type_id)?.base_rate ?? 0))}</span></button>)}</div>}
-        {allocations.length > 0 && <div className="reservation-list">{allocations.map(a => { const room = rooms.find(r => r.id === a.roomId)!; return <article key={a.roomId}><div style={{ width: '100%' }}><div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}><strong>Room {room.number}</strong><button type="button" className="link-button" onClick={() => removeRoom(a.roomId)}>Remove</button></div><div className="two-col" style={{ marginTop: 8 }}><label>Occupant<select value={a.occupantId} onChange={e => updateAllocation(a.roomId, { occupantId: e.target.value })}><option value="">Select occupant</option>{guests.map(g => <option key={g.id} value={g.id}>{g.full_name}</option>)}</select></label><label>Negotiated rate<input type="number" min="0" step="0.01" value={a.rate} onChange={e => updateAllocation(a.roomId, { rate: e.target.value })} /></label></div><div className="two-col"><label>Discount %<input type="number" min="0" max="100" step="0.01" value={a.discountPercent} onChange={e => updateAllocation(a.roomId, { discountPercent: e.target.value })} /></label><label>Fixed discount<input type="number" min="0" step="0.01" value={a.fixedDiscount} onChange={e => updateAllocation(a.roomId, { fixedDiscount: e.target.value })} /></label></div><div className="muted" style={{ marginTop: 8, fontSize: 13 }}>{(() => { const gross = Number(a.rate || 0); const pct = Math.min(gross, gross * Number(a.discountPercent || 0) / 100); const fixed = Math.max(0, Number(a.fixedDiscount || 0)); const totalDiscount = Math.min(gross, pct + fixed); return <>Discount: {money(pct)} + {money(fixed)} = {money(totalDiscount)} · Net: {money(gross - totalDiscount)}</>; })()}</div></div></article>; })}</div>}
+        {allocations.length > 0 && <div className="reservation-list">{allocations.map(a => { const room = rooms.find(r => r.id === a.roomId)!; return <article key={a.roomId}><div style={{ width: '100%' }}><div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}><strong>Room {room.number}</strong><button type="button" className="link-button" onClick={() => removeRoom(a.roomId)}>Remove</button></div><div className="two-col" style={{ marginTop: 8 }}><label>Occupant<GuestSearch guests={guests} value={a.occupantId} onChange={value => updateAllocation(a.roomId, { occupantId: value })} api={api} placeholder="Search occupant name or phone" /></label><label>Negotiated rate<input type="number" min="0" step="0.01" value={a.rate} onChange={e => updateAllocation(a.roomId, { rate: e.target.value })} /></label></div><div className="two-col"><label>Discount %<input type="number" min="0" max="100" step="0.01" value={a.discountPercent} onChange={e => updateAllocation(a.roomId, { discountPercent: e.target.value })} /></label><label>Fixed discount<input type="number" min="0" step="0.01" value={a.fixedDiscount} onChange={e => updateAllocation(a.roomId, { fixedDiscount: e.target.value })} /></label></div><div className="muted" style={{ marginTop: 8, fontSize: 13 }}>{(() => { const gross = Number(a.rate || 0); const pct = Math.min(gross, gross * Number(a.discountPercent || 0) / 100); const fixed = Math.max(0, Number(a.fixedDiscount || 0)); const totalDiscount = Math.min(gross, pct + fixed); return <>Discount: {money(pct)} + {money(fixed)} = {money(totalDiscount)} · Net: {money(gross - totalDiscount)}</>; })()}</div></div></article>; })}</div>}
         <div className="two-col"><label>Payment policy<select value={paymentPolicy} onChange={e => setPaymentPolicy(e.target.value)}><option value="at_booking">At booking</option><option value="at_checkin">At check-in</option><option value="at_checkout">At check-out</option><option value="partial">Partial / staged</option></select></label><label>Deposit received<input type="number" min="0" step="0.01" value={deposit} onChange={e => setDeposit(e.target.value)} /></label></div>
         <label>Group / organizer<select value={groupId} onChange={e => setGroupId(e.target.value)} onFocus={loadGroups}><option value="">No group</option>{groups.map(g => <option key={g.id} value={g.id}>{g.code} · {g.name}</option>)}</select></label>
         <label>Notes<textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder="Company, organizer, special instructions, room-sharing notes…" /></label>

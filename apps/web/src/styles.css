@@ -177,3 +177,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 @media (max-width: 760px) { .shell { padding-left: 16px; padding-right: 16px; } .panel { padding: 18px; } .module-nav { margin-top: 20px; } .stats { gap: 10px; } .stat { min-height: 96px; padding: 15px; } .stat strong { font-size: 26px; } }
 @media (max-width: 520px) { .panel-head { align-items: flex-start; flex-wrap: wrap; } .panel-head select { width: 100%; } .desk-actions, .housekeeping-actions, .billing-actions { display: grid; grid-template-columns: 1fr 1fr; } .desk-actions .primary-button, .desk-actions .secondary-button, .housekeeping-actions .primary-button, .housekeeping-actions .secondary-button, .billing-actions .primary-button, .billing-actions .secondary-button { width: 100%; } }
 @media (max-width: 420px) { .stat { min-height: 88px; } .stat span { font-size: 12px; } .stat strong { font-size: 24px; } .panel { padding: 16px; border-radius: 16px; } .desk-actions, .housekeeping-actions, .billing-actions { grid-template-columns: 1fr; } }
+
+
+/* Money/rate/quantity inputs must not change accidentally from spinner clicks or mouse-wheel input. */
+input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
