@@ -34,11 +34,14 @@ type StayDetail = {
 
 const money = (value: number) => Number(value || 0).toFixed(2);
 const todayValue = () => new Date().toISOString().slice(0, 10);
+const ACTIVE_RESERVATION_STATUSES = new Set(['reserved', 'checked_in']);
+const HIDDEN_RESERVATION_STATUSES = new Set(['checked_out', 'cancelled', 'no_show']);
 
 export default function ReservationsPMSView({ user, guests, rooms, roomTypes, reservations, onRefresh, api }: Props) {
   const canOperate = user.role === 'admin' || user.role === 'reception';
   const today = todayValue();
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [reservationSearch, setReservationSearch] = useState('');
   const [checkIn, setCheckIn] = useState(today);
   const [checkOut, setCheckOut] = useState('');
   const [bookingGuest, setBookingGuest] = useState('');
@@ -254,17 +257,30 @@ export default function ReservationsPMSView({ user, guests, rooms, roomTypes, re
   }
 
   const operationalStays = stays.length > 0 ? stays : [];
+  const searchNeedle = reservationSearch.trim().toLowerCase();
+  const searchableReservations = reservations.filter(r => {
+    if (!searchNeedle) return ACTIVE_RESERVATION_STATUSES.has(r.status);
+    const roomNumbers = r.room_ids.map(id => roomById.get(id)?.number ?? id).join(' ');
+    const haystack = `${r.id} ${r.guest_name} ${r.check_in} ${r.check_out} ${roomNumbers} ${r.status}`.toLowerCase();
+    return haystack.includes(searchNeedle);
+  });
+  const visibleReservationCount = searchNeedle ? searchableReservations.length : reservations.filter(r => ACTIVE_RESERVATION_STATUSES.has(r.status)).length;
+  const hiddenHistoryCount = reservations.filter(r => HIDDEN_RESERVATION_STATUSES.has(r.status)).length;
 
   return <section className="page">
-    <div className="page-heading"><div><p className="muted">PMS reservation control</p><h2>Reservations</h2></div><span className="room-count">{reservations.length} bookings</span></div>
+    <div className="page-heading"><div><p className="muted">PMS reservation control</p><h2>Reservations</h2></div><span className="room-count">{visibleReservationCount} active bookings</span></div>
     {message && <p className="notice">{message}</p>}
     <div className="workspace" style={{ gridTemplateColumns: 'minmax(0, 1.25fr) minmax(360px, 1fr)' }}>
       <div className="panel">
-        <div className="panel-head"><h2>Reservation register</h2><span>{reservations.filter(r => r.status === 'reserved').length} confirmed</span></div>
+        <div className="panel-head"><div><h2>Reservation register</h2><span>{visibleReservationCount} active · {hiddenHistoryCount} historical hidden</span></div></div>
+        <div style={{ display: 'flex', gap: 10, marginBottom: 14, alignItems: 'center' }}>
+          <input aria-label="Search reservations" placeholder="Search guest, room, reservation #, or date" value={reservationSearch} onChange={e => setReservationSearch(e.target.value)} style={{ flex: 1 }} />
+          {reservationSearch && <button type="button" className="secondary-button small-button" onClick={() => setReservationSearch('')}>Clear</button>}
+        </div>
         <div className="reservation-list">
-          {reservations.length ? reservations.map(r => <article key={r.id} onClick={() => openReservation(r)} style={{ cursor: 'pointer', border: selectedId === r.id ? '2px solid #26342a' : undefined }}>
+          {searchableReservations.length ? searchableReservations.map(r => <article key={r.id} onClick={() => openReservation(r)} style={{ cursor: 'pointer', border: selectedId === r.id ? '2px solid #26342a' : undefined }}>
             <div><strong>#{r.id} · {r.guest_name}</strong><span>{r.check_in} → {r.check_out} · {r.room_ids.map(id => roomById.get(id)?.number ?? id).join(', ') || 'No room'}</span></div><b>{r.status}</b>
-          </article>) : <p className="muted">No reservations yet.</p>}
+          </article>) : <p className="muted">{searchNeedle ? 'No reservations match your search.' : 'No active reservations.'}</p>}
         </div>
 
         {selected && <div className="panel" style={{ marginTop: 16, background: '#fbfaf7' }}>
