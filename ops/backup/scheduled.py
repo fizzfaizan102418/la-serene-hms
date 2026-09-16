@@ -22,11 +22,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run and verify a scheduled HMS PostgreSQL backup")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--retain", type=int, default=7)
+    parser.add_argument("--mirror-dir", type=Path, default=None)
+    parser.add_argument("--mirror-retain", type=int, default=30)
     args = parser.parse_args()
     configure_logging(args.output_dir)
 
     try:
-        dump_path, manifest_path = create_backup(args.output_dir, retain=args.retain)
+        dump_path, manifest_path = create_backup(
+            args.output_dir,
+            retain=args.retain,
+            mirror_dir=args.mirror_dir,
+            mirror_retain=args.mirror_retain,
+        )
         manifest = verify_backup(dump_path, manifest_path)
         result = {
             "status": "verified",
@@ -35,8 +42,11 @@ def main() -> int:
             "sha256": manifest["sha256"],
             "business_date": manifest["business_date"],
             "alembic_revision": manifest["alembic_revision"],
+            "mirror_dir": str(args.mirror_dir) if args.mirror_dir else None,
         }
         logging.info("Backup completed and checksum verified: %s", dump_path.name)
+        if args.mirror_dir:
+            logging.info("Verified backup mirrored to: %s", args.mirror_dir)
         print(json.dumps(result))
         return 0
     except Exception:
