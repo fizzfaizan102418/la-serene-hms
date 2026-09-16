@@ -1,5 +1,5 @@
 import unittest
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import create_engine, select, text
@@ -10,7 +10,7 @@ import app.financial_models  # noqa: F401
 import app.models  # noqa: F401
 import app.pms_core  # noqa: F401
 from app.expenses import create_expense, expense_summary, list_expenses
-from app.models import AuditLog, Role, User
+from app.models import AuditLog, BusinessDateState, Role, User
 
 
 class ExpensesModuleTests(unittest.TestCase):
@@ -24,14 +24,16 @@ class ExpensesModuleTests(unittest.TestCase):
         self.db = Session(self.engine)
         role = Role(id=1, name="admin")
         user = User(id=1, username="admin", password_hash="test", role_id=1)
-        self.db.add_all([role, user]); self.db.commit(); self.user = user
+        self.business_date = date(2026, 9, 16)
+        state = BusinessDateState(id=1, current_business_date=self.business_date, opened_at=datetime.utcnow())
+        self.db.add_all([role, user, state]); self.db.commit(); self.user = user
 
     def tearDown(self):
         self.db.rollback(); self.db.close()
 
     def test_create_expense_and_summary(self):
         payload = type("Payload", (), {
-            "expense_date": date(2026, 9, 13), "category": "Electricity",
+            "expense_date": self.business_date, "category": "Electricity",
             "description": "Monthly electricity bill", "amount": Decimal("75000.00"),
             "payment_method": "Bank", "paid_to": "WAPDA", "reference": "ELEC-SEP",
             "department": "Administration", "notes": "Main hotel meter",
@@ -42,11 +44,11 @@ class ExpensesModuleTests(unittest.TestCase):
         self.assertEqual(created["amount"], Decimal("75000.00"))
         self.assertEqual(created["payment_method"], "Bank")
 
-        rows = list_expenses(from_date=date(2026, 9, 13), to_date=date(2026, 9, 13), db=self.db, _=self.user)
+        rows = list_expenses(from_date=self.business_date, to_date=self.business_date, db=self.db, _=self.user)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["paid_to"], "WAPDA")
 
-        summary = expense_summary(from_date=date(2026, 9, 13), to_date=date(2026, 9, 13), db=self.db, _=self.user)
+        summary = expense_summary(from_date=self.business_date, to_date=self.business_date, db=self.db, _=self.user)
         self.assertEqual(summary["total"], Decimal("75000.00"))
         self.assertEqual(summary["by_category"][0]["category"], "Electricity")
         self.assertEqual(summary["by_department"][0]["department"], "Administration")
