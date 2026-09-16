@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 type Summary = { folio_id: number; reservation_id: number; guest_name: string; status: string; total: number; paid: number; balance: number };
 type Item = { id: number; description: string; category: string; quantity: number; unit_price: number; discount: number; line_total: number };
@@ -6,8 +6,39 @@ type Payment = { id: number; amount: number; method: string; reference?: string 
 type Folio = { id: number; reservation_id: number; status: string; items: Item[]; payments: Payment[]; subtotal: number; discounts: number; food_service_charge: number; total: number; paid: number; balance: number };
 type FinancialTransaction = { id: number; transaction_type: string; status: string; reference_type?: string | null; reference_id?: string | null; folio_id?: number | null; reversal_of_id?: number | null };
 type Props = { userRole: string; summaries: Summary[]; onRefresh: () => Promise<void>; api: <T>(path: string, options?: RequestInit) => Promise<T> };
+
 const money = (value: number) => Number(value || 0).toFixed(2);
 const ITEM_TRANSACTION_REFERENCES = new Set(['folio_item', 'folio_item_discount', 'folio_item_service_charge']);
+const PAGE_SIZE = 25;
+
+function paymentStatus(summary: Summary): 'paid' | 'partial' | 'due' {
+  if (Number(summary.balance) <= 0.005) return 'paid';
+  if (Number(summary.paid) > 0) return 'partial';
+  return 'due';
+}
+
+function paymentLabel(status: ReturnType<typeof paymentStatus>) {
+  return status === 'paid' ? 'Paid' : status === 'partial' ? 'Partial' : 'Due';
+}
+
+function normalizeStatus(status: string) {
+  return status.toLowerCase().replace(/_/g, ' ');
+}
+
+function methodLabel(method: string) {
+  return method.replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
+}
+
+function badgeStyle(kind: 'paid' | 'partial' | 'due' | 'open' | 'closed') {
+  const styles = {
+    paid: { background: '#dcfce7', color: '#166534' },
+    partial: { background: '#fef3c7', color: '#92400e' },
+    due: { background: '#fee2e2', color: '#991b1b' },
+    open: { background: '#dbeafe', color: '#1d4ed8' },
+    closed: { background: '#e5e7eb', color: '#374151' },
+  } as const;
+  return { ...styles[kind], borderRadius: 999, display: 'inline-flex', alignItems: 'center', padding: '4px 9px', fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' as const };
+}
 
 export default function BillingView({ userRole, summaries, onRefresh, api }: Props) {
   const canOperate = userRole === 'admin' || userRole === 'reception';
@@ -32,6 +63,51 @@ export default function BillingView({ userRole, summaries, onRefresh, api }: Pro
   const [editDiscount, setEditDiscount] = useState('0');
   const [editReason, setEditReason] = useState('Billing correction');
   const [busyItemId, setBusyItemId] = useState<number | null>(null);
+
+  const [query, setQuery] = useState('');
+  const [folioStatusFilter, setFolioStatusFilter] = useState('all');
+  const [paymentFilter, setPaymentFilter] = useState('all');
+  const [sortBy, setSortBy] = useState('newest');
+  const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    if (selected !== null && summaries.some(summary => summary.folio_id === selected)) return;
+    setSelected(summaries[0]?.folio_id ?? null);
+  }, [summaries, selected]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [query, folioStatusFilter, paymentFilter, sortBy]);
+
+  const filteredSummaries = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    const filtered = summaries.filter(summary => {
+      const searchable = `${summary.folio_id} ${summary.reservation_id} ${summary.guest_name}`.toLowerCase();
+      const statusMatches = folioStatusFilter === 'all' || summary.status.toLowerCase() === folioStatusFilter;
+      const paymentMatches = paymentFilter === 'all' || paymentStatus(summary) === paymentFilter;
+      return (!needle || searchable.includes(needle)) && statusMatches && paymentMatches;
+    });
+
+    return [...filtered].sort((a, b) => {
+      if (sortBy === 'oldest') return a.folio_id - b.folio_id;
+      if (sortBy === 'guest') return a.guest_name.localeCompare(b.guest_name);
+      if (sortBy === 'balance') return Number(b.balance) - Number(a.balance);
+      if (sortBy === 'total') return Number(b.total) - Number(a.total);
+      return b.folio_id - a.folio_id;
+    });
+  }, [summaries, query, folioStatusFilter, paymentFilter, sortBy]);
+
+  const pageCount = Math.max(1, Math.ceil(filteredSummaries.length / PAGE_SIZE));
+  const visibleSummaries = filteredSummaries.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const registerStats = useMemo(() => {
+    let open = 0; let closed = 0; let paid = 0; let due = 0;
+    summaries.forEach(summary => {
+      if (summary.status.toLowerCase() === 'closed') closed += 1; else open += 1;
+      if (paymentStatus(summary) === 'paid') paid += 1; else due += 1;
+    });
+    return { total: summaries.length, open, closed, paid, due };
+  }, [summaries]);
 
   async function loadFolio(id: number) {
     const [nextFolio, nextTransactions] = await Promise.all([
@@ -118,14 +194,7 @@ export default function BillingView({ userRole, summaries, onRefresh, api }: Pro
       if (fixedDiscount > gross) throw new Error('Discount cannot exceed the line amount');
       await api(`/api/folios/${id}/items/${editingItem.id}/correct`, {
         method: 'POST',
-        body: JSON.stringify({
-          description: editDescription,
-          category: editCategory,
-          quantity: Number(editQuantity),
-          unit_price: Number(editUnitPrice),
-          discount: fixedDiscount,
-          reason: editReason || 'Billing correction',
-        }),
+        body: JSON.stringify({ description: editDescription, category: editCategory, quantity: Number(editQuantity), unit_price: Number(editUnitPrice), discount: fixedDiscount, reason: editReason || 'Billing correction' }),
       });
       setEditingItem(null); await loadFolio(id); setMessage(`Charge #${editingItem.id} corrected. The original remains in the audit trail.`); await onRefresh();
     } catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to correct charge'); }
@@ -134,7 +203,7 @@ export default function BillingView({ userRole, summaries, onRefresh, api }: Pro
 
   async function addPayment(event: React.FormEvent) {
     event.preventDefault();
-    try { const id = await ensureSelected(); const result = await api<Payment>(`/api/folios/${id}/payments`, { method: 'POST', body: JSON.stringify({ amount: Number(amount), method, reference: reference || null }) }); await loadFolio(id); setAmount(''); setReference(''); setMessage('Payment recorded.'); await onRefresh(); }
+    try { const id = await ensureSelected(); await api<Payment>(`/api/folios/${id}/payments`, { method: 'POST', body: JSON.stringify({ amount: Number(amount), method, reference: reference || null }) }); await loadFolio(id); setAmount(''); setReference(''); setMessage('Payment recorded.'); await onRefresh(); }
     catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to record payment'); }
   }
 
@@ -153,12 +222,66 @@ export default function BillingView({ userRole, summaries, onRefresh, api }: Pro
     } catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to print receipt'); }
   }
 
-  return <section className="page"><div className="page-heading"><div><p className="muted">Folios, charges, payments and balances</p><h2>Billing</h2></div><span className="room-count">{summaries.length} folios</span></div>
+  const selectedPaymentStatus = folio ? (folio.balance <= 0.005 ? 'paid' : folio.paid > 0 ? 'partial' : 'due') : 'due';
+  const selectedFolioStatus = folio?.status.toLowerCase() === 'closed' ? 'closed' : 'open';
+
+  return <section className="page">
+    <div className="page-heading"><div><p className="muted">Folios, charges, payments and balances</p><h2>Billing</h2></div><span className="room-count">{registerStats.total} folios</span></div>
     {message && <p className="notice">{message}</p>}
-    <div className="billing-layout"><div className="panel"><div className="panel-head"><h2>Folio register</h2></div><div className="billing-list">{summaries.length ? summaries.map(s => <button key={s.folio_id} className={`billing-row ${selected === s.folio_id ? 'selected' : ''}`} onClick={() => void openFolio(s.folio_id)}><div><strong>Folio #{s.folio_id} · {s.guest_name}</strong><span>Reservation #{s.reservation_id} · {s.status}</span></div><div><b>{money(s.total)}</b><small>{money(s.balance)} due</small></div></button>) : <p className="muted">No folios available yet.</p>}</div></div>
-      <div className="side-stack">{folio && <div className="panel"><div className="panel-head"><div><p className="muted">Folio #{folio.id} · reservation #{folio.reservation_id}</p><h2>Guest account</h2></div><span>{folio.status}</span></div><div className="billing-totals"><div><span>Subtotal</span><b>{money(folio.subtotal)}</b></div><div><span>Discounts</span><b>{money(folio.discounts)}</b></div><div><span>Food service charge (10%)</span><b>{money(folio.food_service_charge)}</b></div><div className="grand"><span>Total</span><b>{money(folio.total)}</b></div><div><span>Paid</span><b>{money(folio.paid)}</b></div><div className="balance"><span>Balance</span><b>{money(folio.balance)}</b></div></div><div className="folio-items">{folio.items.length ? folio.items.map(item => { const state = itemState(item); return <article key={item.id}><div><strong>{item.description}</strong><span>{item.category} · {Number(item.quantity)} × {money(item.unit_price)}{Number(item.discount) ? ` · discount ${money(item.discount)}` : ''}</span></div><div className="desk-actions"><b>{money(item.line_total)}</b><span className="muted">{state === 'reversed' ? 'Reversed · audit retained' : state === 'posted' ? 'Posted · immutable' : 'Financial status unavailable'}</span>{isAdmin && folio.status === 'open' && state === 'posted' && <><button className="secondary-button small-button" disabled={busyItemId === item.id} onClick={() => startEdit(item)}>Edit</button><button className="secondary-button small-button" disabled={busyItemId === item.id} onClick={() => void removeItem(item)}>{busyItemId === item.id ? 'Working…' : 'Remove'}</button></>}</div></article>; }) : <p className="muted">No charges yet.</p>}</div>{canOperate && <div className="billing-actions">{folio.status === 'open' && <button className="secondary-button" onClick={() => void addRoomCharges()}>Add room charges</button>}<button className="secondary-button" onClick={() => void printReceipt()}>Print receipt</button>{folio.status === 'open' && folio.balance === 0 && <button className="primary-button" onClick={() => void closeFolio()}>Close folio</button>}</div>}</div>}
+
+    <section className="stats">
+      {[['Total Folios', registerStats.total], ['Open', registerStats.open], ['Closed', registerStats.closed], ['Paid', registerStats.paid], ['Outstanding', registerStats.due]].map(([label, value]) => <article className="stat" key={String(label)}><span>{label}</span><strong>{value}</strong></article>)}
+    </section>
+
+    <div className="billing-layout">
+      <div className="panel">
+        <div className="panel-head"><div><h2>Folio register</h2><span>{filteredSummaries.length} matching folios</span></div></div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 2fr) repeat(3, minmax(120px, 1fr))', gap: 10, marginBottom: 14 }}>
+          <input aria-label="Search folios" placeholder="Search guest, folio # or reservation #" value={query} onChange={e => setQuery(e.target.value)} />
+          <select aria-label="Folio status" value={folioStatusFilter} onChange={e => setFolioStatusFilter(e.target.value)}><option value="all">All folio statuses</option><option value="open">Open</option><option value="closed">Closed</option></select>
+          <select aria-label="Payment status" value={paymentFilter} onChange={e => setPaymentFilter(e.target.value)}><option value="all">All payment statuses</option><option value="paid">Paid</option><option value="partial">Partial</option><option value="due">Due</option></select>
+          <select aria-label="Sort folios" value={sortBy} onChange={e => setSortBy(e.target.value)}><option value="newest">Newest folio</option><option value="oldest">Oldest folio</option><option value="guest">Guest name</option><option value="balance">Highest balance</option><option value="total">Highest total</option></select>
+        </div>
+
+        <div className="billing-list">
+          {visibleSummaries.length ? visibleSummaries.map(summary => {
+            const payStatus = paymentStatus(summary);
+            const folioStatus = summary.status.toLowerCase() === 'closed' ? 'closed' : 'open';
+            return <button key={summary.folio_id} className={`billing-row ${selected === summary.folio_id ? 'selected' : ''}`} onClick={() => void openFolio(summary.folio_id)}>
+              <div style={{ minWidth: 0 }}><strong>Folio #{summary.folio_id} · {summary.guest_name}</strong><span>Reservation #{summary.reservation_id}</span><span style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 5 }}><span style={badgeStyle(folioStatus)}>{normalizeStatus(summary.status)}</span><span style={badgeStyle(payStatus)}>{paymentLabel(payStatus)}</span></span></div>
+              <div style={{ textAlign: 'right' }}><b>PKR {money(summary.total)}</b><small>{summary.balance > 0 ? `PKR ${money(summary.balance)} due` : 'PKR 0.00 due'}</small></div>
+            </button>;
+          }) : <p className="muted">No folios match the current search and filters.</p>}
+        </div>
+
+        {filteredSummaries.length > PAGE_SIZE && <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginTop: 16, flexWrap: 'wrap' }}>
+          <span className="muted">Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filteredSummaries.length)} of {filteredSummaries.length}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <button className="secondary-button small-button" disabled={page === 1} onClick={() => setPage(current => Math.max(1, current - 1))}>Previous</button>
+            <span className="muted">Page {page} of {pageCount}</span>
+            <button className="secondary-button small-button" disabled={page === pageCount} onClick={() => setPage(current => Math.min(pageCount, current + 1))}>Next</button>
+          </div>
+        </div>}
+      </div>
+
+      <div className="side-stack">
+        {folio && <div className="panel">
+          <div className="panel-head"><div><p className="muted">Folio #{folio.id} · Reservation #{folio.reservation_id}</p><h2>Folio details</h2></div><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}><span style={badgeStyle(selectedFolioStatus)}>{normalizeStatus(folio.status)}</span><span style={badgeStyle(selectedPaymentStatus)}>{paymentLabel(selectedPaymentStatus)}</span></div></div>
+          <div className="billing-totals"><div><span>Subtotal</span><b>PKR {money(folio.subtotal)}</b></div><div><span>Discounts</span><b>PKR {money(folio.discounts)}</b></div><div><span>Food service charge (10%)</span><b>PKR {money(folio.food_service_charge)}</b></div><div className="grand"><span>Total</span><b>PKR {money(folio.total)}</b></div><div><span>Paid</span><b>PKR {money(folio.paid)}</b></div><div className="balance"><span>Balance</span><b>PKR {money(folio.balance)}</b></div></div>
+
+          <div className="panel-head" style={{ marginTop: 18 }}><h3>Charges</h3><span>{folio.items.length} line items</span></div>
+          <div className="folio-items">{folio.items.length ? folio.items.map(item => { const state = itemState(item); return <article key={item.id}><div><strong>{item.description}</strong><span>{item.category} · {Number(item.quantity)} × PKR {money(item.unit_price)}{Number(item.discount) ? ` · discount PKR ${money(item.discount)}` : ''}</span></div><div className="desk-actions"><b>PKR {money(item.line_total)}</b><span className="muted">{state === 'reversed' ? 'Reversed · audit retained' : state === 'posted' ? 'Posted · immutable' : 'Financial status unavailable'}</span>{isAdmin && folio.status === 'open' && state === 'posted' && <><button className="secondary-button small-button" disabled={busyItemId === item.id} onClick={() => startEdit(item)}>Edit</button><button className="secondary-button small-button" disabled={busyItemId === item.id} onClick={() => void removeItem(item)}>{busyItemId === item.id ? 'Working…' : 'Remove'}</button></>}</div></article>; }) : <p className="muted">No charges yet.</p>}</div>
+
+          <div className="panel-head" style={{ marginTop: 18 }}><h3>Payments</h3><span>{folio.payments.length} payments</span></div>
+          <div className="folio-items">{folio.payments.length ? folio.payments.map(payment => <article key={payment.id}><div><strong>PKR {money(payment.amount)}</strong><span>{methodLabel(payment.method)}{payment.reference ? ` · ${payment.reference}` : ''}</span></div><span className="muted">Payment #{payment.id}</span></article>) : <p className="muted">No payments recorded.</p>}</div>
+
+          {canOperate && <div className="billing-actions">{folio.status === 'open' && <button className="secondary-button" onClick={() => void addRoomCharges()}>Add room charges</button>}<button className="secondary-button" onClick={() => void printReceipt()}>Print receipt</button>{folio.status === 'open' && folio.balance === 0 && <button className="primary-button" onClick={() => void closeFolio()}>Close folio</button>}</div>}
+        </div>}
+
         {isAdmin && editingItem && folio?.status === 'open' && <form className="panel form-panel" onSubmit={saveEdit}><div className="panel-head"><div><h2>Edit charge</h2><span>Creates an audited reversal and replacement</span></div><button type="button" className="secondary-button small-button" onClick={() => setEditingItem(null)}>Cancel</button></div><label>Description<input value={editDescription} onChange={e => setEditDescription(e.target.value)} required /></label><label>Category<select value={editCategory} onChange={e => setEditCategory(e.target.value)}><option value="service">Service</option><option value="food">Food & beverage</option><option value="room">Room</option><option value="adjustment">Adjustment</option><option value="other">Other</option></select></label><div className="two-col"><label>Quantity<input type="number" min="0.01" step="0.01" value={editQuantity} onChange={e => setEditQuantity(e.target.value)} required /></label><label>Unit price<input type="number" min="0" step="0.01" value={editUnitPrice} onChange={e => setEditUnitPrice(e.target.value)} required /></label></div><label>Discount<input type="number" min="0" step="0.01" value={editDiscount} onChange={e => setEditDiscount(e.target.value)} /></label><label>Reason<input value={editReason} onChange={e => setEditReason(e.target.value)} required /></label><p className="muted">The original posted charge is never overwritten. Its financial transactions are reversed atomically, then the corrected charge is posted.</p><button className="primary-button" disabled={busyItemId === editingItem.id || !editUnitPrice}>{busyItemId === editingItem.id ? 'Saving…' : 'Save correction'}</button></form>}
         {canOperate && folio?.status === 'open' && !editingItem && <form className="panel form-panel" onSubmit={addCharge}><div className="panel-head"><h2>Add charge</h2><span>Charges post immediately</span></div><label>Description<input value={description} onChange={e => setDescription(e.target.value)} required /></label><label>Category<select value={category} onChange={e => setCategory(e.target.value)}><option value="service">Service</option><option value="food">Food & beverage</option><option value="room">Room</option><option value="adjustment">Adjustment</option><option value="other">Other</option></select></label><div className="two-col"><label>Quantity<input type="number" min="0.01" step="0.01" value={quantity} onChange={e => setQuantity(e.target.value)} required /></label><label>Unit price<input type="number" min="0" step="0.01" value={unitPrice} onChange={e => setUnitPrice(e.target.value)} required /></label></div><label>Discount<input type="number" min="0" step="0.01" value={discount} onChange={e => setDiscount(e.target.value)} /></label><button className="primary-button" disabled={!selected || !unitPrice}>Post charge</button></form>}
         {canOperate && folio?.status === 'open' && <form className="panel form-panel" onSubmit={addPayment}><div className="panel-head"><h2>Record payment</h2></div><label>Amount<input type="number" min="0.01" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} required /></label><label>Method<select value={method} onChange={e => setMethod(e.target.value)}><option value="cash">Cash</option><option value="card">Card</option><option value="bank_transfer">Bank transfer</option><option value="other">Other</option></select></label><label>Reference<input value={reference} onChange={e => setReference(e.target.value)} /></label><button className="primary-button" disabled={!selected || !amount}>Record payment</button></form>}
-      </div></div></section>;
+      </div>
+    </div>
+  </section>;
 }
