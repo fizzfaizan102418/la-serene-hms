@@ -49,17 +49,34 @@ def validate_sqlite(path: Path) -> tuple[bool, str]:
     return True, "ok"
 
 
-def postgres_command_url() -> tuple[str, dict[str, str]]:
+def postgres_command_url() -> tuple[list[str], dict[str, str]]:
+    """Build explicit libpq connection arguments from the configured DB URL.
+
+    The Windows production API runs as LocalSystem. libpq can otherwise inherit
+    machine/service environment values such as PGUSER and accidentally connect as
+    SYSTEM. Passing the configured host/port/user/database explicitly prevents
+    that while keeping the password out of the process command line.
+    """
     url = make_url(DATABASE_URL)
     password = url.password
     if not url.username or not url.host or not url.database:
         raise RuntimeError("Production PostgreSQL connection is incomplete")
     if not password:
         raise RuntimeError("Production PostgreSQL connection password is not configured")
-    safe_url = url.set(password=None).render_as_string(hide_password=False)
+
+    args = ["--host", url.host]
+    if url.port:
+        args += ["--port", str(url.port)]
+    args += ["--username", url.username, "--dbname", url.database]
+
     env = os.environ.copy()
+    # Do not allow service-account PostgreSQL defaults to override the production
+    # connection. PGPASSWORD is intentionally retained as the only credential
+    # supplied to pg_dump/pg_restore.
+    for key in ("PGUSER", "PGDATABASE", "PGHOST", "PGPORT", "PGSERVICE", "PGSERVICEFILE", "PGPASSFILE"):
+        env.pop(key, None)
     env["PGPASSWORD"] = password
-    return safe_url, env
+    return args, env
 
 
 def run_postgres_tool(command: list[str], env: dict[str, str]) -> None:
@@ -108,17 +125,28 @@ def create_sqlite_backup(prefix: str = "backup") -> Path:
 
 def create_postgres_backup(prefix: str = "backup") -> Path:
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    target = BACKUP_DIR / f"{prefix}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S_%f')}{POSTGRES_BACKUP_SUFFIX}"
-    database_url, env = postgres_command_url()
+    timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S_%f')
+    target = BACKUP_DIR / f"{prefix}_{timestamp}{POSTGRES_BACKUP_SUFFIX}"
+    partial = BACKUP_DIR / f".{target.name}.partial"
+    connection_args, env = postgres_command_url()
     pg_dump = shutil.which("pg_dump")
     if not pg_dump:
         raise RuntimeError("PostgreSQL client tool pg_dump is not installed or not on PATH")
-    run_postgres_tool([pg_dump, "--format=custom", "--no-owner", "--no-acl", "--dbname", database_url, "--file", str(target)], env)
-    valid, reason = validate_postgres(target)
-    if not valid:
+    partial.unlink(missing_ok=True)
+    try:
+        run_postgres_tool(
+            [pg_dump, "--format=custom", "--no-owner", "--no-acl", *connection_args, "--file", str(partial)],
+            env,
+        )
+        valid, reason = validate_postgres(partial)
+        if not valid:
+            raise RuntimeError(f"Created backup did not pass validation: {reason}")
+        partial.replace(target)
+        return target
+    except Exception:
+        partial.unlink(missing_ok=True)
         target.unlink(missing_ok=True)
-        raise RuntimeError(f"Created backup did not pass validation: {reason}")
-    return target
+        raise
 
 
 def create_backup(prefix: str = "backup") -> Path:
@@ -147,7 +175,11 @@ def list_backups(_: User = Depends(require_roles("admin"))):
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     suffix = "*.sqlite3" if IS_SQLITE else f"*{POSTGRES_BACKUP_SUFFIX}"
     backups = sorted(BACKUP_DIR.glob(suffix), key=lambda path: path.stat().st_mtime, reverse=True)
-    return {"database": DATABASE_PATH.name if IS_SQLITE else "PostgreSQL", "backups": [backup_info(path) for path in backups if not path.name.startswith('.')]} 
+    if IS_SQLITE:
+        valid_backups = [path for path in backups if not path.name.startswith('.') and validate_sqlite(path)[0]]
+    else:
+        valid_backups = [path for path in backups if not path.name.startswith('.') and validate_postgres(path)[0]]
+    return {"database": DATABASE_PATH.name if IS_SQLITE else "PostgreSQL", "backups": [backup_info(path) for path in valid_backups]}
 
 
 @router.post("")
@@ -218,12 +250,15 @@ async def restore_database(file: UploadFile = File(...), user: User = Depends(re
                     source.backup(destination)
             ensure_schema_compatibility()
         else:
-            database_url, env = postgres_command_url()
+            connection_args, env = postgres_command_url()
             pg_restore = shutil.which("pg_restore")
             if not pg_restore:
                 raise RuntimeError("PostgreSQL client tool pg_restore is not installed or not on PATH")
             engine.dispose()
-            run_postgres_tool([pg_restore, "--clean", "--if-exists", "--no-owner", "--no-acl", "--dbname", database_url, str(temp_path)], env)
+            run_postgres_tool(
+                [pg_restore, "--clean", "--if-exists", "--no-owner", "--no-acl", *connection_args, str(temp_path)],
+                env,
+            )
 
         return {"restored": True, "source_filename": file.filename, "safety_backup": backup_info(safety_backup)}
     except HTTPException:
