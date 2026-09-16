@@ -5,6 +5,8 @@ type Item = { id: number; description: string; category: string; quantity: numbe
 type Payment = { id: number; amount: number; method: string; reference?: string | null };
 type Folio = { id: number; reservation_id: number; status: string; items: Item[]; payments: Payment[]; subtotal: number; discounts: number; food_service_charge: number; total: number; paid: number; balance: number };
 type FinancialTransaction = { id: number; transaction_type: string; status: string; reference_type?: string | null; reference_id?: string | null; folio_id?: number | null; reversal_of_id?: number | null };
+type ReservationLookup = { id: number; room_ids: number[] };
+type RoomLookup = { id: number; number: string };
 type Props = { userRole: string; summaries: Summary[]; onRefresh: () => Promise<void>; api: <T>(path: string, options?: RequestInit) => Promise<T> };
 
 const money = (value: number) => Number(value || 0).toFixed(2);
@@ -46,6 +48,7 @@ export default function BillingView({ userRole, summaries, onRefresh, api }: Pro
   const [selected, setSelected] = useState<number | null>(summaries[0]?.folio_id ?? null);
   const [folio, setFolio] = useState<Folio | null>(null);
   const [transactions, setTransactions] = useState<FinancialTransaction[]>([]);
+  const [roomNumbersByReservation, setRoomNumbersByReservation] = useState<Record<number, string[]>>({});
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('service');
   const [quantity, setQuantity] = useState('1');
@@ -79,10 +82,32 @@ export default function BillingView({ userRole, summaries, onRefresh, api }: Pro
     setPage(1);
   }, [query, folioStatusFilter, paymentFilter, sortBy]);
 
+  useEffect(() => {
+    let active = true;
+    Promise.all([
+      api<ReservationLookup[]>('/api/reservations'),
+      api<RoomLookup[]>('/api/rooms'),
+    ]).then(([reservations, rooms]) => {
+      if (!active) return;
+      const roomNumberById = new Map(rooms.map(room => [room.id, room.number]));
+      const mapping: Record<number, string[]> = {};
+      reservations.forEach(reservation => {
+        mapping[reservation.id] = (reservation.room_ids || [])
+          .map(roomId => roomNumberById.get(roomId))
+          .filter((number): number is string => Boolean(number));
+      });
+      setRoomNumbersByReservation(mapping);
+    }).catch(() => {
+      if (active) setRoomNumbersByReservation({});
+    });
+    return () => { active = false; };
+  }, [api]);
+
   const filteredSummaries = useMemo(() => {
     const needle = query.trim().toLowerCase();
     const filtered = summaries.filter(summary => {
-      const searchable = `${summary.folio_id} ${summary.reservation_id} ${summary.guest_name}`.toLowerCase();
+      const roomNumbers = roomNumbersByReservation[summary.reservation_id] || [];
+      const searchable = `${summary.folio_id} ${summary.reservation_id} ${summary.guest_name} ${roomNumbers.join(' ')}`.toLowerCase();
       const statusMatches = folioStatusFilter === 'all' || summary.status.toLowerCase() === folioStatusFilter;
       const paymentMatches = paymentFilter === 'all' || paymentStatus(summary) === paymentFilter;
       return (!needle || searchable.includes(needle)) && statusMatches && paymentMatches;
@@ -95,7 +120,7 @@ export default function BillingView({ userRole, summaries, onRefresh, api }: Pro
       if (sortBy === 'total') return Number(b.total) - Number(a.total);
       return b.folio_id - a.folio_id;
     });
-  }, [summaries, query, folioStatusFilter, paymentFilter, sortBy]);
+  }, [summaries, roomNumbersByReservation, query, folioStatusFilter, paymentFilter, sortBy]);
 
   const pageCount = Math.max(1, Math.ceil(filteredSummaries.length / PAGE_SIZE));
   const visibleSummaries = filteredSummaries.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -237,7 +262,7 @@ export default function BillingView({ userRole, summaries, onRefresh, api }: Pro
       <div className="panel">
         <div className="panel-head"><div><h2>Folio register</h2><span>{filteredSummaries.length} matching folios</span></div></div>
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 2fr) repeat(3, minmax(120px, 1fr))', gap: 10, marginBottom: 14 }}>
-          <input aria-label="Search folios" placeholder="Search guest, folio # or reservation #" value={query} onChange={e => setQuery(e.target.value)} />
+          <input aria-label="Search folios" placeholder="Search guest, room, folio # or reservation #" value={query} onChange={e => setQuery(e.target.value)} />
           <select aria-label="Folio status" value={folioStatusFilter} onChange={e => setFolioStatusFilter(e.target.value)}><option value="all">All folio statuses</option><option value="open">Open</option><option value="closed">Closed</option></select>
           <select aria-label="Payment status" value={paymentFilter} onChange={e => setPaymentFilter(e.target.value)}><option value="all">All payment statuses</option><option value="paid">Paid</option><option value="partial">Partial</option><option value="due">Due</option></select>
           <select aria-label="Sort folios" value={sortBy} onChange={e => setSortBy(e.target.value)}><option value="newest">Newest folio</option><option value="oldest">Oldest folio</option><option value="guest">Guest name</option><option value="balance">Highest balance</option><option value="total">Highest total</option></select>
@@ -247,8 +272,9 @@ export default function BillingView({ userRole, summaries, onRefresh, api }: Pro
           {visibleSummaries.length ? visibleSummaries.map(summary => {
             const payStatus = paymentStatus(summary);
             const folioStatus = summary.status.toLowerCase() === 'closed' ? 'closed' : 'open';
+            const roomNumbers = roomNumbersByReservation[summary.reservation_id] || [];
             return <button key={summary.folio_id} className={`billing-row ${selected === summary.folio_id ? 'selected' : ''}`} onClick={() => void openFolio(summary.folio_id)}>
-              <div style={{ minWidth: 0 }}><strong>Folio #{summary.folio_id} · {summary.guest_name}</strong><span>Reservation #{summary.reservation_id}</span><span style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 5 }}><span style={badgeStyle(folioStatus)}>{normalizeStatus(summary.status)}</span><span style={badgeStyle(payStatus)}>{paymentLabel(payStatus)}</span></span></div>
+              <div style={{ minWidth: 0 }}><strong>Folio #{summary.folio_id} · {summary.guest_name}</strong>{roomNumbers.length > 0 && <span>Rooms {roomNumbers.join(', ')}</span>}<span>Reservation #{summary.reservation_id}</span><span style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 5 }}><span style={badgeStyle(folioStatus)}>{normalizeStatus(summary.status)}</span><span style={badgeStyle(payStatus)}>{paymentLabel(payStatus)}</span></span></div>
               <div style={{ textAlign: 'right' }}><b>PKR {money(summary.total)}</b><small>{summary.balance > 0 ? `PKR ${money(summary.balance)} due` : 'PKR 0.00 due'}</small></div>
             </button>;
           }) : <p className="muted">No folios match the current search and filters.</p>}
