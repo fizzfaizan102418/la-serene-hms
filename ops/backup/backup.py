@@ -131,7 +131,28 @@ def prune_backups(backup_dir: Path, retain: int) -> None:
             manifest.unlink(missing_ok=True)
 
 
-def create_backup(output_dir: Path, retain: int = 7) -> tuple[Path, Path]:
+def mirror_backup(dump_path: Path, manifest_path: Path, mirror_dir: Path) -> None:
+    """Copy a verified backup to an external or network location atomically."""
+    mirror_dir.mkdir(parents=True, exist_ok=True)
+    if mirror_dir.resolve() == dump_path.parent.resolve():
+        raise RuntimeError("Backup mirror directory must be different from the local backup directory")
+
+    for source in (dump_path, manifest_path):
+        destination = mirror_dir / source.name
+        temp = mirror_dir / f".{source.name}.partial"
+        temp.unlink(missing_ok=True)
+        shutil.copy2(source, temp)
+        temp.replace(destination)
+
+    verify_backup(mirror_dir / dump_path.name, mirror_dir / manifest_path.name)
+
+
+def create_backup(
+    output_dir: Path,
+    retain: int = 7,
+    mirror_dir: Path | None = None,
+    mirror_retain: int = 30,
+) -> tuple[Path, Path]:
     database_url = require_postgres_url()
     output_dir.mkdir(parents=True, exist_ok=True)
     metadata_before = database_metadata(database_url)
@@ -143,6 +164,8 @@ def create_backup(output_dir: Path, retain: int = 7) -> tuple[Path, Path]:
     with tempfile.TemporaryDirectory(dir=output_dir) as temp_dir_name:
         temp_dump = Path(temp_dir_name) / dump_name
         run_pg_dump(database_url, temp_dump)
+        if not temp_dump.exists() or temp_dump.stat().st_size < 100:
+            raise RuntimeError("pg_dump produced an empty or invalid backup artifact")
         metadata_after = database_metadata(database_url)
         if metadata_after != metadata_before:
             raise RuntimeError("Database business date or schema revision changed during backup; refusing artifact")
@@ -158,12 +181,21 @@ def create_backup(output_dir: Path, retain: int = 7) -> tuple[Path, Path]:
         "created_at": utc_now().isoformat(),
         **metadata_before,
     }
-    write_manifest(output_dir / manifest_name, manifest)
+    final_manifest = output_dir / manifest_name
+    write_manifest(final_manifest, manifest)
+    verify_backup(final_dump, final_manifest)
     prune_backups(output_dir, retain)
-    return final_dump, output_dir / manifest_name
+
+    if mirror_dir is not None:
+        mirror_backup(final_dump, final_manifest, mirror_dir)
+        prune_backups(mirror_dir, mirror_retain)
+
+    return final_dump, final_manifest
 
 
 def verify_backup(backup_file: Path, manifest_file: Path) -> dict[str, object]:
+    if not backup_file.exists() or not manifest_file.exists():
+        raise RuntimeError("Backup or manifest file is missing")
     payload = json.loads(manifest_file.read_text(encoding="utf-8"))
     expected_file = payload.get("backup_file")
     expected_hash = payload.get("sha256")
@@ -245,6 +277,8 @@ def build_parser() -> argparse.ArgumentParser:
     create = subparsers.add_parser("create")
     create.add_argument("--output-dir", type=Path, default=DEFAULT_BACKUP_DIR)
     create.add_argument("--retain", type=int, default=7)
+    create.add_argument("--mirror-dir", type=Path, default=None)
+    create.add_argument("--mirror-retain", type=int, default=30)
     verify = subparsers.add_parser("verify")
     verify.add_argument("backup_file", type=Path)
     verify.add_argument("manifest_file", type=Path)
@@ -258,7 +292,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
     if args.command == "create":
-        dump_path, manifest_path = create_backup(args.output_dir, args.retain)
+        dump_path, manifest_path = create_backup(args.output_dir, args.retain, args.mirror_dir, args.mirror_retain)
         print(json.dumps({"status": "created", "backup_file": str(dump_path), "manifest_file": str(manifest_path)}))
         return 0
     if args.command == "verify":
