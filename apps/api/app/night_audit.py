@@ -61,15 +61,7 @@ def get_business_date(db: Session) -> date:
 
 
 def audit(db: Session, user_id: int, action: str, business_date: date, details: dict) -> None:
-    db.add(
-        AuditLog(
-            user_id=user_id,
-            action=action,
-            entity_type="night_audit",
-            entity_id=business_date.isoformat(),
-            details=json.dumps(serializable(details)),
-        )
-    )
+    db.add(AuditLog(user_id=user_id, action=action, entity_type="night_audit", entity_id=business_date.isoformat(), details=json.dumps(serializable(details))))
 
 
 def finance_snapshot(db: Session, business_date: date) -> dict:
@@ -85,151 +77,55 @@ def finance_snapshot(db: Session, business_date: date) -> dict:
         "revenue_difference": reconciliation["reconciliation"]["charge_difference"],
         "cash_difference": reconciliation["reconciliation"]["cash_difference"],
         "ledger_transactions": reconciliation["ledger"]["transactions"],
-        "trial_balance": {
-            "balanced": trial["balanced"],
-            "total_debit": trial["total_debit"],
-            "total_credit": trial["total_credit"],
-            "accounts": trial["accounts"],
-        },
-        "payment_reconciliation": {
-            "received_total": payments["received_total"],
-            "refunded_total": payments["refunded_total"],
-            "net_total": payments["net_total"],
-            "methods": payments["methods"],
-        },
-        "revenue_reconciliation": {
-            "ledger_total": reconciliation["ledger"]["revenue_credits"],
-            "operational_total": reconciliation["authority"]["folio_charges"],
-            "difference": reconciliation["reconciliation"]["charge_difference"],
-            "accounts": revenue["revenue"],
-            "total": revenue["total"],
-        },
+        "trial_balance": {"balanced": trial["balanced"], "total_debit": trial["total_debit"], "total_credit": trial["total_credit"], "accounts": trial["accounts"]},
+        "payment_reconciliation": {"received_total": payments["received_total"], "refunded_total": payments["refunded_total"], "net_total": payments["net_total"], "methods": payments["methods"]},
+        "revenue_reconciliation": {"ledger_total": reconciliation["ledger"]["revenue_credits"], "operational_total": reconciliation["authority"]["folio_charges"], "difference": reconciliation["reconciliation"]["charge_difference"], "accounts": revenue["revenue"], "total": revenue["total"]},
     }
 
 
 def build_summary(db: Session, business_date: date, finance: dict | None = None):
     day_start = datetime.combine(business_date, datetime.min.time())
     day_end = day_start + timedelta(days=1)
-
-    daily_items = db.scalars(
-        select(FolioItem).where(FolioItem.created_at >= day_start, FolioItem.created_at < day_end)
-    ).all()
-    room_revenue = Decimal("0.00")
-    other_revenue = Decimal("0.00")
-    food_revenue = Decimal("0.00")
+    daily_items = db.scalars(select(FolioItem).where(FolioItem.created_at >= day_start, FolioItem.created_at < day_end)).all()
+    room_revenue = Decimal("0.00"); other_revenue = Decimal("0.00"); food_revenue = Decimal("0.00")
     for item in daily_items:
-        if not item_has_active_charge(db, item.id):
-            continue
+        if not item_has_active_charge(db, item.id): continue
         net = max(Decimal("0.00"), Decimal(item.quantity) * Decimal(item.unit_price) - Decimal(item.discount))
         category = item.category.strip().lower()
-        if category == "room":
-            room_revenue += net
-        elif category in FOOD_CATEGORIES:
-            food_revenue += net
-        else:
-            other_revenue += net
-
+        if category == "room": room_revenue += net
+        elif category in FOOD_CATEGORIES: food_revenue += net
+        else: other_revenue += net
     service_charge = money(food_revenue * FOOD_SERVICE_CHARGE_RATE)
-    daily_payments = db.scalars(
-        select(Payment).where(Payment.created_at >= day_start, Payment.created_at < day_end)
-    ).all()
+    daily_payments = db.scalars(select(Payment).where(Payment.created_at >= day_start, Payment.created_at < day_end)).all()
     payment_totals: dict[str, Decimal] = {}
-    for payment in daily_payments:
-        payment_totals[payment.method] = payment_totals.get(payment.method, Decimal("0.00")) + Decimal(payment.amount)
-
+    for payment in daily_payments: payment_totals[payment.method] = payment_totals.get(payment.method, Decimal("0.00")) + Decimal(payment.amount)
     rooms = db.scalars(select(Room)).all()
     status_counts = {s: 0 for s in ("available", "reserved", "occupied", "dirty", "out_of_order")}
-    for room in rooms:
-        status_counts[room.status] = status_counts.get(room.status, 0) + 1
-
-    arrivals = db.scalar(
-        select(func.count(Reservation.id)).where(
-            Reservation.check_in == business_date,
-            Reservation.status.in_(("reserved", "checked_in")),
-        )
-    ) or 0
-    departures = db.scalar(
-        select(func.count(Reservation.id)).where(
-            Reservation.check_out == business_date,
-            Reservation.status == "checked_in",
-        )
-    ) or 0
+    for room in rooms: status_counts[room.status] = status_counts.get(room.status, 0) + 1
+    arrivals = db.scalar(select(func.count(Reservation.id)).where(Reservation.check_in == business_date, Reservation.status.in_(("reserved", "checked_in")))) or 0
+    departures = db.scalar(select(func.count(Reservation.id)).where(Reservation.check_out == business_date, Reservation.status == "checked_in")) or 0
     in_house = db.scalar(select(func.count(Reservation.id)).where(Reservation.status == "checked_in")) or 0
-    no_shows = db.scalar(
-        select(func.count(Reservation.id)).where(
-            Reservation.check_in == business_date,
-            Reservation.status == "no_show",
-        )
-    ) or 0
-    expenses = db.scalar(
-        select(func.coalesce(func.sum(Expense.amount), 0)).where(
-            Expense.expense_date == business_date,
-            Expense.status == "posted",
-        )
-    ) or Decimal("0.00")
-
+    no_shows = db.scalar(select(func.count(Reservation.id)).where(Reservation.check_in == business_date, Reservation.status == "no_show")) or 0
+    expenses = db.scalar(select(func.coalesce(func.sum(Expense.amount), 0)).where(Expense.expense_date == business_date, Expense.status == "posted")) or Decimal("0.00")
     gross_revenue = money(room_revenue + food_revenue + service_charge + other_revenue)
     paid_total = money(sum(payment_totals.values(), Decimal("0.00")))
-
     outstanding = Decimal("0.00")
     for folio in db.scalars(select(Folio)).all():
-        items = [
-            item
-            for item in db.scalars(select(FolioItem).where(FolioItem.folio_id == folio.id)).all()
-            if item_has_active_charge(db, item.id)
-        ]
+        items = [item for item in db.scalars(select(FolioItem).where(FolioItem.folio_id == folio.id)).all() if item_has_active_charge(db, item.id)]
         total = sum((max(Decimal("0.00"), Decimal(i.quantity) * Decimal(i.unit_price) - Decimal(i.discount)) for i in items), Decimal("0.00"))
         food_net = sum((max(Decimal("0.00"), Decimal(i.quantity) * Decimal(i.unit_price) - Decimal(i.discount)) for i in items if i.category.strip().lower() in FOOD_CATEGORIES), Decimal("0.00"))
         total += food_net * FOOD_SERVICE_CHARGE_RATE
         paid = db.scalar(select(func.coalesce(func.sum(Payment.amount), 0)).where(Payment.folio_id == folio.id)) or Decimal("0.00")
         outstanding += max(Decimal("0.00"), total - Decimal(paid))
-
     finance = finance or finance_snapshot(db, business_date)
     state = db.get(BusinessDateState, 1)
     posting_open = not bool(state and state.last_closed_business_date and state.last_closed_business_date >= business_date)
-
-    return {
-        "business_date": business_date,
-        "generated_at": datetime.utcnow(),
-        "posting_open": posting_open,
-        "occupancy": {
-            "total_rooms": len(rooms),
-            "occupied_rooms": status_counts.get("occupied", 0),
-            "reserved_rooms": status_counts.get("reserved", 0),
-            "available_rooms": status_counts.get("available", 0),
-            "dirty_rooms": status_counts.get("dirty", 0),
-            "out_of_order_rooms": status_counts.get("out_of_order", 0),
-            "in_house_reservations": in_house,
-        },
-        "movement": {"arrivals": arrivals, "departures": departures, "no_shows": no_shows},
-        "revenue": {
-            "room": money(room_revenue),
-            "food": money(food_revenue),
-            "food_service_charge": service_charge,
-            "other": money(other_revenue),
-            "gross": gross_revenue,
-        },
-        "payments": {method: money(amount) for method, amount in payment_totals.items()} | {"total": paid_total},
-        "outstanding": money(outstanding),
-        "expenses": money(expenses),
-        "net_operating": money(gross_revenue - Decimal(expenses)),
-        "finance": finance,
-    }
+    return {"business_date": business_date, "generated_at": datetime.utcnow(), "posting_open": posting_open, "occupancy": {"total_rooms": len(rooms), "occupied_rooms": status_counts.get("occupied", 0), "reserved_rooms": status_counts.get("reserved", 0), "available_rooms": status_counts.get("available", 0), "dirty_rooms": status_counts.get("dirty", 0), "out_of_order_rooms": status_counts.get("out_of_order", 0), "in_house_reservations": in_house}, "movement": {"arrivals": arrivals, "departures": departures, "no_shows": no_shows}, "revenue": {"room": money(room_revenue), "food": money(food_revenue), "food_service_charge": service_charge, "other": money(other_revenue), "gross": gross_revenue}, "payments": {method: money(amount) for method, amount in payment_totals.items()} | {"total": paid_total}, "outstanding": money(outstanding), "expenses": money(expenses), "net_operating": money(gross_revenue - Decimal(expenses)), "finance": finance}
 
 
 def ledger_account_delta(db: Session, business_date: date, accounts: set[str], before: bool) -> Decimal:
-    query = (
-        select(LedgerEntry.direction, func.coalesce(func.sum(LedgerEntry.amount), 0))
-        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
-        .where(
-            LedgerEntry.account.in_(accounts),
-            FinancialTransaction.status.in_(("posted", "reversed")),
-        )
-    )
-    if before:
-        query = query.where(FinancialTransaction.business_date < business_date)
-    else:
-        query = query.where(FinancialTransaction.business_date == business_date)
+    query = select(LedgerEntry.direction, func.coalesce(func.sum(LedgerEntry.amount), 0)).join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id).where(LedgerEntry.account.in_(accounts), FinancialTransaction.status.in_(("posted", "reversed")))
+    query = query.where(FinancialTransaction.business_date < business_date) if before else query.where(FinancialTransaction.business_date == business_date)
     rows = db.execute(query.group_by(LedgerEntry.direction)).all()
     debit = sum((Decimal(amount) for direction, amount in rows if direction == "debit"), Decimal("0.00"))
     credit = sum((Decimal(amount) for direction, amount in rows if direction == "credit"), Decimal("0.00"))
@@ -237,32 +133,18 @@ def ledger_account_delta(db: Session, business_date: date, accounts: set[str], b
 
 
 def prior_closing_cash(db: Session, business_date: date) -> Decimal | None:
-    """Return the last closed day's physical cash for carry-forward.
-
-    The archived closing pack is the authoritative bridge for historical periods
-    that may not have a cash ledger opening transaction. Future closing packs
-    include the same projected closing cash, so each business day carries the
-    physical cash balance forward without creating synthetic revenue or expense.
-    """
-    state = db.get(BusinessDateState, 1)
-    prior_date = state.last_closed_business_date if state else None
-    if prior_date is None or prior_date >= business_date:
-        return None
-
+    """Return the last closed day's physical cash for carry-forward."""
+    state = db.get(BusinessDateState, 1); prior_date = state.last_closed_business_date if state else None
+    if prior_date is None or prior_date >= business_date: return None
     path = PACK_ROOT / prior_date.isoformat() / "daily-closing.json"
-    if not path.exists():
-        return None
+    if not path.exists(): return None
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        report = payload.get("report", {})
+        payload = json.loads(path.read_text(encoding="utf-8")); report = payload.get("report", {})
         projected = report.get("pre_close", {}).get("projected_close", {}).get("cash")
-        if projected is not None:
-            return money(projected)
+        if projected is not None: return money(projected)
         historical = report.get("historical_reconciliation", {}).get("closing_cash")
-        if historical is not None:
-            return money(historical)
-    except (OSError, ValueError, TypeError):
-        return None
+        if historical is not None: return money(historical)
+    except (OSError, ValueError, TypeError): return None
     return None
 
 
@@ -270,77 +152,30 @@ def build_pre_close_preview(db: Session, business_date: date, summary: dict) -> 
     pending = preview_room_charges_for_business_date(db, business_date=business_date)
     pending_total = money(sum((row["amount"] for row in pending), Decimal("0.00")))
     opening_cash = prior_closing_cash(db, business_date)
-    if opening_cash is None:
-        opening_cash = ledger_account_delta(db, business_date, CASH_ACCOUNTS, True)
+    if opening_cash is None: opening_cash = ledger_account_delta(db, business_date, CASH_ACCOUNTS, True)
     opening_receivables = ledger_account_delta(db, business_date, {"Guest Receivables"}, True)
     today_cash = ledger_account_delta(db, business_date, CASH_ACCOUNTS, False)
     today_receivables = ledger_account_delta(db, business_date, {"Guest Receivables"}, False)
     projected_cash = money(opening_cash + today_cash)
     projected_receivables = money(max(Decimal("0.00"), opening_receivables + today_receivables + pending_total))
-    return {
-        "business_date": business_date,
-        "opening": {
-            "cash": money(opening_cash),
-            "guest_receivables": money(opening_receivables),
-            "outstanding": money(max(Decimal("0.00"), opening_receivables)),
-        },
-        "activity": {
-            "room_revenue": money(summary["revenue"]["room"]),
-            "payments_received": money(summary["payments"]["total"]),
-            "cash_received": money(today_cash),
-            "expenses": money(summary["expenses"]),
-            "ledger_transactions": summary["finance"]["ledger_transactions"],
-            "guest_receivables_delta": money(today_receivables),
-        },
-        "pending_night_audit": {
-            "room_charges_count": len(pending),
-            "room_charges_total": pending_total,
-            "items": pending,
-        },
-        "projected_close": {
-            "room_revenue": money(summary["revenue"]["room"] + pending_total),
-            "cash": projected_cash,
-            "guest_receivables": projected_receivables,
-            "outstanding": projected_receivables,
-            "gross_revenue": money(summary["revenue"]["gross"] + pending_total),
-        },
-        "controls": {
-            "trial_balance": "balanced" if summary["finance"]["trial_balance"]["balanced"] else "review",
-            "revenue_difference": money(summary["finance"]["revenue_difference"]),
-            "cash_difference": money(summary["finance"]["cash_difference"]),
-        },
-    }
+    return {"business_date": business_date, "opening": {"cash": money(opening_cash), "guest_receivables": money(opening_receivables), "outstanding": money(max(Decimal("0.00"), opening_receivables))}, "activity": {"room_revenue": money(summary["revenue"]["room"]), "payments_received": money(summary["payments"]["total"]), "cash_received": money(today_cash), "expenses": money(summary["expenses"]), "ledger_transactions": summary["finance"]["ledger_transactions"], "guest_receivables_delta": money(today_receivables)}, "pending_night_audit": {"room_charges_count": len(pending), "room_charges_total": pending_total, "items": pending}, "projected_close": {"room_revenue": money(summary["revenue"]["room"] + pending_total), "cash": projected_cash, "guest_receivables": projected_receivables, "outstanding": projected_receivables, "gross_revenue": money(summary["revenue"]["gross"] + pending_total)}, "controls": {"trial_balance": "balanced" if summary["finance"]["trial_balance"]["balanced"] else "review", "revenue_difference": money(summary["finance"]["revenue_difference"]), "cash_difference": money(summary["finance"]["cash_difference"])} }
 
 
 def pack_dir(business_date: date) -> Path:
-    path = PACK_ROOT / business_date.isoformat()
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+    path = PACK_ROOT / business_date.isoformat(); path.mkdir(parents=True, exist_ok=True); return path
 
 
 def build_json(pack: Path, summary: dict, notes: str | None, closed_by: str, closed_at: datetime) -> Path:
-    path = pack / "daily-closing.json"
-    payload = {
-        "report": serializable(summary),
-        "closing": {"notes": notes, "closed_by": closed_by, "closed_at": closed_at.isoformat()},
-    }
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    return path
+    path = pack / "daily-closing.json"; payload = {"report": serializable(summary), "closing": {"notes": notes, "closed_by": closed_by, "closed_at": closed_at.isoformat()}}; path.write_text(json.dumps(payload, indent=2), encoding="utf-8"); return path
 
 
 def build_xlsx(pack: Path, summary: dict, notes: str | None, closed_by: str, closed_at: datetime) -> Path:
-    path = pack / "daily-closing.xlsx"
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Daily Closing"
-    ws["A1"] = "LA SERENE HOTEL"
-    ws["A1"].font = Font(size=16, bold=True)
-    ws["A2"] = "Daily Closing / Night Audit"
-    ws["A2"].font = Font(size=12, bold=True)
-    ws["A3"] = "Business Date"; ws["B3"] = summary["business_date"].isoformat()
-    ws["A4"] = "Closed By"; ws["B4"] = closed_by
-    ws["A5"] = "Closed At"; ws["B5"] = closed_at.isoformat()
-    sections = [
+    path = pack / "daily-closing.xlsx"; wb = Workbook(); ws = wb.active; ws.title = "Daily Closing"
+    ws["A1"] = "LA SERENE HOTEL"; ws["A1"].font = Font(size=16, bold=True)
+    ws["A2"] = "Daily Closing / Night Audit"; ws["A2"].font = Font(size=12, bold=True)
+    ws["A3"] = "Business Date"; ws["B3"] = summary["business_date"].isoformat(); ws["A4"] = "Closed By"; ws["B4"] = closed_by; ws["A5"] = "Closed At"; ws["B5"] = closed_at.isoformat()
+    pre = summary.get("pre_close") or {}; sections = [
+        ("Cash Position", [("Opening cash / previous closing cash", float(pre.get("opening", {}).get("cash", 0))), ("Today's net cash movement", float(pre.get("activity", {}).get("cash_received", 0))), ("Expected closing cash in hand", float(pre.get("projected_close", {}).get("cash", 0)))]),
         ("Occupancy", [("Total rooms", summary["occupancy"]["total_rooms"]), ("Occupied rooms", summary["occupancy"]["occupied_rooms"]), ("Reserved rooms", summary["occupancy"]["reserved_rooms"]), ("Available rooms", summary["occupancy"]["available_rooms"]), ("Dirty rooms", summary["occupancy"]["dirty_rooms"]), ("Out of order", summary["occupancy"]["out_of_order_rooms"]), ("In-house reservations", summary["occupancy"]["in_house_reservations"])]),
         ("Guest Movement", [("Arrivals", summary["movement"]["arrivals"]), ("Departures", summary["movement"]["departures"]), ("No-shows", summary["movement"]["no_shows"])]),
         ("Revenue", [("Room revenue", float(summary["revenue"]["room"])), ("Food revenue", float(summary["revenue"]["food"])), ("Food service charge (10%)", float(summary["revenue"]["food_service_charge"])), ("Other revenue", float(summary["revenue"]["other"])), ("Gross revenue", float(summary["revenue"]["gross"]))]),
@@ -354,112 +189,66 @@ def build_xlsx(pack: Path, summary: dict, notes: str | None, closed_by: str, clo
     row = 7
     for title, items in sections:
         ws.cell(row, 1, title); ws.cell(row, 1).font = Font(bold=True); ws.cell(row, 1).fill = PatternFill("solid", fgColor="EDE9E0"); row += 1
-        for label, value in items:
-            ws.cell(row, 1, label); ws.cell(row, 2, value); row += 1
+        for label, value in items: ws.cell(row, 1, label); ws.cell(row, 2, value); row += 1
         row += 1
     ws.cell(row, 1, "Closing Notes"); ws.cell(row, 1).font = Font(bold=True); ws.cell(row, 2, notes or ""); ws.cell(row, 2).alignment = Alignment(wrap_text=True, vertical="top")
-    ws.column_dimensions["A"].width = 42; ws.column_dimensions["B"].width = 30
-    wb.save(path)
-    return path
+    ws.column_dimensions["A"].width = 42; ws.column_dimensions["B"].width = 30; wb.save(path); return path
 
 
 def build_pdf(pack: Path, summary: dict, notes: str | None, closed_by: str, closed_at: datetime) -> Path:
-    path = pack / "daily-closing.pdf"
-    styles = getSampleStyleSheet(); styles.add(ParagraphStyle(name="Small", parent=styles["BodyText"], fontSize=8.5, leading=11))
+    path = pack / "daily-closing.pdf"; styles = getSampleStyleSheet(); styles.add(ParagraphStyle(name="Small", parent=styles["BodyText"], fontSize=8.5, leading=11))
     doc = SimpleDocTemplate(str(path), pagesize=A4, rightMargin=15 * mm, leftMargin=15 * mm, topMargin=14 * mm, bottomMargin=14 * mm)
     story = [Paragraph("LA SERENE HOTEL", styles["Title"]), Paragraph("Daily Closing / Night Audit", styles["Heading2"]), Paragraph(f"Business Date: {summary['business_date'].isoformat()} &nbsp;&nbsp; Closed By: {closed_by} &nbsp;&nbsp; Closed At: {closed_at.isoformat()}", styles["Small"]), Spacer(1, 5 * mm)]
-
-    def section(title, rows):
-        story.extend([Paragraph(title, styles["Heading3"]), Table(rows, colWidths=[95 * mm, 65 * mm], style=TableStyle([("BACKGROUND", (0,0), (-1,0), colors.HexColor("#EDE9E0")), ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"), ("GRID", (0,0), (-1,-1), 0.25, colors.HexColor("#D0CCC3")), ("ALIGN", (1,1), (1,-1), "RIGHT"), ("FONTSIZE", (0,0), (-1,-1), 8.5), ("BOTTOMPADDING", (0,0), (-1,-1), 4), ("TOPPADDING", (0,0), (-1,-1), 4)])), Spacer(1, 3 * mm)])
-
+    def section(title, rows): story.extend([Paragraph(title, styles["Heading3"]), Table(rows, colWidths=[95 * mm, 65 * mm], style=TableStyle([("BACKGROUND", (0,0), (-1,0), colors.HexColor("#EDE9E0")), ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"), ("GRID", (0,0), (-1,-1), 0.25, colors.HexColor("#D0CCC3")), ("ALIGN", (1,1), (1,-1), "RIGHT"), ("FONTSIZE", (0,0), (-1,-1), 8.5), ("BOTTOMPADDING", (0,0), (-1,-1), 4), ("TOPPADDING", (0,0), (-1,-1), 4)])), Spacer(1, 3 * mm)])
+    pre = summary.get("pre_close") or {}; opening_cash = pre.get("opening", {}).get("cash", Decimal("0.00")); net_cash_movement = pre.get("activity", {}).get("cash_received", Decimal("0.00")); expected_closing_cash = pre.get("projected_close", {}).get("cash", Decimal("0.00"))
+    section("Cash Position", [["Cash control", "Amount"], ["Opening cash / previous closing cash", f"{opening_cash:.2f}"], ["Today's net cash movement", f"{net_cash_movement:.2f}"], ["Expected closing cash in hand", f"{expected_closing_cash:.2f}"]])
     section("Occupancy", [["Metric", "Value"], ["Total rooms", summary["occupancy"]["total_rooms"]], ["Occupied rooms", summary["occupancy"]["occupied_rooms"]], ["Reserved rooms", summary["occupancy"]["reserved_rooms"]], ["Available rooms", summary["occupancy"]["available_rooms"]], ["Dirty rooms", summary["occupancy"]["dirty_rooms"]], ["Out of order", summary["occupancy"]["out_of_order_rooms"]], ["In-house reservations", summary["occupancy"]["in_house_reservations"]]])
     section("Guest Movement", [["Metric", "Value"], ["Arrivals", summary["movement"]["arrivals"]], ["Departures", summary["movement"]["departures"]], ["No-shows", summary["movement"]["no_shows"]]])
     section("Revenue", [["Metric", "Amount"], ["Room revenue", f"{summary['revenue']['room']:.2f}"], ["Food revenue", f"{summary['revenue']['food']:.2f}"], ["Food service charge (10%)", f"{summary['revenue']['food_service_charge']:.2f}"], ["Other revenue", f"{summary['revenue']['other']:.2f}"], ["Gross revenue", f"{summary['revenue']['gross']:.2f}"]])
     section("Cashier Collection", [["Payment Method", "Amount"]] + [[k.replace("_", " ").title(), f"{v:.2f}"] for k, v in summary["payments"].items()])
-    tb = summary["finance"]["trial_balance"]
-    section("Trial Balance", [["Account", "Debit"]] + [[row["account"], f"{row['debit']:.2f}"] for row in tb["accounts"]] + [["Total debit", f"{tb['total_debit']:.2f}"], ["Total credit", f"{tb['total_credit']:.2f}"], ["Balanced", tb["balanced"]]])
-    pr = summary["finance"]["payment_reconciliation"]
-    section("Payment Reconciliation", [["Method", "Received / Refunded / Net"]] + [[row["method"], f"{row['received']:.2f} / {row['refunded']:.2f} / {row['net']:.2f}"] for row in pr["methods"]] + [["Totals", f"{pr['received_total']:.2f} / {pr['refunded_total']:.2f} / {pr['net_total']:.2f}"]])
-    rr = summary["finance"]["revenue_reconciliation"]
-    section("Revenue Reconciliation", [["Control", "Amount"], ["Ledger revenue", f"{rr['ledger_total']:.2f}"], ["Operational folio charges", f"{rr['operational_total']:.2f}"], ["Difference", f"{rr['difference']:.2f}"], ["Revenue report total", f"{rr['total']:.2f}"]])
+    tb = summary["finance"]["trial_balance"]; section("Trial Balance", [["Account", "Debit"]] + [[row["account"], f"{row['debit']:.2f}"] for row in tb["accounts"]] + [["Total debit", f"{tb['total_debit']:.2f}"], ["Total credit", f"{tb['total_credit']:.2f}"], ["Balanced", tb["balanced"]]])
+    pr = summary["finance"]["payment_reconciliation"]; section("Payment Reconciliation", [["Method", "Received / Refunded / Net"]] + [[row["method"], f"{row['received']:.2f} / {row['refunded']:.2f} / {row['net']:.2f}"] for row in pr["methods"]] + [["Totals", f"{pr['received_total']:.2f} / {pr['refunded_total']:.2f} / {pr['net_total']:.2f}"]])
+    rr = summary["finance"]["revenue_reconciliation"]; section("Revenue Reconciliation", [["Control", "Amount"], ["Ledger revenue", f"{rr['ledger_total']:.2f}"], ["Operational folio charges", f"{rr['operational_total']:.2f}"], ["Difference", f"{rr['difference']:.2f}"], ["Revenue report total", f"{rr['total']:.2f}"]])
     section("Finance Control", [["Control", "Result"], ["Overall status", summary["finance"]["status"]], ["Ledger balanced", summary["finance"]["ledger_balanced"]], ["Cash difference", f"{summary['finance']['cash_difference']:.2f}"], ["Revenue difference", f"{summary['finance']['revenue_difference']:.2f}"], ["Ledger transactions", summary["finance"]["ledger_transactions"]]])
     section("Operating", [["Metric", "Amount"], ["Outstanding (end-of-day)", f"{summary['outstanding']:.2f}"], ["Expenses (today)", f"{summary['expenses']:.2f}"], ["Net operating (today)", f"{summary['net_operating']:.2f}"]])
     story.extend([Paragraph("Closing Notes", styles["Heading3"]), Paragraph((notes or "No closing notes recorded.").replace("\n", "<br/>"), styles["BodyText"]), Spacer(1, 8 * mm), Table([["Prepared / Closed By", "Head Office Received / Verified"], [closed_by, ""], ["Signature: __________________________", "Signature: __________________________"]], colWidths=[80 * mm, 80 * mm], style=TableStyle([("GRID", (0,0), (-1,-1), 0.5, colors.HexColor("#D0CCC3")), ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"), ("TOPPADDING", (0,0), (-1,-1), 7), ("BOTTOMPADDING", (0,0), (-1,-1), 7)]))])
-    doc.build(story)
-    return path
+    doc.build(story); return path
 
 
 def create_pack(summary: dict, notes: str | None, closed_by: str, closed_at: datetime) -> dict[str, str]:
-    pack = pack_dir(summary["business_date"])
-    files = {"json": build_json(pack, summary, notes, closed_by, closed_at), "xlsx": build_xlsx(pack, summary, notes, closed_by, closed_at), "pdf": build_pdf(pack, summary, notes, closed_by, closed_at)}
-    return {kind: f.name for kind, f in files.items()}
+    pack = pack_dir(summary["business_date"]); files = {"json": build_json(pack, summary, notes, closed_by, closed_at), "xlsx": build_xlsx(pack, summary, notes, closed_by, closed_at), "pdf": build_pdf(pack, summary, notes, closed_by, closed_at)}; return {kind: f.name for kind, f in files.items()}
 
 
 def get_pack_file(business_date: date, filename: str) -> Path:
     allowed = {"daily-closing.pdf", "daily-closing.xlsx", "daily-closing.json"}
-    if filename not in allowed:
-        raise HTTPException(status_code=400, detail="Invalid closing pack file")
+    if filename not in allowed: raise HTTPException(status_code=400, detail="Invalid closing pack file")
     path = pack_dir(business_date) / filename
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Closing pack has not been generated for this business date")
+    if not path.exists(): raise HTTPException(status_code=404, detail="Closing pack has not been generated for this business date")
     return path
 
 
 @router.get("/preview")
 def preview(db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception"))):
-    business_date = get_business_date(db)
-    summary = build_summary(db, business_date)
-    summary["pre_close"] = build_pre_close_preview(db, business_date, summary)
-    return summary
+    business_date = get_business_date(db); summary = build_summary(db, business_date); summary["pre_close"] = build_pre_close_preview(db, business_date, summary); return summary
 
 
 @router.post("/close")
 def close_day(payload: ClosingConfirm | None = None, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
-    # The business-date row is the serialization point for financial posting and
-    # Night Audit. PostgreSQL blocks a concurrent financial insert until this
-    # transaction commits or rolls back, so the reconciliation snapshot cannot
-    # race with a newly committed financial transaction for the closing date.
-    state = lock_current_business_date(db)
-    business_date = state.current_business_date
-    if state.last_closed_business_date and state.last_closed_business_date >= business_date:
-        raise HTTPException(status_code=409, detail=f"Business date {business_date.isoformat()} is already closed")
-
-    active_departures = db.scalar(
-        select(func.count(Reservation.id)).where(
-            Reservation.status == "checked_in",
-            Reservation.check_out <= business_date,
-        )
-    ) or 0
-    if active_departures:
-        raise HTTPException(
-            status_code=409,
-            detail="Active departures must be checked out before Night Audit can close the business date",
-        )
-
+    state = lock_current_business_date(db); business_date = state.current_business_date
+    if state.last_closed_business_date and state.last_closed_business_date >= business_date: raise HTTPException(status_code=409, detail=f"Business date {business_date.isoformat()} is already closed")
+    active_departures = db.scalar(select(func.count(Reservation.id)).where(Reservation.status == "checked_in", Reservation.check_out <= business_date)) or 0
+    if active_departures: raise HTTPException(status_code=409, detail="Active departures must be checked out before Night Audit can close the business date")
     accrued_room_charges = accrue_room_charges_for_business_date(db, business_date=business_date, created_by=user.id)
     finance = finance_snapshot(db, business_date)
     if finance["status"] != "balanced":
-        db.rollback()
-        raise HTTPException(status_code=409, detail={"message": "Financial reconciliation requires review before Night Audit can close", "business_date": business_date, "finance": serializable(finance)})
-
-    summary = build_summary(db, business_date, finance)
-    summary["night_audit"] = {"room_charges_accrued": accrued_room_charges}
-    summary["pre_close"] = build_pre_close_preview(db, business_date, summary)
-    closed_at = datetime.utcnow()
-    pack = create_pack(summary, payload.notes if payload else None, user.username, closed_at)
-
-    state.last_closed_at = closed_at
-    state.last_closed_business_date = business_date
-    state.current_business_date = business_date + timedelta(days=1)
-    state.opened_at = closed_at
+        db.rollback(); raise HTTPException(status_code=409, detail={"message": "Financial reconciliation requires review before Night Audit can close", "business_date": business_date, "finance": serializable(finance)})
+    summary = build_summary(db, business_date, finance); summary["night_audit"] = {"room_charges_accrued": accrued_room_charges}; summary["pre_close"] = build_pre_close_preview(db, business_date, summary); closed_at = datetime.utcnow(); pack = create_pack(summary, payload.notes if payload else None, user.username, closed_at)
+    state.last_closed_at = closed_at; state.last_closed_business_date = business_date; state.current_business_date = business_date + timedelta(days=1); state.opened_at = closed_at
     audit(db, user.id, "daily_close", business_date, {"business_date": business_date, "summary": summary, "notes": payload.notes if payload else None, "pack": pack, "closed_by": user.username, "closed_at": closed_at, "next_business_date": state.current_business_date})
-    db.commit()
-    db.refresh(state)
+    db.commit(); db.refresh(state)
     return {"status": "closed", "business_date": business_date, "next_business_date": state.current_business_date, "summary": summary, "pack": pack, "closed_by": user.username, "closed_at": closed_at, "download_urls": {k: f"/api/night-audit/pack/{business_date.isoformat()}/{v}" for k, v in pack.items()}}
 
 
 @router.get("/pack/{business_date}/{filename}")
 def download_pack(business_date: date, filename: str, _: User = Depends(require_roles("admin", "reception"))):
-    path = get_pack_file(business_date, filename)
-    media = {"daily-closing.pdf": "application/pdf", "daily-closing.xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "daily-closing.json": "application/json"}[filename]
-    return FileResponse(path, media_type=media, filename=filename)
+    path = get_pack_file(business_date, filename); media = {"daily-closing.pdf": "application/pdf", "daily-closing.xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "daily-closing.json": "application/json"}[filename]; return FileResponse(path, media_type=media, filename=filename)
