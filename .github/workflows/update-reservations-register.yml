@@ -1,0 +1,56 @@
+name: Update reservations register UI
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    if: ${{ !contains(github.event.head_commit.message, 'Improve reservations register for high-volume operations') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Update reservations register
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('apps/web/src/ReservationsPMSView.tsx')
+          s = p.read_text(encoding='utf-8')
+          if 'const ACTIVE_RESERVATION_STATUSES' in s:
+              raise SystemExit('already updated')
+
+          s = s.replace(
+              "const todayValue = () => new Date().toISOString().slice(0, 10);",
+              "const todayValue = () => new Date().toISOString().slice(0, 10);\nconst ACTIVE_RESERVATION_STATUSES = new Set(['reserved', 'checked_in']);\nconst HIDDEN_RESERVATION_STATUSES = new Set(['checked_out', 'cancelled', 'no_show']);"
+          )
+
+          s = s.replace(
+              "  const [selectedId, setSelectedId] = useState<number | null>(null);",
+              "  const [selectedId, setSelectedId] = useState<number | null>(null);\n  const [reservationSearch, setReservationSearch] = useState('');"
+          )
+
+          old = """  const operationalStays = stays.length > 0 ? stays : [];\n\n  return <section className=\"page\">\n    <div className=\"page-heading\"><div><p className=\"muted\">PMS reservation control</p><h2>Reservations</h2></div><span className=\"room-count\">{reservations.length} bookings</span></div>\n    {message && <p className=\"notice\">{message}</p>}\n    <div className=\"workspace\" style={{ gridTemplateColumns: 'minmax(0, 1.25fr) minmax(360px, 1fr)' }}>\n      <div className=\"panel\">\n        <div className=\"panel-head\"><h2>Reservation register</h2><span>{reservations.filter(r => r.status === 'reserved').length} confirmed</span></div>\n        <div className=\"reservation-list\">\n          {reservations.length ? reservations.map(r => <article key={r.id} onClick={() => openReservation(r)} style={{ cursor: 'pointer', border: selectedId === r.id ? '2px solid #26342a' : undefined }}>\n            <div><strong>#{r.id} · {r.guest_name}</strong><span>{r.check_in} → {r.check_out} · {r.room_ids.map(id => roomById.get(id)?.number ?? id).join(', ') || 'No room'}</span></div><b>{r.status}</b>\n          </article>) : <p className=\"muted\">No reservations yet.</p>}\n        </div>"""
+
+          new = """  const operationalStays = stays.length > 0 ? stays : [];\n  const searchNeedle = reservationSearch.trim().toLowerCase();\n  const searchableReservations = reservations.filter(r => {\n    if (!searchNeedle) return ACTIVE_RESERVATION_STATUSES.has(r.status);\n    const roomNumbers = r.room_ids.map(id => roomById.get(id)?.number ?? id).join(' ');\n    const haystack = `${r.id} ${r.guest_name} ${r.check_in} ${r.check_out} ${roomNumbers} ${r.status}`.toLowerCase();\n    return haystack.includes(searchNeedle);\n  });\n  const visibleReservationCount = searchNeedle ? searchableReservations.length : reservations.filter(r => ACTIVE_RESERVATION_STATUSES.has(r.status)).length;\n  const hiddenHistoryCount = reservations.filter(r => HIDDEN_RESERVATION_STATUSES.has(r.status)).length;\n\n  return <section className=\"page\">\n    <div className=\"page-heading\"><div><p className=\"muted\">PMS reservation control</p><h2>Reservations</h2></div><span className=\"room-count\">{visibleReservationCount} active bookings</span></div>\n    {message && <p className=\"notice\">{message}</p>}\n    <div className=\"workspace\" style={{ gridTemplateColumns: 'minmax(0, 1.25fr) minmax(360px, 1fr)' }}>\n      <div className=\"panel\">\n        <div className=\"panel-head\"><div><h2>Reservation register</h2><span>{visibleReservationCount} active · {hiddenHistoryCount} historical hidden</span></div></div>\n        <div style={{ display: 'flex', gap: 10, marginBottom: 14, alignItems: 'center' }}>\n          <input aria-label=\"Search reservations\" placeholder=\"Search guest, room, reservation #, or date\" value={reservationSearch} onChange={e => setReservationSearch(e.target.value)} style={{ flex: 1 }} />\n          {reservationSearch && <button type=\"button\" className=\"secondary-button small-button\" onClick={() => setReservationSearch('')}>Clear</button>}\n        </div>\n        <div className=\"reservation-list\">\n          {searchableReservations.length ? searchableReservations.map(r => <article key={r.id} onClick={() => openReservation(r)} style={{ cursor: 'pointer', border: selectedId === r.id ? '2px solid #26342a' : undefined }}>\n            <div><strong>#{r.id} · {r.guest_name}</strong><span>{r.check_in} → {r.check_out} · {r.room_ids.map(id => roomById.get(id)?.number ?? id).join(', ') || 'No room'}</span></div><b>{r.status}</b>\n          </article>) : <p className=\"muted\">{searchNeedle ? 'No reservations match your search.' : 'No active reservations.'}</p>}\n        </div>"""
+
+          if old not in s:
+              raise SystemExit('target render block not found')
+          s = s.replace(old, new, 1)
+
+          p.write_text(s, encoding='utf-8')
+          print('Reservations register updated')
+
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/web/src/ReservationsPMSView.tsx
+          git diff --cached --quiet && exit 0
+          git commit -m "Improve reservations register for high-volume operations"
+          git push origin main
