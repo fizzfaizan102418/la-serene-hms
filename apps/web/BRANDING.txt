@@ -1,0 +1,2 @@
+HighFly AI
+La Serene HMS frontend branding is defined in apps/web/index.html.
