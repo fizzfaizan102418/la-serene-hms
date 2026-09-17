@@ -50,12 +50,16 @@ def _financial_period_summary(db: Session, period_start: date, period_end_exclus
     revenue_by_account = {account: money(amount or 0) for account, amount in revenue_rows}
     authoritative_revenue = money(sum(revenue_by_account.values(), Decimal("0.00")))
 
+    # A check-in deposit is cash received on the business date even though it is
+    # initially posted to Guest Deposits (a liability), not Guest Receivables.
+    # Treat deposit receipts/refunds as cashier activity in reporting without
+    # treating them as revenue or creating a second cash movement.
     payment_transactions = db.scalars(
         select(FinancialTransaction).where(
             FinancialTransaction.business_date >= period_start,
             FinancialTransaction.business_date < period_end_exclusive,
             FinancialTransaction.status == "posted",
-            FinancialTransaction.transaction_type.in_(("folio_payment", "payment_refund")),
+            FinancialTransaction.transaction_type.in_(("folio_payment", "payment_refund", "deposit_received", "deposit_refunded")),
         )
     ).all()
     received: dict[str, Decimal] = {}
@@ -65,7 +69,7 @@ def _financial_period_summary(db: Session, period_start: date, period_end_exclus
         cash_entries = [entry for entry in entries if entry.account in CASH_ACCOUNTS]
         amount = money(sum((Decimal(entry.amount) for entry in cash_entries), Decimal("0.00")))
         method = next((entry.payment_method for entry in cash_entries if entry.payment_method), "other")
-        target = refunded if tx.transaction_type == "payment_refund" else received
+        target = refunded if tx.transaction_type in {"payment_refund", "deposit_refunded"} else received
         target[method] = target.get(method, Decimal("0.00")) + amount
 
     methods = sorted(set(received) | set(refunded))
