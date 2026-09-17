@@ -106,6 +106,8 @@ def post_deposit(stay_id: int, payload: DepositPostCreate, db: Session = Depends
     if payload.transaction_type == "received":
         account = CASH_ACCOUNTS.get(payload.payment_method or "other", "Other Payment")
         lines = [{"account": account, "direction": "debit", "amount": tx.amount, "folio_id": tx.folio_id, "stay_id": stay_id, "payment_method": payload.payment_method}, {"account": "Guest Deposits", "direction": "credit", "amount": tx.amount, "folio_id": tx.folio_id, "stay_id": stay_id, "payment_method": payload.payment_method}]
+        if tx.folio_id is not None:
+            db.add(Payment(folio_id=tx.folio_id, amount=tx.amount, method=payload.payment_method or "other", reference=payload.reference))
     elif payload.transaction_type == "applied":
         lines = [{"account": "Guest Deposits", "direction": "debit", "amount": tx.amount, "folio_id": tx.folio_id, "stay_id": stay_id}, {"account": "Guest Receivables", "direction": "credit", "amount": tx.amount, "folio_id": tx.folio_id, "stay_id": stay_id}]
     else:
@@ -175,10 +177,10 @@ def trial_balance(business_date: date | None = None, db: Session = Depends(get_d
 @router.get("/reports/payment-reconciliation")
 def payment_reconciliation(business_date: date | None = None, db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "reception"))):
     target = business_date or current_business_date(db)
-    transactions = db.scalars(select(FinancialTransaction).where(FinancialTransaction.business_date == target, FinancialTransaction.status == "posted", FinancialTransaction.transaction_type.in_(("folio_payment", "payment_refund")))).all()
+    transactions = db.scalars(select(FinancialTransaction).where(FinancialTransaction.business_date == target, FinancialTransaction.status == "posted", FinancialTransaction.transaction_type.in_(("folio_payment", "payment_refund", "deposit_received", "deposit_refunded")))).all()
     received: dict[str, Decimal] = {}; refunded: dict[str, Decimal] = {}
     for tx in transactions:
-        entries = db.scalars(select(LedgerEntry).where(LedgerEntry.transaction_id == tx.id)).all(); cash_entries = [entry for entry in entries if entry.account in {"Cash", "Card Clearing", "Bank", "Other Payment"}]; amount = money(sum((entry.amount for entry in cash_entries), Decimal("0.00"))); method = next((entry.payment_method for entry in cash_entries if entry.payment_method), "other"); destination = refunded if tx.transaction_type == "payment_refund" else received; destination[method] = destination.get(method, Decimal("0.00")) + amount
+        entries = db.scalars(select(LedgerEntry).where(LedgerEntry.transaction_id == tx.id)).all(); cash_entries = [entry for entry in entries if entry.account in {"Cash", "Card Clearing", "Bank", "Other Payment"}]; amount = money(sum((entry.amount for entry in cash_entries), Decimal("0.00"))); method = next((entry.payment_method for entry in cash_entries if entry.payment_method), "other"); destination = refunded if tx.transaction_type in {"payment_refund", "deposit_refunded"} else received; destination[method] = destination.get(method, Decimal("0.00")) + amount
     methods = sorted(set(received) | set(refunded)); rows = [{"method": method, "received": money(received.get(method, 0)), "refunded": money(refunded.get(method, 0)), "net": money(received.get(method, 0) - refunded.get(method, 0))} for method in methods]
     return {"business_date": target, "methods": rows, "received_total": money(sum(received.values(), Decimal("0.00"))), "refunded_total": money(sum(refunded.values(), Decimal("0.00"))), "net_total": money(sum(received.values(), Decimal("0.00")) - sum(refunded.values(), Decimal("0.00")))}
 
