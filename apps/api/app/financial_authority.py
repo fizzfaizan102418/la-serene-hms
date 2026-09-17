@@ -34,6 +34,81 @@ def folio_ledger_summary(db: Session, folio_id: int) -> FolioLedgerSummary:
     balance = money(max(Decimal("0.00"), raw_balance))
     return FolioLedgerSummary(total=total, paid=paid, balance=balance)
 
+def _stay_deposit_balance(db: Session, stay_id: int) -> Decimal:
+    credits = db.scalar(
+        select(func.coalesce(func.sum(LedgerEntry.amount), 0))
+        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
+        .where(
+            LedgerEntry.stay_id == stay_id,
+            LedgerEntry.account == "Guest Deposits",
+            LedgerEntry.direction == "credit",
+            FinancialTransaction.status == "posted",
+        )
+    ) or Decimal("0.00")
+    debits = db.scalar(
+        select(func.coalesce(func.sum(LedgerEntry.amount), 0))
+        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
+        .where(
+            LedgerEntry.stay_id == stay_id,
+            LedgerEntry.account == "Guest Deposits",
+            LedgerEntry.direction == "debit",
+            FinancialTransaction.status == "posted",
+        )
+    ) or Decimal("0.00")
+    return money(max(Decimal("0.00"), Decimal(credits) - Decimal(debits)))
+
+def apply_available_deposits(db: Session, *, folio_id: int, reservation_id: int, created_by: int) -> Decimal:
+    """Apply existing check-in deposits to the folio's receivable after a charge posts.
+
+    A check-in deposit is cash received in advance, so it is initially recorded as
+    a liability in Guest Deposits. Once a folio charge exists, the available deposit
+    is transferred to Guest Receivables. This makes the deposit reduce the guest's
+    folio balance without creating a second cash payment.
+    """
+    from .ledger import post_transaction
+    from .pms_core import Stay
+
+    remaining_receivable = folio_ledger_summary(db, folio_id).balance
+    if remaining_receivable <= 0:
+        return Decimal("0.00")
+
+    stays = db.scalars(
+        select(Stay).where(Stay.reservation_id == reservation_id).order_by(Stay.id)
+    ).all()
+    applied_total = Decimal("0.00")
+
+    for stay in stays:
+        available_deposit = _stay_deposit_balance(db, stay.id)
+        amount = money(min(available_deposit, remaining_receivable))
+        if amount <= 0:
+            continue
+
+        # The pre-application balances form part of the idempotency key. If the
+        # same operation is retried after commit, post_transaction returns the
+        # already-posted transaction instead of creating another application.
+        key = f"deposit-apply:{folio_id}:{stay.id}:{available_deposit}:{remaining_receivable}"
+        post_transaction(
+            db,
+            transaction_type="deposit_applied",
+            description=f"Apply guest deposit from stay #{stay.id} to folio #{folio_id}",
+            reference_type="deposit_application",
+            reference_id=key,
+            folio_id=folio_id,
+            reservation_id=reservation_id,
+            created_by=created_by,
+            idempotency_key=key,
+            lines=[
+                {"account": "Guest Deposits", "direction": "debit", "amount": amount, "folio_id": folio_id, "stay_id": stay.id},
+                {"account": "Guest Receivables", "direction": "credit", "amount": amount, "folio_id": folio_id, "stay_id": stay.id},
+            ],
+        )
+        remaining_receivable = money(remaining_receivable - amount)
+        applied_total = money(applied_total + amount)
+        if remaining_receivable <= 0:
+            break
+
+    return applied_total
+
 def post_folio_charge_authoritative(db: Session, *, folio_id: int, reservation_id: int, item_id: int, amount: Decimal, stay_id: int | None, category: str, created_by: int, gross_amount: Decimal | None = None, discount_amount: Decimal | None = None) -> FinancialTransaction:
     from .ledger import post_transaction
     net_amount = money(amount)
@@ -45,6 +120,7 @@ def post_folio_charge_authoritative(db: Session, *, folio_id: int, reservation_i
     if category.strip().lower() in FOOD_CATEGORIES:
         service_charge = money(net_amount * Decimal("0.10"))
         if service_charge > 0: post_transaction(db, transaction_type="service_charge", description=f"Food service charge for folio item #{item_id}", reference_type="folio_item_service_charge", reference_id=str(item_id), folio_id=folio_id, reservation_id=reservation_id, created_by=created_by, idempotency_key=f"folio-service-charge:{item_id}", lines=[{"account": "Guest Receivables", "direction": "debit", "amount": service_charge, "folio_id": folio_id, "stay_id": stay_id}, {"account": "Revenue - service_charge", "direction": "credit", "amount": service_charge, "folio_id": folio_id, "stay_id": stay_id}])
+    apply_available_deposits(db, folio_id=folio_id, reservation_id=reservation_id, created_by=created_by)
     return transaction
 
 def has_posted_folio_item_transaction(db: Session, folio_item_id: int) -> bool:
