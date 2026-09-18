@@ -261,6 +261,40 @@ def list_guests(
     return db.scalars(stmt.order_by(Guest.full_name).limit(limit)).all()
 
 
+@app.get("/api/guests/directory")
+def guest_directory(
+    q: str | None = Query(default=None, min_length=1, max_length=160),
+    limit: int = Query(default=25, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    base = select(Guest)
+    count_stmt = select(func.count(Guest.id))
+    if q:
+        pattern = f"%{q.strip()}%"
+        condition = (
+            Guest.full_name.ilike(pattern)
+            | Guest.phone.ilike(pattern)
+            | Guest.email.ilike(pattern)
+            | Guest.address.ilike(pattern)
+            | Guest.id_document.ilike(pattern)
+        )
+        base = base.where(condition)
+        count_stmt = count_stmt.where(condition)
+
+    total = db.scalar(count_stmt) or 0
+    guests = db.scalars(
+        base.order_by(Guest.full_name, Guest.id).offset(offset).limit(limit)
+    ).all()
+    return {
+        "items": guests,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
 @app.get("/api/guests/duplicate-check", response_model=list[GuestResponse])
 def guest_duplicate_check(
     phone: str | None = Query(default=None, max_length=40),
