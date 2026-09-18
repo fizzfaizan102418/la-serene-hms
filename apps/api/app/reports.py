@@ -102,6 +102,23 @@ def _financial_period_summary(db: Session, period_start: date, period_end_exclus
         ar_balance += value if direction == "debit" else -value
     ar_balance = money(max(Decimal("0.00"), ar_balance))
 
+    period_ar_rows = db.execute(
+        select(LedgerEntry.direction, func.coalesce(func.sum(LedgerEntry.amount), 0))
+        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
+        .where(
+            FinancialTransaction.business_date >= period_start,
+            FinancialTransaction.business_date < period_end_exclusive,
+            FinancialTransaction.status == "posted",
+            LedgerEntry.account == "Guest Receivables",
+        )
+        .group_by(LedgerEntry.direction)
+    ).all()
+    period_outstanding = Decimal("0.00")
+    for direction, amount in period_ar_rows:
+        value = Decimal(amount or 0)
+        period_outstanding += value if direction == "debit" else -value
+    period_outstanding = money(period_outstanding)
+
     return {
         "gross": authoritative_revenue,
         "discounts": Decimal("0.00"),
@@ -110,6 +127,7 @@ def _financial_period_summary(db: Session, period_start: date, period_end_exclus
         "payments_refunded": payments_refunded,
         "payments_net": payments_net,
         "outstanding_balance": ar_balance,
+        "period_outstanding_balance": period_outstanding,
         "payment_breakdown": payment_breakdown,
         "revenue_accounts": [{"account": account, "amount": float(amount)} for account, amount in revenue_by_account.items()],
         "financial_source": "financial_transactions.business_date + ledger_entries",
