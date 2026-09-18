@@ -102,22 +102,31 @@ def _financial_period_summary(db: Session, period_start: date, period_end_exclus
         ar_balance += value if direction == "debit" else -value
     ar_balance = money(max(Decimal("0.00"), ar_balance))
 
-    period_ar_rows = db.execute(
-        select(LedgerEntry.direction, func.coalesce(func.sum(LedgerEntry.amount), 0))
-        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
+    # Current outstanding is derived from authoritative active folio balances,
+    # not from the historical Guest Receivables account total. Reversal entries
+    # remain in the ledger for auditability and must not become a fictitious
+    # guest balance in management reporting.
+    outstanding_folios = db.scalars(
+        select(Folio.id)
+        .join(FinancialTransaction, FinancialTransaction.folio_id == Folio.id)
         .where(
             FinancialTransaction.business_date >= period_start,
             FinancialTransaction.business_date < period_end_exclusive,
             FinancialTransaction.status == "posted",
-            LedgerEntry.account == "Guest Receivables",
+            FinancialTransaction.transaction_type.in_(
+                ("folio_charge", "folio_discount", "service_charge", "folio_payment", "deposit_applied", "payment_refund")
+            ),
         )
-        .group_by(LedgerEntry.direction)
+        .distinct()
     ).all()
-    period_outstanding = Decimal("0.00")
-    for direction, amount in period_ar_rows:
-        value = Decimal(amount or 0)
-        period_outstanding += value if direction == "debit" else -value
-    period_outstanding = money(period_outstanding)
+    period_outstanding = money(
+        sum((folio_ledger_summary(db, folio_id).balance for folio_id in outstanding_folios), Decimal("0.00"))
+    )
+
+    all_folio_ids = db.scalars(select(Folio.id)).all()
+    ar_balance = money(
+        sum((folio_ledger_summary(db, folio_id).balance for folio_id in all_folio_ids), Decimal("0.00"))
+    )
 
     return {
         "gross": authoritative_revenue,
