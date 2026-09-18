@@ -18,28 +18,40 @@ def money(value: Decimal | int | float | str) -> Decimal:
     return Decimal(str(value)).quantize(MONEY, rounding=ROUND_HALF_UP)
 
 
-def _has_active_room_charge_for_date(db: Session, *, stay_id: int, business_date: date) -> bool:
-    """Return whether an active folio room charge already covers this stay/date.
+def _charged_room_nights(db: Session, *, stay_id: int) -> Decimal:
+    """Return active room nights already charged for a stay.
 
-    Night Audit idempotency is based on the authoritative financial transaction,
-    not the human-readable folio-item description. This keeps manual/operational
-    room charges from being duplicated by Night Audit while remaining date-scoped
-    for multi-night stays.
+    Room-charge quantity is the authoritative count of nights covered by
+    active folio charges. Reversed folio items are excluded so Night Audit
+    can safely post only genuinely uncharged nights.
     """
-    transactions = db.scalars(
-        select(FinancialTransaction)
-        .join(LedgerEntry, LedgerEntry.transaction_id == FinancialTransaction.id)
+    items = db.scalars(
+        select(FolioItem)
         .where(
-            FinancialTransaction.transaction_type == "folio_charge",
-            FinancialTransaction.status == "posted",
-            FinancialTransaction.business_date == business_date,
-            FinancialTransaction.reference_type == "folio_item",
-            FinancialTransaction.reference_id.is_not(None),
-            LedgerEntry.stay_id == stay_id,
-            LedgerEntry.account == "Guest Receivables",
+            FolioItem.stay_id == stay_id,
+            FolioItem.category == "room",
         )
+        .order_by(FolioItem.id)
     ).all()
-    return any(item_has_active_charge(db, int(tx.reference_id)) for tx in transactions if tx.reference_id and tx.reference_id.isdigit())
+
+    total = Decimal("0")
+    for item in items:
+        if item_has_active_charge(db, item.id):
+            total += Decimal(str(item.quantity))
+    return total
+
+
+def _elapsed_room_nights(*, stay: Stay, business_date: date) -> Decimal:
+    """Return room nights elapsed through the end of the business date."""
+    cutoff = min(stay.check_out, business_date.fromordinal(business_date.toordinal() + 1))
+    return Decimal(max(0, (cutoff - stay.check_in).days))
+
+
+def _remaining_room_nights(db: Session, *, stay: Stay, business_date: date) -> Decimal:
+    """Return elapsed room nights not yet covered by active folio charges."""
+    elapsed = _elapsed_room_nights(stay=stay, business_date=business_date)
+    charged = _charged_room_nights(db, stay_id=stay.id)
+    return max(Decimal("0"), elapsed - charged)
 
 
 def preview_room_charges_for_business_date(db: Session, *, business_date: date) -> list[dict]:
@@ -67,7 +79,7 @@ def preview_room_charges_for_business_date(db: Session, *, business_date: date) 
         if room is None:
             continue
 
-        if _has_active_room_charge_for_date(db, stay_id=stay.id, business_date=business_date):
+        if _remaining_room_nights(db, stay=stay, business_date=business_date) <= 0:
             continue
 
         description = f"Night audit · {business_date.isoformat()} · stay #{stay.id} · room {room.number}"
@@ -131,7 +143,8 @@ def accrue_room_charges_for_business_date(db: Session, *, business_date: date, c
         if room is None:
             continue
 
-        if _has_active_room_charge_for_date(db, stay_id=stay.id, business_date=business_date):
+        remaining_nights = _remaining_room_nights(db, stay=stay, business_date=business_date)
+        if remaining_nights <= 0:
             continue
 
         description = f"Night audit · {business_date.isoformat()} · stay #{stay.id} · room {room.number}"
