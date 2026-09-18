@@ -13,6 +13,7 @@ type Dashboard = { business_date: string; total_rooms: number; available_rooms: 
 type RoomType = { id: number; name: string; base_rate: number; description?: string | null };
 type Room = { id: number; number: string; room_type_id: number; status: string };
 type Guest = { id: number; full_name: string; phone?: string | null; email?: string | null; address?: string | null; id_document?: string | null };
+type GuestDirectory = { items: Guest[]; total: number; limit: number; offset: number };
 type Reservation = { id: number; guest_id: number; guest_name: string; check_in: string; check_out: string; status: string; room_ids: number[]; folio_id: number };
 type FrontDeskData = { arrivals: Reservation[]; departures: Reservation[]; in_house: Reservation[] };
 type BillingSummary = { folio_id: number; reservation_id: number; guest_name: string; status: string; total: number; paid: number; balance: number };
@@ -58,16 +59,184 @@ function DashboardView({ dashboard, rooms, roomTypes }: { dashboard: Dashboard |
 
 function GuestsView({ user, guests, setGuests, onRefresh }: { user: User; guests: Guest[]; setGuests: React.Dispatch<React.SetStateAction<Guest[]>>; onRefresh: () => Promise<void> }) {
   const emptyForm = { full_name: '', phone: '', email: '', address: '', id_document: '' };
-  const [query, setQuery] = useState(''); const [form, setForm] = useState(emptyForm); const [editingId, setEditingId] = useState<number | null>(null); const [message, setMessage] = useState(''); const [busy, setBusy] = useState(false); const canManage = user.role === 'admin' || user.role === 'reception';
-  async function search(event: React.FormEvent) { event.preventDefault(); try { setGuests(await api<Guest[]>(`/api/guests?q=${encodeURIComponent(query)}`)); } catch (err) { setMessage(err instanceof Error ? err.message : 'Search failed'); } }
-  async function create(event: React.FormEvent) { event.preventDefault(); setBusy(true); try { await api('/api/guests', { method: 'POST', body: JSON.stringify({ ...form, phone: form.phone || null, email: form.email || null, address: form.address || null, id_document: form.id_document || null }) }); setForm(emptyForm); setMessage('Guest created.'); await onRefresh(); } catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to create guest'); } finally { setBusy(false); } }
-  function startEdit(guest: Guest) { setEditingId(guest.id); setForm({ full_name: guest.full_name, phone: guest.phone || '', email: guest.email || '', address: guest.address || '', id_document: guest.id_document || '' }); setMessage('Editing guest profile.'); }
-  function cancelEdit() { setEditingId(null); setForm(emptyForm); setMessage(''); }
-  async function update(event: React.FormEvent) { event.preventDefault(); if (editingId === null) return; setBusy(true); try { await api<Guest>(`/api/guests/${editingId}`, { method: 'PATCH', body: JSON.stringify({ ...form, phone: form.phone || null, email: form.email || null, address: form.address || null, id_document: form.id_document || null }) }); setMessage('Guest profile updated.'); setEditingId(null); setForm(emptyForm); await onRefresh(); } catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to update guest'); } finally { setBusy(false); } }
-  const editingGuest = editingId === null ? null : guests.find(g => g.id === editingId) || null;
-  return <section className="page"><div className="page-heading"><div><p className="muted">Guest master records</p><h2>Guests</h2></div><span className="room-count">{guests.length} records</span></div>{message && <p className="notice">{message}</p>}<div className="content-layout"><div className="panel"><form className="search-bar" onSubmit={search}><input placeholder="Search name, phone or email" value={query} onChange={e => setQuery(e.target.value)} /><button className="secondary-button">Search</button></form><div className="guest-list">{guests.length ? guests.map(g => <article key={g.id}><div><strong>{g.full_name}</strong><span>{g.phone || 'No phone'} · {g.email || 'No email'}</span><small>{g.address || 'No address'} · {g.id_document || 'No ID document'}</small></div>{canManage && <button className="secondary-button" type="button" onClick={() => startEdit(g)}>{editingId === g.id ? 'Editing' : 'Edit'}</button>}</article>) : <p className="muted">No guests found.</p>}</div></div>{canManage && <form className="panel form-panel" onSubmit={editingGuest ? update : create}><div className="panel-head"><h2>{editingGuest ? 'Edit guest' : 'New guest'}</h2>{editingGuest && <button className="link-button" type="button" onClick={cancelEdit}>Cancel</button>}</div>{([['full_name','Full name'],['phone','Phone'],['email','Email'],['address','Address'],['id_document','ID document']] as const).map(([key,label]) => <label key={key}>{label}{key === 'address' ? <textarea value={form[key]} onChange={e => setForm({ ...form, [key]: e.target.value })} rows={3} /> : <input type={key === 'email' ? 'email' : 'text'} value={form[key]} onChange={e => setForm({ ...form, [key]: e.target.value })} required={key === 'full_name'} />}</label>)}<p className="muted">Guest identity and contact details are maintained here. Reservations, Front Desk and Billing use this master record.</p><button className="primary-button" disabled={busy}>{busy ? 'Saving…' : editingGuest ? 'Save guest changes' : 'Create guest'}</button></form>}</div></section>;
-}
+  const [query, setQuery] = useState('');
+  const [form, setForm] = useState(emptyForm);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [duplicateMatches, setDuplicateMatches] = useState<Guest[]>([]);
+  const pageSize = 25;
+  const canManage = user.role === 'admin' || user.role === 'reception';
 
+  async function loadDirectory(nextPage = page, nextQuery = query) {
+    setLoading(true);
+    try {
+      const offset = (nextPage - 1) * pageSize;
+      const params = new URLSearchParams({ limit: String(pageSize), offset: String(offset) });
+      if (nextQuery.trim()) params.set('q', nextQuery.trim());
+      const result = await api<GuestDirectory>(`/api/guests/directory?${params.toString()}`);
+      setGuests(result.items);
+      setTotal(result.total);
+      setPage(nextPage);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Unable to load guests');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadDirectory(1, '');
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadDirectory(1, query);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [query]);
+
+  async function checkDuplicates() {
+    const params = new URLSearchParams();
+    if (form.phone.trim()) params.set('phone', form.phone.trim());
+    if (form.id_document.trim()) params.set('id_document', form.id_document.trim());
+    if (editingId !== null) params.set('exclude_guest_id', String(editingId));
+    if (!params.toString()) {
+      setDuplicateMatches([]);
+      return [];
+    }
+    const matches = await api<Guest[]>(`/api/guests/duplicate-check?${params.toString()}`);
+    setDuplicateMatches(matches);
+    return matches;
+  }
+
+  async function create(event: React.FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setMessage('');
+    try {
+      const matches = await checkDuplicates();
+      if (matches.length) {
+        setMessage('A possible matching guest already exists. Review the record before creating another one.');
+        return;
+      }
+      await api('/api/guests', { method: 'POST', body: JSON.stringify({ ...form, phone: form.phone || null, email: form.email || null, address: form.address || null, id_document: form.id_document || null }) });
+      setForm(emptyForm);
+      setDuplicateMatches([]);
+      setMessage('Guest created.');
+      await onRefresh();
+      await loadDirectory(1, query);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Unable to create guest');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function startEdit(guest: Guest) {
+    setEditingId(guest.id);
+    setForm({ full_name: guest.full_name, phone: guest.phone || '', email: guest.email || '', address: guest.address || '', id_document: guest.id_document || '' });
+    setDuplicateMatches([]);
+    setMessage('Editing guest profile.');
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setForm(emptyForm);
+    setDuplicateMatches([]);
+    setMessage('');
+  }
+
+  async function update(event: React.FormEvent) {
+    event.preventDefault();
+    if (editingId === null) return;
+    setBusy(true);
+    setMessage('');
+    try {
+      const matches = await checkDuplicates();
+      if (matches.length) {
+        setMessage('A possible matching guest already exists. Review the record before saving.');
+        return;
+      }
+      await api<Guest>(`/api/guests/${editingId}`, { method: 'PATCH', body: JSON.stringify({ ...form, phone: form.phone || null, email: form.email || null, address: form.address || null, id_document: form.id_document || null }) });
+      setMessage('Guest profile updated.');
+      setEditingId(null);
+      setForm(emptyForm);
+      setDuplicateMatches([]);
+      await onRefresh();
+      await loadDirectory(page, query);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Unable to update guest');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const editingGuest = editingId === null ? null : guests.find(g => g.id === editingId) || null;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const firstRecord = total ? (page - 1) * pageSize + 1 : 0;
+  const lastRecord = total ? Math.min(page * pageSize, total) : 0;
+
+  return <section className="page">
+    <div className="page-heading">
+      <div><p className="muted">Guest master records</p><h2>Guests</h2></div>
+      <div className="guest-heading-actions"><span className="room-count">{total.toLocaleString()} records</span>{canManage && <button className="primary-button" type="button" onClick={cancelEdit}>+ New guest</button>}</div>
+    </div>
+
+    {message && <p className="notice">{message}</p>}
+
+    <div className="guest-directory panel">
+      <div className="guest-toolbar">
+        <div>
+          <strong>Guest directory</strong>
+          <span>{query.trim() ? `Searching for “${query.trim()}”` : 'Search by name, phone, email, address or ID document'}</span>
+        </div>
+        {loading && <span className="muted">Loading…</span>}
+      </div>
+
+      <form className="search-bar guest-search" onSubmit={event => { event.preventDefault(); void loadDirectory(1, query); }}>
+        <input aria-label="Search guests" placeholder="Search name, phone, email, address or ID document…" value={query} onChange={e => setQuery(e.target.value)} />
+        {query && <button className="secondary-button" type="button" onClick={() => setQuery('')}>Clear</button>}
+      </form>
+
+      <div className="guest-table-wrap">
+        <table className="guest-table">
+          <thead><tr><th>Guest</th><th>Phone</th><th>Email</th><th>Location</th><th>ID document</th><th></th></tr></thead>
+          <tbody>
+            {guests.length ? guests.map(g => <tr key={g.id}>
+              <td><strong>{g.full_name}</strong></td>
+              <td>{g.phone || '—'}</td>
+              <td>{g.email || '—'}</td>
+              <td>{g.address || '—'}</td>
+              <td>{g.id_document ? `${g.id_document.slice(0, Math.max(0, g.id_document.length - 4)).replace(/./g, '•')}${g.id_document.slice(-4)}` : '—'}</td>
+              <td className="guest-actions-cell">{canManage && <button className="secondary-button" type="button" onClick={() => startEdit(g)}>{editingId === g.id ? 'Editing' : 'Edit'}</button>}</td>
+            </tr>) : <tr><td colSpan={6} className="guest-empty">{loading ? 'Loading guests…' : 'No guests found.'}</td></tr>}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="guest-pagination">
+        <span>Showing {firstRecord.toLocaleString()}–{lastRecord.toLocaleString()} of {total.toLocaleString()}</span>
+        <div>
+          <button className="secondary-button" type="button" disabled={page <= 1 || loading} onClick={() => void loadDirectory(page - 1, query)}>Previous</button>
+          <span>Page {page} of {totalPages}</span>
+          <button className="secondary-button" type="button" disabled={page >= totalPages || loading} onClick={() => void loadDirectory(page + 1, query)}>Next</button>
+        </div>
+      </div>
+    </div>
+
+    {canManage && <form className="panel form-panel guest-form-panel" onSubmit={editingGuest ? update : create}>
+      <div className="panel-head"><div><p className="muted">{editingGuest ? 'Update master record' : 'Create a new master record'}</p><h2>{editingGuest ? 'Edit guest' : 'New guest'}</h2></div>{editingGuest && <button className="link-button" type="button" onClick={cancelEdit}>Cancel</button>}</div>
+      {duplicateMatches.length > 0 && <div className="duplicate-warning"><strong>Possible existing guest</strong><span>We found a matching phone number or ID document. Use the existing record if this is the same person.</span>{duplicateMatches.map(match => <div className="duplicate-row" key={match.id}><div><strong>{match.full_name}</strong><span>{match.phone || 'No phone'} · {match.id_document || 'No ID document'}</span></div><button className="secondary-button" type="button" onClick={() => startEdit(match)}>Open record</button></div>)}</div>}
+      {([['full_name','Full name'],['phone','Phone'],['email','Email'],['address','Address'],['id_document','ID document']] as const).map(([key,label]) => <label key={key}>{label}{key === 'address' ? <textarea value={form[key]} onChange={e => setForm({ ...form, [key]: e.target.value })} rows={3} /> : <input type={key === 'email' ? 'email' : 'text'} value={form[key]} onChange={e => setForm({ ...form, [key]: e.target.value })} required={key === 'full_name'} />}</label>)}
+      <p className="muted">Guest identity and contact details are maintained here. Reservations, Front Desk and Billing use this master record.</p>
+      <button className="primary-button" disabled={busy}>{busy ? 'Saving…' : editingGuest ? 'Save guest changes' : 'Create guest'}</button>
+    </form>}
+  </section>;
+}
 function RoomsView({ user, rooms, setRooms, roomTypes, onRefresh }: { user: User; rooms: Room[]; setRooms: React.Dispatch<React.SetStateAction<Room[]>>; roomTypes: RoomType[]; onRefresh: () => Promise<void> }) {
   const [filter, setFilter] = useState('all'); const [message, setMessage] = useState(''); const [typeName, setTypeName] = useState(''); const [rate, setRate] = useState(''); const [desc, setDesc] = useState(''); const [number, setNumber] = useState(''); const [typeId, setTypeId] = useState(''); const [editingRoom, setEditingRoom] = useState<Room | null>(null); const [editNumber, setEditNumber] = useState(''); const [editTypeId, setEditTypeId] = useState(''); const [savingEdit, setSavingEdit] = useState(false);
   const typeById = useMemo(() => new Map(roomTypes.map(t => [t.id, t])), [roomTypes]); const admin = user.role === 'admin';
