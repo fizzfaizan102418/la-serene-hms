@@ -87,6 +87,12 @@ function DashboardView({ dashboard, management, finance, history, rooms, roomTyp
   const paymentGradient = paymentRows.length && paymentTotal > 0
     ? paymentRows.map((row, index) => { const start = paymentOffset; paymentOffset += (Math.max(0, row.amount) / paymentTotal) * 100; return `var(--chart-${Math.min(index, 5) + 1}) ${start.toFixed(2)}% ${paymentOffset.toFixed(2)}%`; }).join(', ')
     : 'var(--chart-muted) 0 100%';
+  let roomOffset = 0;
+  const roomColors: Record<string, string> = { occupied: '#3B82F6', available: '#E2E8F0', reserved: '#F59E0B', dirty: '#64748B', out_of_order: '#DC2626' };
+  const roomTotal = Math.max(0, statusCounts.reduce((sum, row) => sum + row.count, 0));
+  const roomGradient = roomTotal > 0
+    ? statusCounts.map(row => { const start = roomOffset; roomOffset += (row.count / roomTotal) * 100; return `${roomColors[row.status]} ${start.toFixed(2)}% ${roomOffset.toFixed(2)}%`; }).join(', ')
+    : '#E2E8F0 0 100%';
   const occupied = historical ? Number(report?.occupancy?.occupied_rooms || 0) : Number(management?.occupancy.occupied_room_nights ?? dashboard?.occupied_rooms ?? 0);
   const totalRooms = historical ? Number(report?.occupancy?.total_rooms || 0) : Number(management?.rooms.total ?? dashboard?.total_rooms ?? rooms.length);
   const occupancy = totalRooms ? (occupied / totalRooms) * 100 : 0;
@@ -107,12 +113,7 @@ function DashboardView({ dashboard, management, finance, history, rooms, roomTyp
   const reservationRooms = (r: Reservation) => r.room_ids.length ? r.room_ids.map(id => rooms.find(room => room.id === id)?.number || String(id)).join(', ') : '—';
 
   return <>
-    <div className="dashboard-hero">
-      <div>
-        <p className="muted">{historical ? 'Archived hotel performance' : 'Live hotel operations'}</p>
-        <h2>{historical ? `Hotel Snapshot · ${formatDashboardDate(selectedDate!)}` : 'Hotel Command Center'}</h2>
-        <p>{historical ? 'Figures below are read from the archived Daily Closing pack for this business date.' : 'Production dashboard using current hotel operations, posted financials and real room inventory.'}</p>
-      </div>
+    <div className="dashboard-hero dashboard-hero-compact">
       <div className={`dashboard-mode-badge ${historical ? 'historical' : 'live'}`}>{historical ? 'HISTORICAL · CLOSED' : 'LIVE · BUSINESS DATE'}</div>
     </div>
 
@@ -136,6 +137,12 @@ function DashboardView({ dashboard, management, finance, history, rooms, roomTyp
 
       <section className="panel dashboard-ops-card">
         <div className="panel-head"><div><p className="muted">{historical ? 'Archived performance' : 'Today at a glance'}</p><h2>{historical ? 'Closing snapshot' : 'Operations'}</h2></div><span>{historical ? 'Closed' : dashboard?.business_date || '—'}</span></div>
+        {!historical && <div className="dashboard-room-pie-layout">
+          <div className="dashboard-pie dashboard-room-pie" style={{ background: roomGradient }} aria-label="Room status distribution pie chart" />
+          <div className="dashboard-pie-list">
+            {statusCounts.map(row => <div key={row.status}><span><i className="legend-dot" style={{ background: roomColors[row.status] }} />{roomLabel(row.status)}</span><strong>{row.count}</strong></div>)}
+          </div>
+        </div>}
         <div className="dashboard-ops-grid">
           <div><span>Occupancy</span><strong>{occupancy.toFixed(1)}%</strong></div>
           <div><span>Occupied rooms</span><strong>{occupied}</strong></div>
