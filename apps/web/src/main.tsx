@@ -114,9 +114,18 @@ function DashboardView({ dashboard, management, finance, history, rooms, roomTyp
   const reservationRooms = (r: Reservation) => r.room_ids.length ? r.room_ids.map(id => rooms.find(room => room.id === id)?.number || String(id)).join(', ') : '—';
 
   return <>
-    <div className="dashboard-hero dashboard-hero-compact">
-      <div className={`dashboard-mode-badge ${historical ? 'historical' : 'live'}`}>{historical ? 'HISTORICAL · CLOSED' : 'LIVE · BUSINESS DATE'}</div>
-    </div>
+    <section className={`dashboard-hero dashboard-hero-final ${historical ? 'historical' : 'live'}`}>
+      <div className="dashboard-hero-copy">
+        <p className="dashboard-hero-eyebrow">{historical ? 'Archived hotel performance' : 'Live hotel operations'}</p>
+        <h2>{historical ? 'Closing snapshot' : 'Operations at a glance'}</h2>
+        <span>{historical ? `Daily Closing record · ${formatDashboardDate(selectedDate!)}` : 'Revenue, occupancy, rooms and front-desk activity in one view.'}</span>
+      </div>
+      <div className="dashboard-hero-meta">
+        <div className={`dashboard-mode-badge ${historical ? 'historical' : 'live'}`}>{historical ? 'HISTORICAL · CLOSED' : 'LIVE · BUSINESS DATE'}</div>
+        <div className="dashboard-hero-stat"><span>Occupancy</span><strong>{occupancy.toFixed(1)}%</strong></div>
+        <div className="dashboard-hero-stat"><span>Rooms</span><strong>{totalRooms}</strong></div>
+      </div>
+    </section>
 
     {historical && <div className="dashboard-history-banner"><strong>Historical View · {formatDashboardDate(selectedDate!)}</strong><span>Archived closing figures only. Current room-level operations are intentionally excluded.</span></div>}
 
