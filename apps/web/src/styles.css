@@ -324,3 +324,40 @@ body{color:var(--ink);background:radial-gradient(circle at top right,rgba(0,191,
   .dashboard-pie-layout,.dashboard-room-pie-layout{grid-template-columns:1fr}
   .dashboard-pie{margin:0 auto}
 }
+
+/* La Serene global hotel identity */
+:root{
+  --brand:#c9570d;
+  --accent:#e7ad25;
+  --ink:#33291c;
+  --canvas:#fbf7ed;
+  --line:#eadfc7;
+  --chart-1:#c9570d;
+  --chart-2:#e7ad25;
+  --chart-3:#ef9a31;
+  --chart-4:#8e6a2a;
+  --chart-5:#d96a24;
+  --chart-6:#9c8a67;
+  --chart-muted:#eee5d2;
+}
+body{background:radial-gradient(circle at top right,rgba(231,173,37,.10),transparent 30%),radial-gradient(circle at bottom left,rgba(239,125,34,.06),transparent 28%),var(--canvas)}
+.topbar{border-color:var(--line);background:rgba(255,253,248,.96);box-shadow:0 10px 30px rgba(135,91,18,.07)}
+.module-nav{border-color:var(--line);background:#f5ecd8}
+.module-nav button.active{color:#a84f0a}
+.primary-button{background:linear-gradient(135deg,#ef7d22,#c9570d)}
+.primary-button:hover:not(:disabled){box-shadow:0 6px 16px rgba(201,87,13,.20)}
+.panel,.stat,.desk-card,.housekeeping-card,.room-card{border-color:var(--line);box-shadow:0 8px 24px rgba(135,91,18,.045)}
+.stat strong{color:#a4510b}
+.dashboard-status-panel,.dashboard-analytics-panel{background:#fffdf8}
+.status-bar-track{background:#f1e7d3}
+.status-bar-track i{background:linear-gradient(90deg,#e7ad25,#ef7d22)}
+.dashboard-insight{border-color:#ead8ad;background:#fff8e9}
+.dashboard-insight strong{color:#a4510b}
+.dashboard-pie::after{background:#fffdf8;border-color:var(--line)}
+.trend-bar.occupancy{background:linear-gradient(180deg,#e7ad25,#f0c85b)}
+.trend-bar.revenue{background:linear-gradient(180deg,#ef7d22,#c9570d)}
+.room-available::before,.room-card.room-available::before{background:#86a56a}
+.room-reserved::before{background:#e7ad25}
+.room-occupied::before{background:#ef7d22}
+.room-dirty::before{background:#c98b45}
+.room-out_of_order::before{background:#8b8170}
