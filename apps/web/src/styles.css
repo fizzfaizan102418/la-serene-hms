@@ -1649,6 +1649,32 @@ input[type="number"]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0
 @media(max-width:760px){.guest-toolbar,.guest-search,.guest-pagination,.reservation-search-bar{align-items:stretch;flex-direction:column;}.guest-search button,.reservation-search-bar button{width:100%;}.guest-pagination>div{width:100%;justify-content:space-between;}.reservation-register-list article.reservation-card{grid-template-columns:1fr;}.reservation-register-list article.reservation-card>b{justify-self:start;}.stay-card-head>div:last-child{align-items:flex-start;flex-direction:column;}}
 
 
+/* PR 5 — Front Desk UX */
+.frontdesk-search-panel .panel-head,.walkin-panel .panel-head{align-items:center;}
+.frontdesk-search-panel .search-bar{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:9px;align-items:center;}
+.frontdesk-search-panel .search-bar input{min-height:42px;}
+.frontdesk-search-panel .reservation-list{display:grid;gap:8px;}
+.frontdesk-search-panel .reservation-list article{border:1px solid var(--ls-border);background:var(--ls-surface-soft);border-radius:11px;padding:11px 12px;}
+.walkin-panel{border-color:#E8D68B;}
+.walkin-panel form{display:grid;gap:12px;}
+.frontdesk-selected-stay{border-color:#E8D68B;box-shadow:var(--ls-shadow-hover);}
+.frontdesk-selected-stay .selected-stay-actions{display:flex;gap:9px;flex-wrap:wrap;}
+.frontdesk-kpis{grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;}
+.frontdesk-kpis .stat{min-height:82px;padding:14px;border:1px solid var(--ls-border);border-radius:12px;background:var(--ls-surface);}
+.frontdesk-kpis .stat:first-child{border-top:3px solid var(--ls-gold);}
+.frontdesk-operational-grid{align-items:start;}
+.frontdesk-queue-panel{min-width:0;}
+.frontdesk-queue-panel .panel-head{margin-bottom:10px;}
+.frontdesk-queue-panel .panel-head>div{display:grid;gap:2px;}
+.frontdesk-queue-panel .panel-head .muted{margin:0;font-size:10px;text-transform:uppercase;letter-spacing:.08em;}
+.frontdesk-queue-panel .panel-head h2{margin:0;}
+.frontdesk-queue-panel .reservation-list{display:grid;gap:8px;}
+.frontdesk-queue-panel .reservation-list article{border:1px solid var(--ls-border);border-radius:11px;background:var(--ls-surface-soft);padding:11px 12px;}
+.room-rack-panel{border-color:var(--ls-border);}
+@media(max-width:1100px){.frontdesk-kpis{grid-template-columns:repeat(3,minmax(0,1fr));}}
+@media(max-width:760px){.frontdesk-search-panel .search-bar{grid-template-columns:1fr;}.frontdesk-search-panel .search-bar button{width:100%;}.frontdesk-kpis{grid-template-columns:repeat(2,minmax(0,1fr));}.frontdesk-selected-stay .selected-stay-actions button{flex:1;}.walkin-panel .two-col{grid-template-columns:1fr;}}
+@media(max-width:430px){.frontdesk-kpis{grid-template-columns:1fr;}}
+
 /* PR 6 — Billing UX */
 .billing-kpis{grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin-bottom:16px;}
 .billing-kpi{min-height:78px;padding:13px 14px;}
