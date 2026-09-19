@@ -253,3 +253,10 @@ body{color:var(--ink);background:radial-gradient(circle at top right,rgba(0,191,
 .dashboard-insight strong{font-size:22px;color:var(--brand)}
 .dashboard-insight span{color:#66736b;font-size:13px}
 @media(max-width:760px){.shell{padding:18px 14px 32px}.topbar>div:first-child{align-items:flex-start;flex-direction:column;gap:10px}.dashboard-insight{align-items:flex-start;flex-direction:column;gap:4px}}
+
+
+/* Data-first management dashboard */
+.dashboard-finance-panel{grid-column:1 / -1}
+.dashboard-source{margin:16px 0 0;padding-top:12px;border-top:1px solid var(--line);color:#6c7870;font-size:12px;line-height:1.55}
+.dashboard-finance-panel .status-chart{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:28px}
+@media(max-width:760px){.dashboard-finance-panel{grid-column:auto}.dashboard-finance-panel .status-chart{grid-template-columns:1fr}}
