@@ -255,7 +255,7 @@ export default function BillingView({ userRole, summaries, onRefresh, api }: Pro
     {message && <p className="notice">{message}</p>}
 
     <section className="stats billing-kpis">
-      {[['Total Folios', registerStats.total], ['Open', registerStats.open], ['Closed', registerStats.closed], ['Paid', registerStats.paid], ['Outstanding', registerStats.due]].map(([label, value]) => <article className={label === 'Outstanding' ? 'stat billing-kpi billing-kpi-alert' : 'stat billing-kpi' key={String(label)}><span>{label}</span><strong>{value}</strong></article>)}
+      {[['Total Folios', registerStats.total], ['Open', registerStats.open], ['Closed', registerStats.closed], ['Paid', registerStats.paid], ['Outstanding', registerStats.due]].map(([label, value]) => <article className={(label === 'Outstanding' ? 'stat billing-kpi billing-kpi-alert' : 'stat billing-kpi')} key={String(label)}><span>{label}</span><strong>{value}</strong></article>)}
     </section>
 
     <div className="billing-layout billing-workspace">
