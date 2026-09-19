@@ -1029,3 +1029,55 @@ body{
   --chart-6:#64748B;
   --chart-muted:#E2E8F0;
 }
+
+
+/* Dashboard navigation refinement — warm light hotel rail */
+.module-nav{
+  background:#FFFFFF;
+  border:1px solid #E2E8F0;
+  box-shadow:0 10px 30px rgba(15,23,42,.07);
+}
+.module-nav::before{
+  color:#1E293B;
+  border-bottom-color:#F1F5F9;
+}
+.module-nav button{
+  color:#64748B;
+  background:transparent;
+}
+.module-nav button:hover{
+  color:#1E293B;
+  background:#F8FAFC;
+}
+.module-nav button.active{
+  color:#1E293B;
+  background:#FBF5DF;
+  box-shadow:inset 3px 0 0 #D4AF37;
+}
+.module-nav button::before{
+  color:#94A3B8;
+}
+.module-nav button.active::before{
+  color:#B38A16;
+}
+.module-nav button:nth-child(1)::before,
+.module-nav button:nth-child(2)::before,
+.module-nav button:nth-child(3)::before,
+.module-nav button:nth-child(4)::before,
+.module-nav button:nth-child(5)::before,
+.module-nav button:nth-child(6)::before,
+.module-nav button:nth-child(7)::before,
+.module-nav button:nth-child(8)::before,
+.module-nav button:nth-child(9)::before{
+  color:inherit;
+}
+@media(max-width:1000px){
+  .module-nav{
+    background:#FFFFFF;
+    border-color:#E2E8F0;
+    box-shadow:0 6px 18px rgba(15,23,42,.06);
+  }
+  .module-nav button.active{
+    box-shadow:inset 0 -3px 0 #D4AF37;
+  }
+}
