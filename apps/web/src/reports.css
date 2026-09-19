@@ -29,3 +29,10 @@
 .reports-shell .report-list>div{min-height:42px;align-items:center;}
 .reports-shell .report-list strong{color:#1E293B;}
 @media(max-width:720px){.reports-shell .reports-filter-panel{grid-template-columns:1fr;}.reports-shell .reports-filter-panel button{width:100%;}.reports-shell .reports-kpis{grid-template-columns:1fr;}}
+
+/* PR 8 — Reports / Night Audit print-oriented hierarchy */
+.reports-shell .report-grid{align-items:start;}
+.reports-shell .report-grid>.panel{overflow:hidden;}
+.reports-shell .report-stat-grid .stat{min-height:82px;}
+.reports-shell .report-stat-grid .stat:nth-child(2){border-top:3px solid var(--ls-gold);}
+.reports-shell .report-stat-grid .report-kpi-alert{border-top:3px solid var(--ls-amber)!important;}

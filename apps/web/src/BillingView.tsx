@@ -237,14 +237,55 @@ export default function BillingView({ userRole, summaries, onRefresh, api }: Pro
     catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to close folio'); }
   }
 
+  function escapePrintHtml(value: unknown) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
   async function printReceipt() {
     try {
       const id = await ensureSelected();
       const receipt = await api<any>(`/api/folios/${id}/receipt`);
-      const rows = receipt.items.map((item: Item) => `<tr><td>${item.description}</td><td>${item.category}</td><td>${item.quantity}</td><td>${money(item.unit_price)}</td><td>${money(item.discount)}</td><td>${money(item.line_total)}</td></tr>`).join('');
-      const html = `<!doctype html><html><head><meta charset="utf-8"><title>La Serene Hotel · Folio #${receipt.folio_id}</title><style>body{font-family:Arial;margin:32px;color:#222}table{width:100%;border-collapse:collapse}th,td{padding:8px;border-bottom:1px solid #ddd;text-align:left}.totals{max-width:360px;margin-left:auto}.totals div{display:flex;justify-content:space-between;padding:6px 0}.grand{font-weight:700;border-top:2px solid #222;margin-top:6px}</style></head><body><h1>LA SERENE HOTEL</h1><p>Folio #${receipt.folio_id} · ${receipt.guest.full_name}</p><p>Stay: ${receipt.stay.check_in} → ${receipt.stay.check_out} · ${receipt.stay.nights} night(s)</p><table><thead><tr><th>Description</th><th>Category</th><th>Qty</th><th>Unit</th><th>Discount</th><th>Total</th></tr></thead><tbody>${rows || '<tr><td colspan="6">No charges</td></tr>'}</tbody></table><div class="totals"><div><span>Subtotal</span><b>${money(receipt.subtotal)}</b></div><div><span>Discounts</span><b>${money(receipt.discounts)}</b></div><div><span>Food service charge</span><b>${money(receipt.food_service_charge)}</b></div><div class="grand"><span>Total</span><b>${money(receipt.total)}</b></div><div><span>Paid</span><b>${money(receipt.paid)}</b></div><div><span>Balance</span><b>${money(receipt.balance)}</b></div></div></body></html>`;
-      const popup = window.open('', '_blank', 'width=820,height=900'); if (!popup) throw new Error('Please allow pop-ups to print the receipt'); popup.document.write(html); popup.document.close(); popup.focus(); popup.print();
-    } catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to print receipt'); }
+      const rows = receipt.items.map((item: Item) => `<tr><td>${escapePrintHtml(item.description)}</td><td>${escapePrintHtml(item.category)}</td><td class="num">${item.quantity}</td><td class="num">PKR ${money(item.unit_price)}</td><td class="num">PKR ${money(item.discount)}</td><td class="num strong">PKR ${money(item.line_total)}</td></tr>`).join('');
+      const paymentRows = (receipt.payments || []).map((payment: Payment) => `<tr><td>${escapePrintHtml(methodLabel(payment.method))}</td><td>${escapePrintHtml(payment.reference || '—')}</td><td class="num strong">PKR ${money(payment.amount)}</td></tr>`).join('');
+      const status = Number(receipt.balance || 0) <= 0.005 ? 'PAID' : Number(receipt.paid || 0) > 0 ? 'PARTIALLY PAID' : 'BALANCE DUE';
+      const balanceClass = status === 'PAID' ? 'paid' : 'due';
+      const html = `<!doctype html><html><head><meta charset="utf-8"><title>La Serene Hotel · Folio #${receipt.folio_id}</title>
+<style>
+@page{size:A4;margin:14mm 13mm 16mm}
+:root{color-scheme:light}
+*{box-sizing:border-box}
+body{margin:0;background:#fff;color:#1E293B;font:12px/1.45 Arial,Helvetica,sans-serif}
+.sheet{max-width:184mm;margin:0 auto}
+.header{display:flex;justify-content:space-between;gap:24px;padding-bottom:14px;border-bottom:2px solid #D4AF37}
+.brand{display:grid;gap:3px}.brand h1{margin:0;font-size:22px;letter-spacing:.04em}.brand p{margin:0;color:#64748B;font-size:10px}
+.meta{text-align:right}.meta strong{display:block;font-size:15px}.meta span{display:block;color:#64748B;font-size:10px;margin-top:2px}
+.status{display:inline-flex;margin-top:10px;padding:5px 9px;border-radius:999px;font-size:9px;font-weight:800;letter-spacing:.06em;background:#FEF3C7;color:#92400E}
+.status.paid{background:#DCFCE7;color:#166534}.status.due{background:#FEE2E2;color:#991B1B}
+.section{margin-top:18px}.section-title{margin:0 0 8px;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#64748B}
+.info-grid{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:8px}.info{padding:9px 10px;border:1px solid #E2E8F0;border-radius:8px;background:#F8FAFC}.info span{display:block;color:#64748B;font-size:9px;text-transform:uppercase;letter-spacing:.05em}.info strong{display:block;margin-top:2px;font-size:11px}
+table{width:100%;border-collapse:collapse}th{padding:8px 7px;background:#F8FAFC;color:#475569;font-size:9px;text-transform:uppercase;letter-spacing:.05em;text-align:left;border-top:1px solid #E2E8F0;border-bottom:1px solid #CBD5E1}td{padding:8px 7px;border-bottom:1px solid #E2E8F0;vertical-align:top}th.num,td.num{text-align:right}.strong{font-weight:750}
+.totals{width:330px;max-width:100%;margin:14px 0 0 auto}.totals div{display:flex;justify-content:space-between;gap:16px;padding:5px 0;color:#475569}.totals .grand{margin-top:4px;padding-top:9px;border-top:2px solid #1E293B;color:#1E293B;font-size:13px;font-weight:800}.totals .balance{margin-top:7px;padding:10px;border-radius:8px;background:#FEF3C7;color:#92400E;font-weight:800}.totals .balance.paid{background:#DCFCE7;color:#166534}
+.footer{margin-top:28px;padding-top:10px;border-top:1px solid #CBD5E1;color:#64748B;font-size:9px;display:flex;justify-content:space-between;gap:16px}
+@media print{body{print-color-adjust:exact;-webkit-print-color-adjust:exact}.no-print{display:none!important}thead{display:table-header-group}tr{break-inside:avoid}.section{break-inside:auto}}
+@media(max-width:700px){.header,.info-grid{grid-template-columns:1fr;display:grid}.meta{text-align:left}.totals{width:100%}}
+</style></head><body><main class="sheet">
+<header class="header"><div class="brand"><h1>LA SERENE HOTEL</h1><p>Hotel Management System · Guest Folio</p></div><div class="meta"><strong>Folio #${escapePrintHtml(receipt.folio_id)}</strong><span>Reservation #${escapePrintHtml(receipt.reservation_id)}</span><span>${escapePrintHtml(receipt.generated_at || new Date().toLocaleString())}</span><span class="status ${balanceClass}">${status}</span></div></header>
+<section class="section"><h2 class="section-title">Guest & stay</h2><div class="info-grid"><div class="info"><span>Guest</span><strong>${escapePrintHtml(receipt.guest?.full_name || '—')}</strong></div><div class="info"><span>Check-in</span><strong>${escapePrintHtml(receipt.stay?.check_in || '—')}</strong></div><div class="info"><span>Check-out</span><strong>${escapePrintHtml(receipt.stay?.check_out || '—')}</strong></div><div class="info"><span>Nights</span><strong>${escapePrintHtml(receipt.stay?.nights ?? '—')}</strong></div><div class="info"><span>Room</span><strong>${escapePrintHtml((receipt.stay?.room_numbers || []).join(', ') || receipt.stay?.room || '—')}</strong></div><div class="info"><span>Folio status</span><strong>${escapePrintHtml(receipt.status || '—')}</strong></div></div></section>
+<section class="section"><h2 class="section-title">Charges</h2><table><thead><tr><th>Description</th><th>Category</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Discount</th><th class="num">Total</th></tr></thead><tbody>${rows || '<tr><td colspan="6">No charges</td></tr>'}</tbody></table></section>
+<section class="section"><h2 class="section-title">Payments received</h2><table><thead><tr><th>Method</th><th>Reference</th><th class="num">Amount</th></tr></thead><tbody>${paymentRows || '<tr><td colspan="3">No payments recorded</td></tr>'}</tbody></table></section>
+<div class="totals"><div><span>Subtotal</span><b>PKR ${money(receipt.subtotal)}</b></div><div><span>Discounts</span><b>PKR ${money(receipt.discounts)}</b></div><div><span>Food service charge</span><b>PKR ${money(receipt.food_service_charge)}</b></div><div class="grand"><span>Total</span><b>PKR ${money(receipt.total)}</b></div><div><span>Paid</span><b>PKR ${money(receipt.paid)}</b></div><div class="balance ${balanceClass}"><span>Balance due</span><b>PKR ${money(receipt.balance)}</b></div></div>
+<footer class="footer"><span>Thank you for staying with La Serene Hotel.</span><span>Official guest folio · Keep for your records</span></footer>
+</main></body></html>`;
+      const popup = window.open('', '_blank', 'width=900,height=1000');
+      if (!popup) throw new Error('Please allow pop-ups to print the folio');
+      popup.document.write(html); popup.document.close(); popup.focus();
+      window.setTimeout(() => popup.print(), 250);
+    } catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to print folio'); }
   }
 
   const selectedPaymentStatus = folio ? (folio.balance <= 0.005 ? 'paid' : folio.paid > 0 ? 'partial' : 'due') : 'due';
