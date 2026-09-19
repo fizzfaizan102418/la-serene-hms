@@ -57,6 +57,11 @@ def _stay_deposit_balance(db: Session, stay_id: int) -> Decimal:
     ) or Decimal("0.00")
     return money(max(Decimal("0.00"), Decimal(credits) - Decimal(debits)))
 
+def stay_deposit_balance(db: Session, stay_id: int) -> Decimal:
+    """Return the authoritative unapplied guest-deposit balance for a stay."""
+    return _stay_deposit_balance(db, stay_id)
+
+
 def apply_available_deposits(db: Session, *, folio_id: int, reservation_id: int, created_by: int) -> Decimal:
     """Apply existing check-in deposits to the folio's receivable after a charge posts.
 
