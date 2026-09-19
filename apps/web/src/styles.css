@@ -227,3 +227,29 @@ input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; marg
 .app-footer strong { font-size:13px; letter-spacing:.01em; }
 .brand-highfly { color:#002147; }
 .brand-ai { color:#00BFFF; }
+
+
+/* Production visual system */
+:root{--brand:#002147;--accent:#00BFFF;--ink:#16251d;--canvas:#f1f5f2;--line:#dce5de}
+body{color:var(--ink);background:radial-gradient(circle at top right,rgba(0,191,255,.05),transparent 30%),var(--canvas)}
+.shell{max-width:1440px;padding:28px 28px 42px}
+.topbar{min-height:78px;padding:16px 18px;border:1px solid var(--line);border-radius:22px;background:rgba(255,255,255,.94);box-shadow:0 10px 30px rgba(24,45,34,.06)}
+.topbar>div:first-child{display:flex;align-items:center;gap:16px}
+.brand-lockup{display:inline-flex;align-items:center;white-space:nowrap;padding:9px 12px;border-radius:12px;background:#f2f6f9;border:1px solid #dbe4eb;font-size:17px;font-weight:850;letter-spacing:-.02em}
+.topbar .eyebrow{margin-bottom:4px;color:#617069}
+.topbar h1{font-size:clamp(24px,3vw,38px)}
+.module-nav{width:100%;margin-top:14px;padding:6px;border:1px solid var(--line);background:#e8eeea;box-shadow:0 4px 14px rgba(24,45,34,.035);overflow-x:auto}
+.module-nav button.active{color:var(--brand)}
+.stat,.panel,.desk-card,.housekeeping-card,.room-card{border-color:var(--line);box-shadow:0 8px 24px rgba(24,45,34,.045)}
+.stat strong{color:var(--brand)}
+.primary-button{background:var(--brand)}
+.dashboard-status-panel,.dashboard-analytics-panel{min-height:300px}
+.status-chart{display:grid;gap:15px;margin-top:8px}
+.status-bar-row{display:grid;gap:7px}
+.status-bar-row>div:first-child{display:flex;justify-content:space-between;color:#66736b;font-size:13px;text-transform:capitalize}
+.status-bar-track{height:10px;overflow:hidden;border-radius:999px;background:#e7eeea}
+.status-bar-track i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--brand),var(--accent))}
+.dashboard-insight{display:flex;justify-content:space-between;align-items:baseline;margin-top:22px;padding:15px;border:1px solid #dce8e0;border-radius:14px;background:#f5f8f5}
+.dashboard-insight strong{font-size:22px;color:var(--brand)}
+.dashboard-insight span{color:#66736b;font-size:13px}
+@media(max-width:760px){.shell{padding:18px 14px 32px}.topbar>div:first-child{align-items:flex-start;flex-direction:column;gap:10px}.dashboard-insight{align-items:flex-start;flex-direction:column;gap:4px}}
