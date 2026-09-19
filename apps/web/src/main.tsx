@@ -20,6 +20,8 @@ type FrontDeskData = { arrivals: Reservation[]; departures: Reservation[]; in_ho
 type BillingSummary = { folio_id: number; reservation_id: number; guest_name: string; status: string; total: number; paid: number; balance: number };
 type ManagementReport = { business_date: string; rooms: { total: number; out_of_order: number; available_room_nights: number }; occupancy: { occupied_room_nights: number; occupancy_rate: number; checked_in_guests: number; arrivals: number; departures: number }; revenue: { room: number; total: number; adr: number; revpar: number }; finance: { reconciliation_status: string; revenue_difference: number; cash_difference: number; ledger_balanced: boolean }; receivables: { outstanding: number }; period: { posting_open: boolean } };
 type DashboardFinance = { payments_received: number; payments_refunded: number; payments_net: number; payment_breakdown: { method: string; amount: number; received: number; refunded: number }[] };
+type DashboardClosingPack = { report: { revenue: { room: number; gross: number }; payments: Record<string, number>; outstanding: number; occupancy: { total_rooms: number; occupied_rooms: number } } };
+type DashboardHistoryDay = { date: string; occupancy: number; room_revenue: number | null; adr: number | null; revpar: number | null; total_revenue: number; payments: number; outstanding: number; closed: boolean };
 type AuthMode = 'login' | 'bootstrap';
 type View = 'Dashboard' | 'Rooms' | 'Guests' | 'Reservations' | 'Front Desk' | 'Housekeeping' | 'Reports' | 'Billing' | 'Backup';
 type ApiError = Error & { status?: number; authToken?: string | null };
@@ -55,11 +57,139 @@ function AuthScreen({ mode, setMode, onAuthenticated }: { mode: AuthMode; setMod
   return <main className="auth-shell"><section className="auth-card"><p className="eyebrow">LA SERENE HOTEL</p><h1>{mode === 'bootstrap' ? 'Create your admin account' : 'Welcome back'}</h1><p className="muted">{mode === 'bootstrap' ? 'Create the first administrator for this local installation.' : 'Sign in to continue to hotel operations.'}</p><form onSubmit={submit} className="auth-form"><label>Username<input value={username} onChange={e => setUsername(e.target.value)} required minLength={3} /></label><label>Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={mode === 'bootstrap' ? 8 : 1} /></label>{error && <p className="form-error">{error}</p>}<button className="primary-button" disabled={busy}>{busy ? 'Please wait…' : mode === 'bootstrap' ? 'Create admin & sign in' : 'Sign in'}</button></form><button className="link-button" onClick={() => { setError(''); setMode(mode === 'login' ? 'bootstrap' : 'login'); }}>{mode === 'login' ? 'New installation? Create the first admin' : 'Already initialized? Sign in instead'}</button></section><footer className="app-footer" aria-label="Application developer credit"><strong><span className="brand-highfly">HighFly</span> <span className="brand-ai">AI</span></strong></footer></main>;
 }
 
-function DashboardView({ dashboard, management, finance, rooms, roomTypes }: { dashboard: Dashboard | null; management: ManagementReport | null; finance: DashboardFinance | null; rooms: Room[]; roomTypes: RoomType[] }) {
+function formatDashboardDate(value: string) {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short' }).format(new Date(Date.UTC(year, month - 1, day)));
+}
+
+function previousBusinessDates(endDate: string, count: number) {
+  const [year, month, day] = endDate.split('-').map(Number);
+  const cursor = new Date(Date.UTC(year, month - 1, day));
+  const dates: string[] = [];
+  for (let i = count - 1; i >= 0; i -= 1) {
+    const d = new Date(cursor);
+    d.setUTCDate(cursor.getUTCDate() - i);
+    dates.push(d.toISOString().slice(0, 10));
+  }
+  return dates;
+}
+
+function DashboardView({ dashboard, management, finance, history, rooms, roomTypes }: { dashboard: Dashboard | null; management: ManagementReport | null; finance: DashboardFinance | null; history: DashboardHistoryDay[]; rooms: Room[]; roomTypes: RoomType[] }) {
   const statusCounts = useMemo(() => statuses.map(status => ({ status, count: rooms.filter(room => room.status === status).length })), [rooms]);
   const maxStatus = Math.max(1, ...statusCounts.map(item => item.count));
-  const typeById = useMemo(() => new Map(roomTypes.map(t => [t.id, t])), [roomTypes]); const label = (status: string) => status.replace(/_/g, ' ');
-  return <><section className="stats">{[['Occupancy', management ? management.occupancy.occupancy_rate.toFixed(1) + '%' : '—'], ['Room revenue', management ? Number(management.revenue.room).toFixed(2) : '—'], ['ADR', management ? Number(management.revenue.adr).toFixed(2) : '—'], ['RevPAR', management ? Number(management.revenue.revpar).toFixed(2) : '—'], ['Payments received', finance ? Number(finance.payments_received).toFixed(2) : '—'], ['Outstanding', management ? Number(management.receivables.outstanding).toFixed(2) : '—']].map(([name, value]) => <article className="stat" key={name as string}><span>{name}</span><strong>{value}</strong></article>)}</section><section className="workspace"><div className="panel dashboard-status-panel"><div className="panel-head"><div><p className="muted">Live inventory</p><h2>Room Status</h2></div><span>{rooms.length} rooms</span></div><div className="rooms">{rooms.length ? rooms.map(room => <div className={`room room-${room.status}`} key={room.id}><strong>{room.number}</strong><span>{typeById.get(room.room_type_id)?.name ?? 'Unassigned'} · {label(room.status)}</span></div>) : <p className="muted">No rooms configured yet.</p>}</div></div><div className="panel dashboard-analytics-panel"><div className="panel-head"><div><p className="muted">At a glance</p><h2>Room mix</h2></div><span>Live</span></div><div className="status-chart">{statusCounts.map(item => <div className="status-bar-row" key={item.status}><div><span>{item.status.replace(/_/g, " ")}</span><strong>{item.count}</strong></div><div className="status-bar-track"><i style={{ width: `${(item.count / maxStatus) * 100}%` }} /></div></div>)}</div><div className="dashboard-insight"><strong>{management?.occupancy.occupied_room_nights ?? dashboard?.occupied_rooms ?? 0} occupied room-night(s)</strong><span>{management ? management.occupancy.occupancy_rate.toFixed(1) : '0.0'}% occupancy</span></div></div><div className="panel"><div className="panel-head"><div><p className="muted">Live financial & operations</p><h2>Hotel performance</h2></div><span>{management?.finance.reconciliation_status || 'Loading'}</span></div><div className="operations"><div><span>Total revenue</span><strong>{management ? Number(management.revenue.total).toFixed(2) : '—'}</strong></div><div><span>In-house guests</span><strong>{management?.occupancy.checked_in_guests ?? dashboard?.in_house_guests ?? '—'}</strong></div><div><span>Arrivals / departures</span><strong>{management ? management.occupancy.arrivals + ' / ' + management.occupancy.departures : '—'}</strong></div><div><span>Ledger</span><strong>{management ? (management.finance.ledger_balanced ? 'Balanced' : 'Review') : '—'}</strong></div></div></div><div className="panel dashboard-finance-panel"><div className="panel-head"><div><p className="muted">Actual cashier activity</p><h2>Payment mix</h2></div><span>Current business date</span></div>{finance?.payment_breakdown.length ? <div className="status-chart">{finance.payment_breakdown.map(row => <div className="status-bar-row" key={row.method}><div><span>{row.method.replace(/_/g, ' ')}</span><strong>{Number(row.amount).toFixed(2)}</strong></div><div className="status-bar-track"><i style={{ width: Math.min(100, Math.max(0, (Number(row.amount) / Math.max(1, finance.payments_net)) * 100)) + '%' }} /></div></div>)}</div> : <p className="muted">No posted payment activity for this business date.</p>}<p className="dashboard-source">Dashboard financial figures are read from the hotel's current reporting and ledger data. No sample, generic, or forecast values are shown.</p></div></section></>;
+  const typeById = useMemo(() => new Map(roomTypes.map(t => [t.id, t])), [roomTypes]);
+  const label = (status: string) => status.replace(/_/g, ' ');
+  const paymentTotal = Math.max(0, Number(finance?.payments_net || 0));
+  let paymentOffset = 0;
+  const paymentGradient = finance?.payment_breakdown.length && paymentTotal > 0
+    ? finance.payment_breakdown.map(row => {
+        const start = paymentOffset;
+        paymentOffset += (Number(row.amount || 0) / paymentTotal) * 100;
+        return `var(--chart-${Math.min(finance.payment_breakdown.indexOf(row), 5) + 1}) ${start.toFixed(2)}% ${paymentOffset.toFixed(2)}%`;
+      }).join(', ')
+    : 'var(--chart-muted) 0 100%';
+  const occupied = Number(management?.occupancy.occupied_room_nights ?? dashboard?.occupied_rooms ?? 0);
+  const totalRooms = Number(management?.rooms.total ?? dashboard?.total_rooms ?? rooms.length);
+  const roomStatusTotal = Math.max(1, rooms.length);
+  let roomOffset = 0;
+  const roomGradient = statusCounts.map((item, index) => {
+    const start = roomOffset;
+    roomOffset += (item.count / roomStatusTotal) * 100;
+    return `var(--chart-${Math.min(index, 5) + 1}) ${start.toFixed(2)}% ${roomOffset.toFixed(2)}%`;
+  }).join(', ');
+
+  return <>
+    <section className="stats">
+      {[
+        ['Occupancy', management ? management.occupancy.occupancy_rate.toFixed(1) + '%' : '—'],
+        ['Room revenue', management ? Number(management.revenue.room).toFixed(2) : '—'],
+        ['ADR', management ? Number(management.revenue.adr).toFixed(2) : '—'],
+        ['RevPAR', management ? Number(management.revenue.revpar).toFixed(2) : '—'],
+        ['Payments received', finance ? Number(finance.payments_received).toFixed(2) : '—'],
+        ['Outstanding', management ? Number(management.receivables.outstanding).toFixed(2) : '—']
+      ].map(([name, value]) => <article className="stat" key={name as string}><span>{name}</span><strong>{value}</strong></article>)}
+    </section>
+
+    <section className="dashboard-chart-grid">
+      <section className="panel dashboard-trend-panel">
+        <div className="panel-head">
+          <div><p className="muted">Actual closed-day history</p><h2>5-day hotel performance</h2></div>
+          <span>{history.length} business day(s)</span>
+        </div>
+        {history.length ? <div className="dashboard-trend">
+          {history.map(day => {
+            const revenueMax = Math.max(1, ...history.map(item => item.total_revenue));
+            const occupancyHeight = Math.max(3, Math.min(100, day.occupancy));
+            const revenueHeight = Math.max(3, Math.min(100, (day.total_revenue / revenueMax) * 100));
+            return <article className="trend-day" key={day.date}>
+              <div className="trend-values"><strong>{day.occupancy.toFixed(1)}%</strong><span>{day.total_revenue.toFixed(0)}</span></div>
+              <div className="trend-bars">
+                <i className="trend-bar occupancy" style={{ height: `${occupancyHeight}%` }} title={`Occupancy ${day.occupancy.toFixed(1)}%`} />
+                <i className="trend-bar revenue" style={{ height: `${revenueHeight}%` }} title={`Total revenue ${day.total_revenue.toFixed(2)}`} />
+              </div>
+              <span className="trend-label">{formatDashboardDate(day.date)}</span>
+              <small>{day.closed ? 'Closed' : 'Open'}</small>
+            </article>;
+          })}
+        </div> : <p className="muted">Historical dashboard data is loading…</p>}
+        <div className="chart-legend"><span><i className="legend-dot occupancy" />Occupancy</span><span><i className="legend-dot revenue" />Total revenue</span></div>
+        <p className="dashboard-source">Historical points use the hotel's actual daily reporting data. Closed dates use the archived Night Audit figures; the current open date remains live.</p>
+      </section>
+
+      <section className="panel dashboard-pie-panel">
+        <div className="panel-head">
+          <div><p className="muted">Current cashier activity</p><h2>Payment mix</h2></div>
+          <span>Business date</span>
+        </div>
+        <div className="dashboard-pie-layout">
+          <div className="dashboard-pie" style={{ background: paymentGradient }} aria-label="Payment mix pie chart" />
+          <div className="dashboard-pie-list">
+            {finance?.payment_breakdown.length ? finance.payment_breakdown.map((row, index) => {
+              const share = paymentTotal ? (Number(row.amount) / paymentTotal) * 100 : 0;
+              return <div key={row.method}><span><i className={`legend-dot chart-${Math.min(index, 5) + 1}`} />{row.method.replace(/_/g, ' ')}</span><strong>{Number(row.amount).toFixed(2)} <small>{share.toFixed(1)}%</small></strong></div>;
+            }) : <p className="muted">No posted payment activity for this business date.</p>}
+          </div>
+        </div>
+        <p className="dashboard-source">The pie uses only posted cashier/payment transactions for the current business date.</p>
+      </section>
+    </section>
+
+    <section className="workspace">
+      <div className="panel dashboard-status-panel">
+        <div className="panel-head"><div><p className="muted">Live inventory</p><h2>Room Status</h2></div><span>{rooms.length} rooms</span></div>
+        <div className="rooms">{rooms.length ? rooms.map(room => <div className={`room room-${room.status}`} key={room.id}><strong>{room.number}</strong><span>{typeById.get(room.room_type_id)?.name ?? 'Unassigned'} · {label(room.status)}</span></div>) : <p className="muted">No rooms configured yet.</p>}</div>
+      </div>
+
+      <div className="panel dashboard-analytics-panel">
+        <div className="panel-head"><div><p className="muted">At a glance</p><h2>Room mix</h2></div><span>Live</span></div>
+        <div className="dashboard-room-pie-layout">
+          <div className="dashboard-pie room-pie" style={{ background: `conic-gradient(${roomGradient})` }} aria-label="Live room status pie chart" />
+          <div className="dashboard-pie-list">
+            {statusCounts.map((item, index) => <div key={item.status}><span><i className={`legend-dot chart-${Math.min(index, 5) + 1}`} />{item.status.replace(/_/g, ' ')}</span><strong>{item.count}</strong></div>)}
+          </div>
+        </div>
+        <div className="dashboard-insight"><strong>{occupied} occupied room-night(s)</strong><span>{management ? management.occupancy.occupancy_rate.toFixed(1) : '0.0'}% occupancy · {totalRooms} rooms</span></div>
+      </div>
+
+      <div className="panel">
+        <div className="panel-head"><div><p className="muted">Live financial & operations</p><h2>Hotel performance</h2></div><span>{management?.finance.reconciliation_status || 'Loading'}</span></div>
+        <div className="operations">
+          <div><span>Total revenue</span><strong>{management ? Number(management.revenue.total).toFixed(2) : '—'}</strong></div>
+          <div><span>In-house guests</span><strong>{management?.occupancy.checked_in_guests ?? dashboard?.in_house_guests ?? '—'}</strong></div>
+          <div><span>Arrivals / departures</span><strong>{management ? management.occupancy.arrivals + ' / ' + management.occupancy.departures : '—'}</strong></div>
+          <div><span>Ledger</span><strong>{management ? (management.finance.ledger_balanced ? 'Balanced' : 'Review') : '—'}</strong></div>
+          <div><span>Room charges pending Night Audit</span><strong>{management?.period.posting_open ? 'Yes' : 'No'}</strong></div>
+        </div>
+        {management?.period.posting_open && <p className="dashboard-audit-note">The current business date is still open. Room revenue, ADR and RevPAR can remain at zero until Night Audit posts the pending room charges. This dashboard does not invent or pre-post those values.</p>}
+      </div>
+
+      <div className="panel dashboard-finance-panel">
+        <div className="panel-head"><div><p className="muted">Actual cashier activity</p><h2>Payment breakdown</h2></div><span>Current business date</span></div>
+        {finance?.payment_breakdown.length ? <div className="status-chart">{finance.payment_breakdown.map(row => <div className="status-bar-row" key={row.method}><div><span>{row.method.replace(/_/g, ' ')}</span><strong>{Number(row.amount).toFixed(2)}</strong></div><div className="status-bar-track"><i style={{ width: Math.min(100, Math.max(0, (Number(row.amount) / Math.max(1, finance.payments_net)) * 100)) + '%' }} /></div></div>)}</div> : <p className="muted">No posted payment activity for this business date.</p>}
+        <p className="dashboard-source">Dashboard financial figures are read from the hotel's current reporting and ledger data. No sample, generic, or forecast values are shown.</p>
+      </div>
+    </section>
+  </>;
 }
 
 function GuestsView({ user, guests, setGuests, onRefresh }: { user: User; guests: Guest[]; setGuests: React.Dispatch<React.SetStateAction<Guest[]>>; onRefresh: () => Promise<void> }) {
@@ -256,7 +386,7 @@ function RoomsView({ user, rooms, setRooms, roomTypes, onRefresh }: { user: User
 }
 
 function App() {
-  const [user, setUser] = useState<User | null>(null); const [management, setManagement] = useState<ManagementReport | null>(null); const [dashboardFinance, setDashboardFinance] = useState<DashboardFinance | null>(null); const [authMode, setAuthMode] = useState<AuthMode>('login'); const [checking, setChecking] = useState(true); const [dashboard, setDashboard] = useState<Dashboard | null>(null); const [rooms, setRooms] = useState<Room[]>([]); const [roomTypes, setRoomTypes] = useState<RoomType[]>([]); const [guests, setGuests] = useState<Guest[]>([]); const [reservations, setReservations] = useState<Reservation[]>([]); const [frontDesk, setFrontDesk] = useState<FrontDeskData>({ arrivals: [], departures: [], in_house: [] }); const [billing, setBilling] = useState<BillingSummary[]>([]); const [view, setView] = useState<View>('Dashboard'); const [error, setError] = useState('');
+  const [user, setUser] = useState<User | null>(null); const [management, setManagement] = useState<ManagementReport | null>(null); const [dashboardFinance, setDashboardFinance] = useState<DashboardFinance | null>(null); const [dashboardHistory, setDashboardHistory] = useState<DashboardHistoryDay[]>([]); const [authMode, setAuthMode] = useState<AuthMode>('login'); const [checking, setChecking] = useState(true); const [dashboard, setDashboard] = useState<Dashboard | null>(null); const [rooms, setRooms] = useState<Room[]>([]); const [roomTypes, setRoomTypes] = useState<RoomType[]>([]); const [guests, setGuests] = useState<Guest[]>([]); const [reservations, setReservations] = useState<Reservation[]>([]); const [frontDesk, setFrontDesk] = useState<FrontDeskData>({ arrivals: [], departures: [], in_house: [] }); const [billing, setBilling] = useState<BillingSummary[]>([]); const [view, setView] = useState<View>('Dashboard'); const [error, setError] = useState('');
   const refreshGeneration = useRef(0);
   const visibleModules = user?.role === 'admin' ? modules : user?.role === 'reception' ? modules.filter(module => module !== 'Backup') : modules.filter(module => module !== 'Billing' && module !== 'Reports' && module !== 'Backup');
 
@@ -294,6 +424,43 @@ function App() {
         ]);
         if (!isCurrentSession(refreshToken, generation)) return;
         setManagement(managementData);
+        const historyDates = previousBusinessDates(d.business_date, 5);
+        const historyRows = await Promise.all(historyDates.map(async date => {
+          const liveReport = await api<any>(`/api/reports/summary?from_date=${date}&to_date=${date}`);
+          try {
+            const pack = await api<DashboardClosingPack>(`/api/night-audit/pack/${date}/daily-closing.json`);
+            const p = pack.report;
+            const roomsSold = Number(p.occupancy?.occupied_rooms || 0);
+            const roomsTotal = Math.max(0, Number(p.occupancy?.total_rooms || 0));
+            const roomRevenue = Number(p.revenue?.room || 0);
+            return {
+              date,
+              occupancy: roomsTotal ? (roomsSold / roomsTotal) * 100 : 0,
+              room_revenue: roomRevenue,
+              adr: roomsSold ? roomRevenue / roomsSold : 0,
+              revpar: roomsTotal ? roomRevenue / roomsTotal : 0,
+              total_revenue: Number(p.revenue?.gross || 0),
+              payments: Number(p.payments?.total || 0),
+              outstanding: Number(p.outstanding || 0),
+              closed: true,
+            } satisfies DashboardHistoryDay;
+          } catch {
+            return {
+              date,
+              occupancy: Number(liveReport.rooms?.occupancy_rate || 0),
+              room_revenue: date === d.business_date ? Number(managementData.revenue?.room || 0) : null,
+              adr: date === d.business_date ? Number(managementData.revenue?.adr || 0) : null,
+              revpar: date === d.business_date ? Number(managementData.revenue?.revpar || 0) : null,
+              total_revenue: Number(liveReport.revenue?.gross || liveReport.revenue?.net || 0),
+              payments: Number(liveReport.revenue?.payments_received || 0),
+              outstanding: Number(liveReport.revenue?.outstanding_balance || 0),
+              closed: false,
+            } satisfies DashboardHistoryDay;
+          }
+        }));
+        if (!isCurrentSession(refreshToken, generation)) return;
+        setDashboardHistory(historyRows);
+
         setDashboardFinance({
           payments_received: Number(reportData.revenue?.payments_received || 0),
           payments_refunded: Number(reportData.revenue?.payments_refunded || 0),
@@ -366,13 +533,13 @@ function App() {
 
   function logout() {
     refreshGeneration.current += 1;
-    localStorage.removeItem(TOKEN_KEY); setUser(null); setDashboard(null); setManagement(null); setDashboardFinance(null); setRooms([]); setRoomTypes([]); setGuests([]); setReservations([]); setFrontDesk({ arrivals: [], departures: [], in_house: [] }); setBilling([]); setAuthMode('login');
+    localStorage.removeItem(TOKEN_KEY); setUser(null); setDashboard(null); setManagement(null); setDashboardFinance(null); setDashboardHistory([]); setRooms([]); setRoomTypes([]); setGuests([]); setReservations([]); setFrontDesk({ arrivals: [], departures: [], in_house: [] }); setBilling([]); setAuthMode('login');
   }
 
   if (checking) return <main className="auth-shell"><p className="muted">Checking local session…</p></main>;
   if (!user) return <AuthScreen mode={authMode} setMode={setAuthMode} onAuthenticated={authenticated} />;
 
-  return <main className="shell"><header className="topbar"><div><div className="brand-lockup" aria-label="HighFly AI"><span className="brand-highfly">HighFly</span> <span className="brand-ai">AI</span></div><div><p className="eyebrow">LA SERENE HOTEL & RESORT</p><h1>Hotel Management System</h1></div></div><div className="user-actions"><div className="user-chip"><strong>{user.username}</strong><span>{user.role}</span></div><button className="logout-button" onClick={logout}>Log out</button></div></header><nav className="module-nav">{visibleModules.map(m => <button key={m} className={view === m ? 'active' : ''} onClick={() => setView(m)}>{m}</button>)}</nav>{error && <p className="error">{error}</p>}{view === 'Dashboard' && <><section className="welcome"><div><p className="muted">Operations dashboard</p><h2>{dashboard ? `Business date · ${dashboard.business_date}` : 'Loading hotel data…'}</h2></div></section><DashboardView dashboard={dashboard} management={management} finance={dashboardFinance} rooms={rooms} roomTypes={roomTypes} /></>}{view === 'Rooms' && <RoomsView user={user} rooms={rooms} setRooms={setRooms} roomTypes={roomTypes} onRefresh={refresh} />}{view === 'Guests' && <GuestsView user={user} guests={guests} setGuests={setGuests} onRefresh={refresh} />}{view === 'Reservations' && <ReservationsPMSView user={user} guests={guests} rooms={rooms} roomTypes={roomTypes} reservations={reservations} onRefresh={refresh} api={api} />}{view === 'Front Desk' && <FrontDeskPMSView user={user} data={frontDesk} rooms={rooms} reservations={reservations} guests={guests} roomTypes={roomTypes} onRefresh={refresh} api={api} />}{view === 'Housekeeping' && <HousekeepingView userRole={user.role} api={api} onRefresh={refresh} />}{view === 'Reports' && <ReportsView api={api} />}{view === 'Billing' && <BillingView userRole={user.role} summaries={billing} onRefresh={refresh} api={api} />}{view === 'Backup' && <BackupView api={api} />}<footer className="app-footer" aria-label="Application developer credit"><strong><span className="brand-highfly">HighFly</span> <span className="brand-ai">AI</span></strong></footer></main>;
+  return <main className="shell"><header className="topbar"><div><div className="brand-lockup" aria-label="HighFly AI"><span className="brand-highfly">HighFly</span> <span className="brand-ai">AI</span></div><div><p className="eyebrow">LA SERENE HOTEL & RESORT</p><h1>Hotel Management System</h1></div></div><div className="user-actions"><div className="user-chip"><strong>{user.username}</strong><span>{user.role}</span></div><button className="logout-button" onClick={logout}>Log out</button></div></header><nav className="module-nav">{visibleModules.map(m => <button key={m} className={view === m ? 'active' : ''} onClick={() => setView(m)}>{m}</button>)}</nav>{error && <p className="error">{error}</p>}{view === 'Dashboard' && <><section className="welcome"><div><p className="muted">Operations dashboard</p><h2>{dashboard ? `Business date · ${dashboard.business_date}` : 'Loading hotel data…'}</h2></div></section><DashboardView dashboard={dashboard} management={management} finance={dashboardFinance} history={dashboardHistory} rooms={rooms} roomTypes={roomTypes} /></>}{view === 'Rooms' && <RoomsView user={user} rooms={rooms} setRooms={setRooms} roomTypes={roomTypes} onRefresh={refresh} />}{view === 'Guests' && <GuestsView user={user} guests={guests} setGuests={setGuests} onRefresh={refresh} />}{view === 'Reservations' && <ReservationsPMSView user={user} guests={guests} rooms={rooms} roomTypes={roomTypes} reservations={reservations} onRefresh={refresh} api={api} />}{view === 'Front Desk' && <FrontDeskPMSView user={user} data={frontDesk} rooms={rooms} reservations={reservations} guests={guests} roomTypes={roomTypes} onRefresh={refresh} api={api} />}{view === 'Housekeeping' && <HousekeepingView userRole={user.role} api={api} onRefresh={refresh} />}{view === 'Reports' && <ReportsView api={api} />}{view === 'Billing' && <BillingView userRole={user.role} summaries={billing} onRefresh={refresh} api={api} />}{view === 'Backup' && <BackupView api={api} />}<footer className="app-footer" aria-label="Application developer credit"><strong><span className="brand-highfly">HighFly</span> <span className="brand-ai">AI</span></strong></footer></main>;
 }
 
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);
