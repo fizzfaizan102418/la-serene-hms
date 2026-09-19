@@ -233,6 +233,9 @@ export default function BillingView({ userRole, summaries, onRefresh, api }: Pro
   }
 
   async function closeFolio() {
+    if (folio && folio.balance > 0.005) {
+      if (!window.confirm(`This folio still has PKR ${money(folio.balance)} outstanding. Close it anyway?`)) return;
+    } else if (!window.confirm('Close this folio? This will complete the current billing record.')) return;
     try { const id = await ensureSelected(); setFolio(await api<Folio>(`/api/folios/${id}/close`, { method: 'POST' })); setMessage('Folio closed successfully.'); await onRefresh(); }
     catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to close folio'); }
   }
@@ -334,7 +337,7 @@ table{width:100%;border-collapse:collapse}th{padding:8px 7px;background:#F8FAFC;
       <div className="side-stack">
         {folio && <div className="panel billing-detail-panel">
           <div className="panel-head"><div><p className="muted">Folio #{folio.id} · Reservation #{folio.reservation_id}</p><h2>Folio details</h2></div><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}><span style={badgeStyle(selectedFolioStatus)}>{normalizeStatus(folio.status)}</span><span style={badgeStyle(selectedPaymentStatus)}>{paymentLabel(selectedPaymentStatus)}</span></div></div>
-          <div className="billing-totals"><div><span>Subtotal</span><b>PKR {money(folio.subtotal)}</b></div><div><span>Discounts</span><b>PKR {money(folio.discounts)}</b></div><div><span>Food service charge (10%)</span><b>PKR {money(folio.food_service_charge)}</b></div><div className="grand"><span>Total</span><b>PKR {money(folio.total)}</b></div><div><span>Paid</span><b>PKR {money(folio.paid)}</b></div><div className="balance"><span>Balance</span><b>PKR {money(folio.balance)}</b></div></div>
+          <div className="billing-balance-banner"><div><span>Balance due</span><strong>PKR {money(folio.balance)}</strong></div><small>{folio.balance > 0.005 ? 'Payment is still outstanding. Review the folio before closing.' : 'Folio is fully settled.'}</small></div><div className="billing-totals"><div><span>Subtotal</span><b>PKR {money(folio.subtotal)}</b></div><div><span>Discounts</span><b>PKR {money(folio.discounts)}</b></div><div><span>Food service charge (10%)</span><b>PKR {money(folio.food_service_charge)}</b></div><div className="grand"><span>Total</span><b>PKR {money(folio.total)}</b></div><div><span>Paid</span><b>PKR {money(folio.paid)}</b></div><div className="balance"><span>Balance</span><b>PKR {money(folio.balance)}</b></div></div>
 
           <div className="panel-head billing-section-head" style={{ marginTop: 18 }}><h3>Charges</h3><span>{folio.items.length} line items</span></div>
           <div className="folio-items">{folio.items.length ? folio.items.map(item => { const state = itemState(item); return <article key={item.id}><div><strong>{item.description}</strong><span>{item.category} · {Number(item.quantity)} × PKR {money(item.unit_price)}{Number(item.discount) ? ` · discount PKR ${money(item.discount)}` : ''}</span></div><div className="desk-actions"><b>PKR {money(item.line_total)}</b><span className="muted">{state === 'reversed' ? 'Reversed · audit retained' : state === 'posted' ? 'Posted · immutable' : 'Financial status unavailable'}</span>{isAdmin && folio.status === 'open' && state === 'posted' && <><button className="secondary-button small-button" disabled={busyItemId === item.id} onClick={() => startEdit(item)}>Edit</button><button className="secondary-button small-button" disabled={busyItemId === item.id} onClick={() => void removeItem(item)}>{busyItemId === item.id ? 'Working…' : 'Remove'}</button></>}</div></article>; }) : <p className="muted">No charges yet.</p>}</div>
