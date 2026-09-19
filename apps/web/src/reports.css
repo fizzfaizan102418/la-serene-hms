@@ -36,3 +36,10 @@
 .reports-shell .report-stat-grid .stat{min-height:82px;}
 .reports-shell .report-stat-grid .stat:nth-child(2){border-top:3px solid var(--ls-gold);}
 .reports-shell .report-stat-grid .report-kpi-alert{border-top:3px solid var(--ls-amber)!important;}
+
+
+/* PR 9 — Management report clarity */
+.reports-shell .report-grid .panel{box-shadow:0 6px 18px rgba(15,23,42,.035)}
+.reports-shell .report-list>div>span{color:var(--ls-muted,#64748b)}
+.reports-shell .report-list>div>strong{font-variant-numeric:tabular-nums}
+@media print{.reports-shell .page-heading,.reports-shell .reports-filter-panel{box-shadow:none}.reports-shell .panel{break-inside:avoid}}
