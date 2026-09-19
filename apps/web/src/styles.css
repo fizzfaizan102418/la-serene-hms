@@ -1607,3 +1607,43 @@ input[type="number"]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0
 @media(max-width:900px){.room-status-summary{grid-template-columns:repeat(3,minmax(0,1fr));}}
 @media(max-width:620px){.room-status-summary{grid-template-columns:1fr 1fr;}.room-map-modern{grid-template-columns:1fr 1fr;}}
 @media(max-width:430px){.room-status-summary{grid-template-columns:1fr;}.room-map-modern{grid-template-columns:1fr;}}
+
+
+/* PR 4 — Guests + Reservations UX */
+.guest-directory{display:grid;gap:14px;}
+.guest-toolbar{display:flex;justify-content:space-between;align-items:end;gap:16px;}
+.guest-toolbar>div{display:grid;gap:3px;}
+.guest-toolbar strong{font-size:15px;color:var(--ls-ink);}
+.guest-toolbar span{font-size:12px;color:var(--ls-muted);}
+.guest-search{display:flex;gap:9px;align-items:center;}
+.guest-search input{flex:1;}
+.guest-actions-cell{white-space:nowrap;text-align:right!important;}
+.guest-pagination{display:flex;justify-content:space-between;align-items:center;gap:12px;padding-top:2px;color:var(--ls-muted);font-size:12px;}
+.guest-pagination>div{display:flex;align-items:center;gap:8px;}
+.duplicate-warning{display:grid;gap:9px;padding:12px 14px;border:1px solid #FED7AA;border-radius:12px;background:var(--ls-amber-soft);color:#92400E;}
+.duplicate-warning>span{font-size:12px;}
+.duplicate-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px;border:1px solid #FDE68A;border-radius:10px;background:#fff;}
+.duplicate-row>div{display:grid;gap:2px;}
+.duplicate-row>div span{font-size:11px;color:var(--ls-muted);}
+.reservation-search-bar{display:flex;gap:9px;margin-bottom:14px;align-items:center;}
+.reservation-search-bar input{flex:1;min-height:42px;padding:10px 12px;border:1px solid var(--ls-border);border-radius:10px;background:var(--ls-surface);color:var(--ls-ink);}
+.reservation-register-list{display:grid;gap:9px;}
+.reservation-register-list article.reservation-card{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:14px;padding:13px 14px;border:1px solid var(--ls-border);border-radius:12px;background:var(--ls-surface-soft);box-shadow:none;cursor:pointer;transition:border-color .15s ease,background .15s ease,transform .15s ease;}
+.reservation-register-list article.reservation-card:hover,.reservation-register-list article.reservation-card.selected{border-color:#E8D68B;background:var(--ls-gold-soft);transform:translateY(-1px);}
+.reservation-register-list article.reservation-card>div{display:grid;gap:4px;min-width:0;}
+.reservation-register-list article.reservation-card>div strong{color:var(--ls-ink);font-size:13px;}
+.reservation-register-list article.reservation-card>div span{color:var(--ls-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.reservation-register-list article.reservation-card>b{padding:5px 8px;border-radius:999px;background:var(--ls-surface-muted);color:var(--ls-muted);font-size:10px;text-transform:capitalize;}
+.reservation-detail-panel{margin-top:16px;background:var(--ls-surface-soft);}
+.reservation-status{display:inline-flex;align-items:center;width:max-content;padding:5px 9px;border-radius:999px;font-size:10px;font-weight:850;line-height:1;text-transform:capitalize;white-space:nowrap;}
+.status-reserved{background:var(--ls-amber-soft);color:#B45309;border:1px solid #FED7AA;}
+.status-checked_in{background:var(--ls-green-soft);color:#15803D;border:1px solid #BBF7D0;}
+.status-checked_out{background:var(--ls-surface-muted);color:var(--ls-muted);border:1px solid var(--ls-border);}
+.status-cancelled,.status-no_show{background:var(--ls-red-soft);color:#B91C1C;border:1px solid #FECACA;}
+.reservation-stay-card{display:block!important;padding:16px!important;background:var(--ls-surface)!important;border:1px solid var(--ls-border)!important;border-radius:14px!important;box-shadow:none!important;}
+.reservation-stay-card.open{border-color:#E8D68B!important;box-shadow:0 8px 22px rgba(15,23,42,.06)!important;}
+.stay-card-head>div:last-child{display:flex;align-items:center;gap:10px;}
+.stay-card-head>div:first-child{display:grid;gap:3px;}
+.stay-card-head>div:first-child span{display:block;color:var(--ls-muted);font-size:11px;}
+.stay-card-head>div:last-child>b{font-size:13px;color:var(--ls-ink);white-space:nowrap;}
+@media(max-width:760px){.guest-toolbar,.guest-search,.guest-pagination,.reservation-search-bar{align-items:stretch;flex-direction:column;}.guest-search button,.reservation-search-bar button{width:100%;}.guest-pagination>div{width:100%;justify-content:space-between;}.reservation-register-list article.reservation-card{grid-template-columns:1fr;}.reservation-register-list article.reservation-card>b{justify-self:start;}.stay-card-head>div:last-child{align-items:flex-start;flex-direction:column;}}
