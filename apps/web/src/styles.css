@@ -219,3 +219,11 @@ input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; marg
   .guest-pagination > div { width: 100%; justify-content: space-between; }
   .guest-pagination > div > span { flex: 1; }
 }
+
+
+/* Developer branding */
+.shell { min-height:100vh; display:flex; flex-direction:column; }
+.app-footer { margin-top:auto; padding:28px 2px 4px; display:flex; justify-content:flex-end; align-items:baseline; gap:6px; color:#7a817c; font-size:12px; }
+.app-footer strong { font-size:13px; letter-spacing:.01em; }
+.brand-highfly { color:#002147; }
+.brand-ai { color:#00BFFF; }
