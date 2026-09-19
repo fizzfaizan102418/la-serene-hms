@@ -172,7 +172,7 @@ export default function FrontDeskPMSView({ user, data, rooms, reservations, gues
     {error && <p className="notice" style={{ borderColor: '#d28b8b' }}>{error}</p>}
     {message && <p className="notice">{message}</p>}
 
-    <section className="panel" style={{ marginBottom: 16 }}>
+    <section className="panel frontdesk-search-panel" style={{ marginBottom: 16 }}>
       <div className="panel-head"><div><p className="muted">Find a guest, reservation, room or folio</p><h2>Quick search</h2></div><span>{searchResults.length} result(s)</span></div>
       <form className="search-bar" onSubmit={universalSearch}>
         <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Search guest name, phone, reservation #, room or folio" aria-label="Universal front desk search" />
@@ -185,7 +185,7 @@ export default function FrontDeskPMSView({ user, data, rooms, reservations, gues
       </article>)}</div>}
     </section>
 
-    {canOperate && <section className="panel" style={{ marginBottom: 16 }}>
+    {canOperate && <section className="panel walkin-panel" style={{ marginBottom: 16 }}>
       <div className="panel-head"><div><p className="muted">Guest → Room → Rate → Occupant → Payment policy</p><h2>Walk-in check-in</h2></div><button className="secondary-button small-button" type="button" onClick={() => setShowWalkIn(value => !value)}>{showWalkIn ? 'Collapse' : 'Open'}</button></div>
       {showWalkIn && <form onSubmit={createWalkIn}>
         <div className="two-col">
@@ -221,19 +221,19 @@ export default function FrontDeskPMSView({ user, data, rooms, reservations, gues
       </form>}
     </section>}
 
-    {selected && <section className="panel selected-stay-summary"><div className="selected-stay-top"><div><p className="muted">Selected guest</p><h2>{selected.guest_name}</h2><span>Reservation #{selected.id} · Stay details and operational actions</span></div><span className="status-pill status-pill-active">{selected.status.replace(/_/g, ' ')}</span></div><div className="selected-stay-grid"><div><span>Room</span><strong>{selectedRooms.map(room => room?.number).join(', ') || 'Unassigned'}</strong></div><div><span>Stay</span><strong>{selected.check_in} → {selected.check_out}</strong></div><div><span>Nights</span><strong>{nights(selected.check_in, selected.check_out)}</strong></div><div><span>Contact</span><strong>{selectedGuest?.phone || selectedGuest?.email || 'No contact recorded'}</strong></div></div><div className="selected-stay-actions">{canOperate && <button className="primary-button" type="button" onClick={() => setCheckoutReservation(selected)}>Checkout / folio</button>}<button className="secondary-button" type="button" onClick={() => setSelectedId(null)}>Close guest</button></div></section>}
+    {selected && <section className="panel selected-stay-summary frontdesk-selected-stay"><div className="selected-stay-top"><div><p className="muted">Selected guest</p><h2>{selected.guest_name}</h2><span>Reservation #{selected.id} · Stay details and operational actions</span></div><span className="status-pill status-pill-active">{selected.status.replace(/_/g, ' ')}</span></div><div className="selected-stay-grid"><div><span>Room</span><strong>{selectedRooms.map(room => room?.number).join(', ') || 'Unassigned'}</strong></div><div><span>Stay</span><strong>{selected.check_in} → {selected.check_out}</strong></div><div><span>Nights</span><strong>{nights(selected.check_in, selected.check_out)}</strong></div><div><span>Contact</span><strong>{selectedGuest?.phone || selectedGuest?.email || 'No contact recorded'}</strong></div></div><div className="selected-stay-actions">{canOperate && <button className="primary-button" type="button" onClick={() => setCheckoutReservation(selected)}>Checkout / folio</button>}<button className="secondary-button" type="button" onClick={() => setSelectedId(null)}>Close guest</button></div></section>}
 
-    <section className="stats">{[["Arrivals today", data.arrivals.length], ["Departures today", data.departures.length], ["In house", data.in_house.length], ["Reserved", reservations.filter(r => r.status === 'reserved').length], ["Occupied rooms", rooms.filter(r => r.status === 'occupied').length], ["Dirty rooms", rooms.filter(r => r.status === 'dirty').length]].map(([label, value]) => <article className="stat" key={String(label)}><span>{label}</span><strong>{value}</strong></article>)}</section>
+    <section className="stats frontdesk-kpis">{[["Arrivals today", data.arrivals.length], ["Departures today", data.departures.length], ["In house", data.in_house.length], ["Reserved", reservations.filter(r => r.status === 'reserved').length], ["Occupied rooms", rooms.filter(r => r.status === 'occupied').length], ["Dirty rooms", rooms.filter(r => r.status === 'dirty').length]].map(([label, value]) => <article className="stat" key={String(label)}><span>{label}</span><strong>{value}</strong></article>)}</section>
 
-    <div className="desk-grid">
-      <div className="panel"><div className="panel-head"><h2>Arrivals</h2><span>{data.arrivals.length}</span></div>{data.arrivals.length ? data.arrivals.map(r => card(r, 'arrival')) : <p className="muted">No arrivals today.</p>}</div>
-      <div className="panel"><div className="panel-head"><div><h2>Departures</h2><small className="muted">Due today</small></div><span>{data.departures.length}</span></div>{data.departures.length ? data.departures.map(r => card(r, 'departure')) : <p className="muted">No departures due today.</p>}</div>
-      <div className="panel"><div className="panel-head"><div><h2>In house</h2><small className="muted">Checked-in guests</small></div><span>{data.in_house.length}</span></div>{data.in_house.length ? data.in_house.map(r => card(r, 'in-house')) : <p className="muted">No checked-in guests.</p>}</div>
+    <div className="desk-grid frontdesk-operational-grid">
+      <div className="panel frontdesk-queue-panel"><div className="panel-head"><div><p className="muted">Today</p><h2>Arrivals</h2><span>{data.arrivals.length}</span></div>{data.arrivals.length ? data.arrivals.map(r => card(r, 'arrival')) : <p className="muted">No arrivals today.</p>}</div>
+      <div className="panel frontdesk-queue-panel"><div className="panel-head"><div><p className="muted">Today</p><h2>Departures</h2><small className="muted">Due today</small></div><span>{data.departures.length}</span></div>{data.departures.length ? data.departures.map(r => card(r, 'departure')) : <p className="muted">No departures due today.</p>}</div>
+      <div className="panel frontdesk-queue-panel"><div className="panel-head"><div><p className="muted">Live</p><h2>In house</h2><small className="muted">Checked-in guests</small></div><span>{data.in_house.length}</span></div>{data.in_house.length ? data.in_house.map(r => card(r, 'in-house')) : <p className="muted">No checked-in guests.</p>}</div>
     </div>
 
     {selected && canOperate && <><StayLifecyclePanel reservationId={selected.id} rooms={rooms} api={api} onRefresh={onRefresh} /><PhaseACompletionPanel reservationId={selected.id} api={api} onRefresh={onRefresh} /></>}
 
-    <section className="panel" style={{ marginTop: 16, overflowX: 'auto' }}>
+    <section className="panel room-rack-panel" style={{ marginTop: 16, overflowX: 'auto' }}>
       <div className="panel-head"><div><p className="muted">Click a booked cell to open its reservation/stay actions</p><h2>Room Rack / 14-Day Calendar</h2></div><div className="desk-actions"><button className="secondary-button small-button" onClick={() => setRackStart(addDays(rackStart, -7))}>← 7 days</button><input type="date" value={rackStart} onChange={e => setRackStart(e.target.value)} style={{ padding: '9px 10px', border: '1px solid #d8d4cb', borderRadius: 10 }} /><button className="secondary-button small-button" onClick={() => setRackStart(addDays(rackStart, 7))}>7 days →</button></div></div>
       <div style={{ display: 'grid', gridTemplateColumns: '120px repeat(14,minmax(74px,1fr))', minWidth: 1180, gap: 4 }}>
         <div style={{ padding: 9, fontWeight: 700 }}>Room</div>
