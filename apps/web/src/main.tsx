@@ -89,7 +89,7 @@ function DashboardView({ dashboard, management, finance, history, rooms, roomTyp
     : 'var(--chart-muted) 0 100%';
   let roomOffset = 0;
   const roomColors: Record<string, string> = { occupied: '#3B82F6', available: '#E2E8F0', reserved: '#F59E0B', dirty: '#64748B', out_of_order: '#DC2626' };
-  const roomChartCounts = statusCounts.map(row => ({ ...row, count: row.status === 'occupied' ? Math.max(row.count, Number(dashboard?.occupied_rooms || 0)) : row.count }));
+  const roomChartCounts = statusCounts;
   const roomTotal = Math.max(0, roomChartCounts.reduce((sum, row) => sum + row.count, 0));
   const roomGradient = roomTotal > 0
     ? roomChartCounts.map(row => { const start = roomOffset; roomOffset += (row.count / roomTotal) * 100; return `${roomColors[row.status]} ${start.toFixed(2)}% ${roomOffset.toFixed(2)}%`; }).join(', ')
@@ -129,6 +129,10 @@ function DashboardView({ dashboard, management, finance, history, rooms, roomTyp
 
     {historical && <div className="dashboard-history-banner"><strong>Historical View · {formatDashboardDate(selectedDate!)}</strong><span>Archived closing figures only. Current room-level operations are intentionally excluded.</span></div>}
 
+    <section className="dashboard-attention-strip">
+      <div><span className="dashboard-attention-icon">!</span><div><strong>Operational attention</strong><small>{historical ? 'Historical mode shows archived closing figures only.' : `${dashboard?.dirty_rooms ?? 0} room${(dashboard?.dirty_rooms ?? 0) === 1 ? '' : 's'} need cleaning · ${dashboard?.arrivals_today ?? arrivals.length} arrival${(dashboard?.arrivals_today ?? arrivals.length) === 1 ? '' : 's'} · ${dashboard?.departures_today ?? departures.length} departure${(dashboard?.departures_today ?? departures.length) === 1 ? '' : 's'}`}</small></div></div>
+      {!historical && <div className="dashboard-attention-metrics"><span>Rooms <strong>{totalRooms}</strong></span><span>In house <strong>{dashboard?.in_house_guests ?? inHouse.length}</strong></span><span>Dirty <strong>{dashboard?.dirty_rooms ?? 0}</strong></span></div>}
+    </section>
     <section className="dashboard-kpi-grid">{kpis.map(([name, value]) => <article className="dashboard-kpi" key={name as string}><span>{name}</span><strong>{value}</strong></article>)}</section>
 
     <section className="dashboard-main-grid">
@@ -180,7 +184,7 @@ function DashboardView({ dashboard, management, finance, history, rooms, roomTyp
     {historical && <section className="dashboard-two-grid"><section className="panel"><div className="panel-head"><div><p className="muted">Archived financial controls</p><h2>Closing summary</h2></div><span>Closed</span></div><div className="dashboard-control-grid"><div><span>Total revenue</span><strong>PKR {Number(report?.revenue?.gross || 0).toLocaleString('en-PK')}</strong></div><div><span>Payments</span><strong>PKR {Number(report?.payments?.total || 0).toLocaleString('en-PK')}</strong></div><div><span>Outstanding</span><strong>PKR {Number(report?.outstanding || 0).toLocaleString('en-PK')}</strong></div><div><span>Ledger</span><strong>{report?.finance?.reconciliation_status || 'Archived'}</strong></div></div></section><section className="panel"><div className="panel-head"><div><p className="muted">Archived inventory</p><h2>Occupancy snapshot</h2></div><span>{formatDashboardDate(selectedDate!)}</span></div><div className="historical-room-summary"><strong>{occupied} / {totalRooms}</strong><span>occupied rooms · {occupancy.toFixed(1)}% occupancy</span></div><p className="dashboard-source">Historical mode uses the archived closing record. Live room-level status is not shown.</p></section></section>}
   </>;
 }
-function GuestsView({ user, guests, setGuests, onRefresh }: { user: User; guests: Guest[]; setGuests: React.Dispatch<React.SetStateAction<Guest[]>>; onRefresh: () => Promise<void> }) {
+function GuestsView({ user, guests, setGuests, reservations, onRefresh }: { user: User; guests: Guest[]; setGuests: React.Dispatch<React.SetStateAction<Guest[]>>; reservations: Reservation[]; onRefresh: () => Promise<void> }) {
   const emptyForm = { full_name: '', phone: '', email: '', address: '', id_document: '' };
   const [query, setQuery] = useState('');
   const [form, setForm] = useState(emptyForm);
@@ -191,6 +195,7 @@ function GuestsView({ user, guests, setGuests, onRefresh }: { user: User; guests
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [duplicateMatches, setDuplicateMatches] = useState<Guest[]>([]);
+  const [selectedGuestId, setSelectedGuestId] = useState<number | null>(null);
   const pageSize = 25;
   const canManage = user.role === 'admin' || user.role === 'reception';
 
@@ -299,6 +304,10 @@ function GuestsView({ user, guests, setGuests, onRefresh }: { user: User; guests
   }
 
   const editingGuest = editingId === null ? null : guests.find(g => g.id === editingId) || null;
+  const selectedGuest = selectedGuestId === null ? null : guests.find(g => g.id === selectedGuestId) || null;
+  const selectedGuestReservations = selectedGuest ? reservations.filter(r => r.guest_id === selectedGuest.id).sort((a, b) => b.check_in.localeCompare(a.check_in)) : [];
+  const selectedGuestActiveStays = selectedGuestReservations.filter(r => r.status === 'reserved' || r.status === 'checked_in');
+
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const firstRecord = total ? (page - 1) * pageSize + 1 : 0;
   const lastRecord = total ? Math.min(page * pageSize, total) : 0;
@@ -329,8 +338,8 @@ function GuestsView({ user, guests, setGuests, onRefresh }: { user: User; guests
         <table className="guest-table">
           <thead><tr><th>Guest</th><th>Phone</th><th>Email</th><th>Location</th><th>ID document</th><th></th></tr></thead>
           <tbody>
-            {guests.length ? guests.map(g => <tr key={g.id}>
-              <td><strong>{g.full_name}</strong></td>
+            {guests.length ? guests.map(g => <tr key={g.id} className={selectedGuestId === g.id ? 'guest-row-selected' : ''} onClick={() => setSelectedGuestId(g.id)}>
+              <td><button type="button" className="guest-name-button" onClick={() => setSelectedGuestId(g.id)}><strong>{g.full_name}</strong><small>Guest #{g.id}</small></button></td>
               <td>{g.phone || '—'}</td>
               <td>{g.email || '—'}</td>
               <td>{g.address || '—'}</td>
@@ -350,6 +359,17 @@ function GuestsView({ user, guests, setGuests, onRefresh }: { user: User; guests
         </div>
       </div>
     </div>
+
+    {selectedGuest && <section className="panel guest-profile-panel">
+      <div className="panel-head"><div><p className="muted">Guest record</p><h2>{selectedGuest.full_name}</h2></div><div className="guest-profile-actions">{canManage && <button className="secondary-button small-button" type="button" onClick={() => startEdit(selectedGuest)}>Edit profile</button>}<button className="link-button" type="button" onClick={() => setSelectedGuestId(null)}>Close</button></div></div>
+      <div className="guest-profile-grid">
+        <div><span>Phone</span><strong>{selectedGuest.phone || '—'}</strong></div><div><span>Email</span><strong>{selectedGuest.email || '—'}</strong></div><div><span>Address</span><strong>{selectedGuest.address || '—'}</strong></div><div><span>ID document</span><strong>{selectedGuest.id_document ? `${'•'.repeat(Math.max(0, selectedGuest.id_document.length - 4))}${selectedGuest.id_document.slice(-4)}` : '—'}</strong></div>
+      </div>
+      <div className="guest-history-summary"><div><span>Active reservations</span><strong>{selectedGuestActiveStays.length}</strong></div><div><span>Total reservations</span><strong>{selectedGuestReservations.length}</strong></div></div>
+      <div className="guest-history-list"><div className="panel-head"><div><p className="muted">Stay history</p><h3>Reservations & stays</h3></div><span>{selectedGuestReservations.length} record{selectedGuestReservations.length === 1 ? '' : 's'}</span></div>
+        {selectedGuestReservations.length ? selectedGuestReservations.slice(0, 8).map(r => <div className="guest-history-row" key={r.id}><div><strong>Reservation #{r.id}</strong><span>{r.check_in} → {r.check_out} · {r.room_ids.length} room{r.room_ids.length === 1 ? '' : 's'}</span></div><b className={`guest-history-status status-${r.status}`}>{r.status.replace(/_/g, ' ')}</b></div>) : <p className="muted">No reservation history is available in the current operational dataset.</p>}
+      </div>
+    </section>}
 
     {canManage && <form className="panel form-panel guest-form-panel" onSubmit={editingGuest ? update : create}>
       <div className="panel-head"><div><p className="muted">{editingGuest ? 'Update master record' : 'Create a new master record'}</p><h2>{editingGuest ? 'Edit guest' : 'New guest'}</h2></div>{editingGuest && <button className="link-button" type="button" onClick={cancelEdit}>Cancel</button>}</div>
@@ -570,7 +590,7 @@ function App() {
   if (checking) return <main className="auth-shell"><p className="muted">Checking local session…</p></main>;
   if (!user) return <AuthScreen mode={authMode} setMode={setAuthMode} onAuthenticated={authenticated} />;
 
-  return <main className="shell"><header className="topbar"><div><div className="brand-lockup" aria-label="HighFly AI"><span className="brand-highfly">HighFly</span> <span className="brand-ai">AI</span></div><div><p className="eyebrow">LA SERENE HOTEL & RESORT</p><h1>Hotel Management System</h1></div></div><div className="user-actions"><div className="user-chip"><strong>{user.username}</strong><span>{user.role}</span></div><button className="logout-button" onClick={logout}>Log out</button></div></header><nav className="module-nav">{visibleModules.map(m => <button key={m} className={view === m ? 'active' : ''} onClick={() => setView(m)}>{m}</button>)}</nav>{error && <p className="error">{error}</p>}{view === 'Dashboard' && <><section className="welcome dashboard-welcome"><div><p className="muted">{dashboardDate && dashboard && dashboardDate !== dashboard.business_date ? 'Historical dashboard' : 'Operations dashboard'}</p><h2>{dashboardDate && dashboard && dashboardDate !== dashboard.business_date ? `Historical View · ${formatDashboardDate(dashboardDate)}` : dashboard ? `Business date · ${dashboard.business_date}` : 'Loading hotel data…'}</h2></div><div className="dashboard-date-controls"><label>Business date<input type="date" value={dashboardDate || dashboard?.business_date || ''} max={dashboard?.business_date || undefined} onChange={e => void selectDashboardDate(e.target.value)} disabled={!dashboard} /></label><label>Recent dates<select value={dashboardDate || dashboard?.business_date || ''} onChange={e => void selectDashboardDate(e.target.value)} disabled={!dashboard}><option value={dashboard?.business_date || ''}>{dashboard ? `${formatDashboardDate(dashboard.business_date)} · Open / Today` : 'Loading…'}</option>{dashboardHistory.filter(day => day.date !== dashboard?.business_date).reverse().map(day => <option key={day.date} value={day.date}>{formatDashboardDate(day.date)} · {day.closed ? 'Closed' : 'Open'}</option>)}</select></label>{dashboardDate && dashboard && dashboardDate !== dashboard.business_date && <button className="secondary-button" type="button" onClick={returnDashboardToToday}>Return to Today</button>}</div></section><DashboardView dashboard={dashboard} management={management} finance={dashboardFinance} history={dashboardHistory} rooms={rooms} roomTypes={roomTypes} selectedDate={dashboardDate} historicalPack={dashboardHistoricalPack} reservations={reservations} frontDesk={frontDesk} onSelectDate={selectDashboardDate} /></>}{view === 'Rooms' && <RoomsView user={user} rooms={rooms} setRooms={setRooms} roomTypes={roomTypes} onRefresh={refresh} />}{view === 'Guests' && <GuestsView user={user} guests={guests} setGuests={setGuests} onRefresh={refresh} />}{view === 'Reservations' && <ReservationsPMSView user={user} guests={guests} rooms={rooms} roomTypes={roomTypes} reservations={reservations} onRefresh={refresh} api={api} />}{view === 'Front Desk' && <FrontDeskPMSView user={user} data={frontDesk} rooms={rooms} reservations={reservations} guests={guests} roomTypes={roomTypes} onRefresh={refresh} api={api} />}{view === 'Housekeeping' && <HousekeepingView userRole={user.role} api={api} onRefresh={refresh} />}{view === 'Reports' && <ReportsView api={api} />}{view === 'Billing' && <BillingView userRole={user.role} summaries={billing} onRefresh={refresh} api={api} />}{view === 'Backup' && <BackupView api={api} />}<footer className="app-footer" aria-label="Application developer credit"><strong><span className="brand-highfly">HighFly</span> <span className="brand-ai">AI</span></strong></footer></main>;
+  return <main className="shell"><header className="topbar"><div><div className="brand-lockup" aria-label="HighFly AI"><span className="brand-highfly">HighFly</span> <span className="brand-ai">AI</span></div><div><p className="eyebrow">LA SERENE HOTEL & RESORT</p><h1>Hotel Management System</h1></div></div><div className="user-actions"><div className="user-chip"><strong>{user.username}</strong><span>{user.role}</span></div><button className="logout-button" onClick={logout}>Log out</button></div></header><nav className="module-nav">{visibleModules.map(m => <button key={m} className={view === m ? 'active' : ''} onClick={() => setView(m)}>{m}</button>)}</nav>{error && <p className="error">{error}</p>}{view === 'Dashboard' && <><section className="welcome dashboard-welcome"><div><p className="muted">{dashboardDate && dashboard && dashboardDate !== dashboard.business_date ? 'Historical dashboard' : 'Operations dashboard'}</p><h2>{dashboardDate && dashboard && dashboardDate !== dashboard.business_date ? `Historical View · ${formatDashboardDate(dashboardDate)}` : dashboard ? `Business date · ${dashboard.business_date}` : 'Loading hotel data…'}</h2></div><div className="dashboard-date-controls"><label>Business date<input type="date" value={dashboardDate || dashboard?.business_date || ''} max={dashboard?.business_date || undefined} onChange={e => void selectDashboardDate(e.target.value)} disabled={!dashboard} /></label><label>Recent dates<select value={dashboardDate || dashboard?.business_date || ''} onChange={e => void selectDashboardDate(e.target.value)} disabled={!dashboard}><option value={dashboard?.business_date || ''}>{dashboard ? `${formatDashboardDate(dashboard.business_date)} · Open / Today` : 'Loading…'}</option>{dashboardHistory.filter(day => day.date !== dashboard?.business_date).reverse().map(day => <option key={day.date} value={day.date}>{formatDashboardDate(day.date)} · {day.closed ? 'Closed' : 'Open'}</option>)}</select></label>{dashboardDate && dashboard && dashboardDate !== dashboard.business_date && <button className="secondary-button" type="button" onClick={returnDashboardToToday}>Return to Today</button>}</div></section><DashboardView dashboard={dashboard} management={management} finance={dashboardFinance} history={dashboardHistory} rooms={rooms} roomTypes={roomTypes} selectedDate={dashboardDate} historicalPack={dashboardHistoricalPack} reservations={reservations} frontDesk={frontDesk} onSelectDate={selectDashboardDate} /></>}{view === 'Rooms' && <RoomsView user={user} rooms={rooms} setRooms={setRooms} roomTypes={roomTypes} onRefresh={refresh} />}{view === 'Guests' && <GuestsView user={user} guests={guests} setGuests={setGuests} reservations={reservations} onRefresh={refresh} />}{view === 'Reservations' && <ReservationsPMSView user={user} guests={guests} rooms={rooms} roomTypes={roomTypes} reservations={reservations} onRefresh={refresh} api={api} />}{view === 'Front Desk' && <FrontDeskPMSView user={user} data={frontDesk} rooms={rooms} reservations={reservations} guests={guests} roomTypes={roomTypes} onRefresh={refresh} api={api} />}{view === 'Housekeeping' && <HousekeepingView userRole={user.role} api={api} onRefresh={refresh} />}{view === 'Reports' && <ReportsView api={api} />}{view === 'Billing' && <BillingView userRole={user.role} summaries={billing} onRefresh={refresh} api={api} />}{view === 'Backup' && <BackupView api={api} />}<footer className="app-footer" aria-label="Application developer credit"><strong><span className="brand-highfly">HighFly</span> <span className="brand-ai">AI</span></strong></footer></main>;
 }
 
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);
