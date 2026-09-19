@@ -127,7 +127,7 @@ export default function HousekeepingView({ userRole, api, onRefresh }: Props) {
         ['Reserved', counts?.reserved ?? '—', 'reserved', 'Upcoming'],
         ['Occupied', counts?.occupied ?? '—', 'occupied', 'In house'],
         ['Out of order', counts?.out_of_order ?? '—', 'out_of_order', 'Exception'],
-      ].map(([name, value, tone, helper]) => <button type="button" className={`stat housekeeping-stat housekeeping-stat-${tone} ${filter === tone ? 'selected' : ''}`} key={name} onClick={() => setFilter(filter === tone ? 'actionable' : tone)}><span>{name}</span><strong>{value}</strong><small>{helper}</small></button>)}
+      ].map(([name, value, tone, helper]) => <button type="button" className={`stat housekeeping-stat housekeeping-stat-${tone} ${filter === tone ? 'selected' : ''}`} key={name} onClick={() => setFilter(filter === String(tone) ? 'actionable' : String(tone))}><span>{name}</span><strong>{value}</strong><small>{helper}</small></button>)}
     </div>
 
     <div className="panel housekeeping-toolbar">
