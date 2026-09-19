@@ -1549,3 +1549,279 @@ input[type="number"]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0
   .module-nav button,.primary-button,.secondary-button,.desk-card,.housekeeping-card,.billing-row{transition:none;}
   .desk-card:hover,.housekeeping-card:hover,.primary-button:hover:not(:disabled),.secondary-button:hover:not(:disabled){transform:none;}
 }
+
+
+/* =========================================================
+   LA SERENE — APPLICATION SHELL + NAVIGATION UX v1
+   Shell-only presentation layer. No product behavior/data changes.
+   ========================================================= */
+
+.shell{
+  margin-left:252px;
+  padding:20px 30px 42px;
+}
+.app-sidebar{
+  position:fixed;
+  z-index:50;
+  inset:14px auto 14px 14px;
+  width:218px;
+  display:flex;
+  flex-direction:column;
+  padding:16px 12px 12px;
+  border:1px solid var(--ls-border);
+  border-radius:18px;
+  background:var(--ls-surface);
+  box-shadow:0 12px 34px rgba(15,23,42,.06);
+}
+.sidebar-brand{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:4px 6px 15px;
+  border-bottom:1px solid var(--ls-border-soft);
+}
+.sidebar-brand-mark{
+  width:38px;
+  height:38px;
+  display:grid;
+  place-items:center;
+  flex:none;
+  border-radius:11px;
+  background:var(--ls-gold);
+  color:#1E293B;
+  font-size:12px;
+  font-weight:900;
+  letter-spacing:.04em;
+}
+.sidebar-brand div:last-child{
+  min-width:0;
+  display:grid;
+  gap:1px;
+}
+.sidebar-brand strong{
+  color:var(--ls-ink);
+  font-size:12px;
+  letter-spacing:.12em;
+}
+.sidebar-brand span{
+  color:var(--ls-subtle);
+  font-size:9px;
+  font-weight:800;
+  letter-spacing:.08em;
+}
+.sidebar-live{
+  display:flex;
+  align-items:center;
+  gap:7px;
+  margin:12px 5px 10px;
+  padding:7px 9px;
+  border:1px solid #BBF7D0;
+  border-radius:9px;
+  background:var(--ls-green-soft);
+  color:#166534;
+  font-size:11px;
+  font-weight:800;
+}
+.sidebar-live i,.topbar-status i{
+  width:7px;
+  height:7px;
+  flex:none;
+  border-radius:50%;
+  background:var(--ls-green);
+}
+.module-nav{
+  position:static;
+  width:auto;
+  margin:0;
+  padding:0;
+  display:flex;
+  flex:1;
+  min-height:0;
+  overflow-y:auto;
+  overflow-x:hidden;
+  flex-direction:column;
+  gap:13px;
+  border:0;
+  border-radius:0;
+  background:transparent;
+  box-shadow:none;
+}
+.module-nav::before{display:none;}
+.nav-section{display:grid;gap:3px;}
+.nav-section>p{
+  margin:0 7px 3px;
+  color:var(--ls-subtle);
+  font-size:9px;
+  font-weight:850;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+}
+.module-nav button{
+  min-height:39px;
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:9px 10px;
+  border:1px solid transparent;
+  border-radius:10px;
+  color:var(--ls-muted);
+  background:transparent;
+  font-size:12px;
+  font-weight:750;
+  text-align:left;
+  transition:background .15s ease,color .15s ease,border-color .15s ease;
+}
+.module-nav button:hover{
+  color:var(--ls-ink);
+  background:var(--ls-surface-soft);
+  transform:none;
+}
+.module-nav button.active{
+  color:var(--ls-ink);
+  background:var(--ls-gold-soft);
+  border-color:#F2E7B8;
+  box-shadow:none;
+}
+.nav-icon{
+  width:22px;
+  display:inline-grid;
+  place-items:center;
+  color:var(--ls-subtle);
+  font-size:15px;
+  line-height:1;
+}
+.module-nav button.active .nav-icon{color:var(--ls-gold-dark);}
+.nav-label{white-space:nowrap;}
+.sidebar-user{
+  display:flex;
+  align-items:center;
+  gap:9px;
+  margin-top:12px;
+  padding:11px 6px 2px;
+  border-top:1px solid var(--ls-border-soft);
+}
+.sidebar-avatar{
+  width:31px;
+  height:31px;
+  display:grid;
+  place-items:center;
+  flex:none;
+  border-radius:50%;
+  background:var(--ls-surface-muted);
+  color:var(--ls-ink);
+  font-size:11px;
+  font-weight:850;
+}
+.sidebar-user div:last-child{min-width:0;display:grid;gap:1px;}
+.sidebar-user strong{
+  overflow:hidden;
+  color:var(--ls-ink);
+  font-size:11px;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.sidebar-user span{
+  color:var(--ls-muted);
+  font-size:10px;
+  text-transform:capitalize;
+}
+.topbar{
+  min-height:64px;
+  padding:11px 15px 11px 18px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:18px;
+  border-radius:15px;
+}
+.topbar-context{
+  min-width:0;
+  display:flex;
+  align-items:center;
+  gap:22px;
+}
+.topbar-context>div:first-child{min-width:150px;}
+.topbar h1{
+  font-size:22px;
+  letter-spacing:-.035em;
+}
+.topbar-date{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  padding-left:18px;
+  border-left:1px solid var(--ls-border);
+}
+.topbar-status{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  color:#166534;
+  font-size:10px;
+  font-weight:850;
+  letter-spacing:.08em;
+}
+.topbar-date>span:last-child{
+  display:grid;
+  gap:0;
+}
+.topbar-date small{
+  color:var(--ls-subtle);
+  font-size:9px;
+  font-weight:750;
+  letter-spacing:.05em;
+}
+.topbar-date strong{
+  color:var(--ls-ink);
+  font-size:12px;
+}
+.topbar .user-chip{background:var(--ls-surface);}
+.topbar .logout-button{min-height:38px;}
+.app-footer{margin-top:28px;}
+
+@media(max-width:1000px){
+  .shell{margin-left:0;padding:18px 22px 40px;}
+  .app-sidebar{
+    position:static;
+    width:100%;
+    min-height:0;
+    margin:0 0 14px;
+    padding:12px;
+    border-radius:15px;
+  }
+  .sidebar-brand{padding-bottom:10px;}
+  .sidebar-live,.sidebar-user{display:none;}
+  .module-nav{
+    display:flex;
+    flex-direction:row;
+    gap:5px;
+    overflow-x:auto;
+    overflow-y:hidden;
+    padding-top:10px;
+  }
+  .nav-section{display:flex;align-items:center;gap:4px;flex:none;}
+  .nav-section>p{display:none;}
+  .module-nav button{
+    width:auto;
+    min-width:max-content;
+    justify-content:center;
+  }
+  .nav-icon{display:none;}
+  .module-nav button.active{box-shadow:inset 0 -3px 0 var(--ls-gold);border-color:transparent;}
+}
+@media(max-width:760px){
+  .shell{padding:14px 14px 32px;}
+  .topbar{
+    align-items:flex-start;
+    flex-direction:column;
+    padding:14px;
+  }
+  .topbar-context{width:100%;justify-content:space-between;}
+  .topbar-date{padding-left:12px;}
+  .topbar .user-actions{width:100%;justify-content:flex-end;}
+}
+@media(max-width:520px){
+  .topbar-context{align-items:flex-start;flex-direction:column;gap:8px;}
+  .topbar-date{padding-left:0;border-left:0;}
+  .topbar .user-chip{display:none;}
+}
