@@ -1647,3 +1647,33 @@ input[type="number"]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0
 .stay-card-head>div:first-child span{display:block;color:var(--ls-muted);font-size:11px;}
 .stay-card-head>div:last-child>b{font-size:13px;color:var(--ls-ink);white-space:nowrap;}
 @media(max-width:760px){.guest-toolbar,.guest-search,.guest-pagination,.reservation-search-bar{align-items:stretch;flex-direction:column;}.guest-search button,.reservation-search-bar button{width:100%;}.guest-pagination>div{width:100%;justify-content:space-between;}.reservation-register-list article.reservation-card{grid-template-columns:1fr;}.reservation-register-list article.reservation-card>b{justify-self:start;}.stay-card-head>div:last-child{align-items:flex-start;flex-direction:column;}}
+
+
+/* PR 6 — Billing UX */
+.billing-kpis{grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin-bottom:16px;}
+.billing-kpi{min-height:78px;padding:13px 14px;}
+.billing-kpi-alert{border-top:3px solid var(--ls-amber)!important;background:var(--ls-amber-soft)!important;}
+.billing-workspace{align-items:start;gap:16px;}
+.billing-register-panel{min-width:0;}
+.billing-filters{display:grid;grid-template-columns:minmax(220px,2fr) repeat(3,minmax(120px,1fr));gap:10px;margin-bottom:14px;}
+.billing-filters input,.billing-filters select{min-height:42px;width:100%;padding:10px 12px;border:1px solid var(--ls-border);border-radius:10px;background:var(--ls-surface);color:var(--ls-ink);}
+.billing-list{display:grid;gap:8px;}
+.billing-row{width:100%;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:14px;padding:13px 14px;text-align:left;border-radius:12px;cursor:pointer;}
+.billing-row-main{display:grid;gap:4px;min-width:0;}
+.billing-row-main>strong{color:var(--ls-ink);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.billing-row-main>span{color:var(--ls-muted);font-size:11px;}
+.billing-row-amount{display:grid;gap:4px;justify-items:end;white-space:nowrap;}
+.billing-row-amount>b{color:var(--ls-ink);font-size:13px;}
+.billing-row-amount>small{font-size:11px;font-weight:750;}
+.billing-balance-due{color:#B45309;}.billing-balance-paid{color:#15803D;}
+.billing-detail-panel{min-width:0;}
+.billing-detail-panel .billing-totals{padding:12px;border:1px solid var(--ls-border);border-radius:12px;background:var(--ls-surface-soft);}
+.billing-detail-panel .billing-totals>div{padding:8px 0;border-bottom:1px solid var(--ls-border-soft);}
+.billing-detail-panel .billing-totals>div:last-child{border-bottom:0;}
+.billing-detail-panel .billing-totals .grand{margin-top:2px;padding-top:12px;font-size:14px;}
+.billing-detail-panel .billing-totals .balance{margin:8px -4px -4px;padding:10px;border-radius:10px;}
+.billing-section-head{padding-top:2px;border-bottom:1px solid var(--ls-border-soft);}
+.billing-primary-actions{padding-top:12px;border-top:1px solid var(--ls-border-soft);}
+@media(max-width:1100px){.billing-kpis{grid-template-columns:repeat(3,minmax(0,1fr));}.billing-filters{grid-template-columns:1fr 1fr;}}
+@media(max-width:760px){.billing-kpis{grid-template-columns:repeat(2,minmax(0,1fr));}.billing-filters{grid-template-columns:1fr;}.billing-row{grid-template-columns:1fr;}.billing-row-amount{justify-items:start;}.billing-row-main>strong{white-space:normal;}.billing-workspace{grid-template-columns:1fr!important;}}
+@media(max-width:430px){.billing-kpis{grid-template-columns:1fr;}}
