@@ -415,3 +415,13 @@ body{background:radial-gradient(circle at top right,rgba(231,173,37,.10),transpa
 .cashier-summary-grid strong{font-size:15px;color:var(--brand)}
 .dashboard-cashier-summary .dashboard-source{margin-top:10px;padding-top:9px;font-size:11px}
 @media(max-width:520px){.cashier-summary-grid{grid-template-columns:1fr 1fr}.cashier-summary-grid>div{padding:9px}.cashier-summary-grid strong{font-size:14px}}
+
+
+/* Clear revenue trend interaction */
+.dashboard-chart-detail{display:grid;grid-template-columns:1.25fr 1fr 1fr;gap:8px;margin-top:12px}
+.dashboard-chart-detail>div{display:grid;gap:3px;padding:10px 11px;border:1px solid var(--line);border-radius:11px;background:#fff8e9}
+.dashboard-chart-detail span{font-size:11px;color:#756f61}
+.dashboard-chart-detail strong{font-size:15px;color:var(--brand)}
+.chart-legend-note{font-size:11px;color:#8a948d}
+.chart-point{cursor:pointer}
+@media(max-width:520px){.dashboard-chart-detail{grid-template-columns:1fr 1fr}.dashboard-chart-detail>div:first-child{grid-column:1 / -1}}
