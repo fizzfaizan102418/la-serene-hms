@@ -425,3 +425,14 @@ body{background:radial-gradient(circle at top right,rgba(231,173,37,.10),transpa
 .chart-legend-note{font-size:11px;color:#8a948d}
 .chart-point{cursor:pointer}
 @media(max-width:520px){.dashboard-chart-detail{grid-template-columns:1fr 1fr}.dashboard-chart-detail>div:first-child{grid-column:1 / -1}}
+
+
+/* Dashboard analytics palette: separate revenue and payment visuals while keeping La Serene's yellow-orange identity. */
+.dashboard-line-panel .chart-line.revenue-line { stroke: #002147; }
+.dashboard-line-panel .chart-point.revenue-point { fill: #00BFFF; stroke: #ffffff; stroke-width: 1.2; cursor: pointer; }
+.dashboard-line-panel .chart-point.revenue-point.selected { fill: #F59E0B; stroke: #002147; stroke-width: 1.6; }
+.dashboard-line-panel .chart-grid-line { stroke: #dce5de; }
+.dashboard-line-panel .chart-axis-line { stroke: #b8c7bd; }
+.dashboard-line-panel .chart-legend .legend-dot.revenue { background: #002147; }
+.dashboard-pie-panel .dashboard-pie { border-color: #dce5de; }
+.dashboard-pie-panel .dashboard-pie-list .legend-dot { box-shadow: 0 0 0 2px rgba(255,255,255,.9); }
