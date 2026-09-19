@@ -74,124 +74,47 @@ function previousBusinessDates(endDate: string, count: number) {
   return dates;
 }
 
-function DashboardView({ dashboard, management, finance, history, rooms, roomTypes }: { dashboard: Dashboard | null; management: ManagementReport | null; finance: DashboardFinance | null; history: DashboardHistoryDay[]; rooms: Room[]; roomTypes: RoomType[] }) {
+function DashboardView({ dashboard, management, finance, history, rooms, roomTypes, selectedDate, historicalPack }: { dashboard: Dashboard | null; management: ManagementReport | null; finance: DashboardFinance | null; history: DashboardHistoryDay[]; rooms: Room[]; roomTypes: RoomType[]; selectedDate: string | null; historicalPack: DashboardClosingPack | null }) {
+  const historical = Boolean(selectedDate && dashboard && selectedDate !== dashboard.business_date);
+  const report = historicalPack?.report;
   const statusCounts = useMemo(() => statuses.map(status => ({ status, count: rooms.filter(room => room.status === status).length })), [rooms]);
-  const maxStatus = Math.max(1, ...statusCounts.map(item => item.count));
   const typeById = useMemo(() => new Map(roomTypes.map(t => [t.id, t])), [roomTypes]);
   const label = (status: string) => status.replace(/_/g, ' ');
-  const paymentTotal = Math.max(0, Number(finance?.payments_net || 0));
+  const historicalPayments = report?.payments ? Object.entries(report.payments).filter(([, value]) => Number(value || 0) !== 0).map(([method, value]) => ({ method, amount: Number(value || 0) })) : [];
+  const paymentRows = historical ? historicalPayments : (finance?.payment_breakdown || []).map(row => ({ method: row.method, amount: Number(row.amount || 0) }));
+  const paymentTotal = Math.max(0, paymentRows.reduce((sum, row) => sum + Math.max(0, row.amount), 0));
   let paymentOffset = 0;
-  const paymentGradient = finance?.payment_breakdown.length && paymentTotal > 0
-    ? finance.payment_breakdown.map(row => {
-        const start = paymentOffset;
-        paymentOffset += (Number(row.amount || 0) / paymentTotal) * 100;
-        return `var(--chart-${Math.min(finance.payment_breakdown.indexOf(row), 5) + 1}) ${start.toFixed(2)}% ${paymentOffset.toFixed(2)}%`;
-      }).join(', ')
-    : 'var(--chart-muted) 0 100%';
-  const occupied = Number(management?.occupancy.occupied_room_nights ?? dashboard?.occupied_rooms ?? 0);
-  const totalRooms = Number(management?.rooms.total ?? dashboard?.total_rooms ?? rooms.length);
-  const roomStatusTotal = Math.max(1, rooms.length);
-  let roomOffset = 0;
-  const roomGradient = statusCounts.map((item, index) => {
-    const start = roomOffset;
-    roomOffset += (item.count / roomStatusTotal) * 100;
-    return `var(--chart-${Math.min(index, 5) + 1}) ${start.toFixed(2)}% ${roomOffset.toFixed(2)}%`;
-  }).join(', ');
-
+  const paymentGradient = paymentRows.length && paymentTotal > 0 ? paymentRows.map((row, index) => { const start = paymentOffset; paymentOffset += (Math.max(0, row.amount) / paymentTotal) * 100; return `var(--chart-${Math.min(index, 5) + 1}) ${start.toFixed(2)}% ${paymentOffset.toFixed(2)}%`; }).join(', ') : 'var(--chart-muted) 0 100%';
+  const occupied = historical ? Number(report?.occupancy?.occupied_rooms || 0) : Number(management?.occupancy.occupied_room_nights ?? dashboard?.occupied_rooms ?? 0);
+  const totalRooms = historical ? Number(report?.occupancy?.total_rooms || 0) : Number(management?.rooms.total ?? dashboard?.total_rooms ?? rooms.length);
+  const historicalOccupancy = totalRooms ? (occupied / totalRooms) * 100 : 0;
+  const currentOccupancy = management?.occupancy.occupancy_rate ?? 0;
+  const selectedHistory = history.find(day => day.date === selectedDate);
+  const chartMaxRevenue = Math.max(1, ...history.map(item => item.total_revenue));
+  const chartPoints = history.map((day, index) => ({ ...day, x: history.length === 1 ? 50 : 10 + (index / (history.length - 1)) * 80, y: 92 - (Math.min(100, Math.max(0, day.occupancy)) / 100) * 72 }));
+  const revenuePoints = history.map((day, index) => ({ ...day, x: history.length === 1 ? 50 : 10 + (index / (history.length - 1)) * 80, y: 92 - (Math.max(0, day.total_revenue) / chartMaxRevenue) * 72 }));
+  const linePath = chartPoints.map((point, index) => `${index ? 'L' : 'M'} ${point.x} ${point.y}`).join(' ');
+  const revenuePath = revenuePoints.map((point, index) => `${index ? 'L' : 'M'} ${point.x} ${point.y}`).join(' ');
+  const kpis = historical ? [['Occupancy', `${historicalOccupancy.toFixed(1)}%`], ['Room revenue', Number(report?.revenue?.room || 0).toFixed(2)], ['ADR', occupied ? (Number(report?.revenue?.room || 0) / occupied).toFixed(2) : '—'], ['RevPAR', totalRooms ? (Number(report?.revenue?.room || 0) / totalRooms).toFixed(2) : '—'], ['Payments received', Number(report?.payments?.total || 0).toFixed(2)], ['Outstanding', Number(report?.outstanding || 0).toFixed(2)]] : [['Occupancy', management ? management.occupancy.occupancy_rate.toFixed(1) + '%' : '—'], ['Room revenue', management ? Number(management.revenue.room).toFixed(2) : '—'], ['ADR', management ? Number(management.revenue.adr).toFixed(2) : '—'], ['RevPAR', management ? Number(management.revenue.revpar).toFixed(2) : '—'], ['Payments received', finance ? Number(finance.payments_received).toFixed(2) : '—'], ['Outstanding', management ? Number(management.receivables.outstanding).toFixed(2) : '—']];
   return <>
-    <section className="stats">
-      {[
-        ['Occupancy', management ? management.occupancy.occupancy_rate.toFixed(1) + '%' : '—'],
-        ['Room revenue', management ? Number(management.revenue.room).toFixed(2) : '—'],
-        ['ADR', management ? Number(management.revenue.adr).toFixed(2) : '—'],
-        ['RevPAR', management ? Number(management.revenue.revpar).toFixed(2) : '—'],
-        ['Payments received', finance ? Number(finance.payments_received).toFixed(2) : '—'],
-        ['Outstanding', management ? Number(management.receivables.outstanding).toFixed(2) : '—']
-      ].map(([name, value]) => <article className="stat" key={name as string}><span>{name}</span><strong>{value}</strong></article>)}
-    </section>
-
+    {historical && <div className="dashboard-history-banner"><strong>Historical View · {formatDashboardDate(selectedDate!)}</strong><span>This dashboard shows the hotel's archived closing figures for this business date. It does not represent current live hotel operations.</span></div>}
+    <section className="stats">{kpis.map(([name, value]) => <article className="stat" key={name as string}><span>{name}</span><strong>{value}</strong></article>)}</section>
     <section className="dashboard-chart-grid">
-      <section className="panel dashboard-trend-panel">
-        <div className="panel-head">
-          <div><p className="muted">Actual closed-day history</p><h2>5-day hotel performance</h2></div>
-          <span>{history.length} business day(s)</span>
-        </div>
-        {history.length ? <div className="dashboard-trend">
-          {history.map(day => {
-            const revenueMax = Math.max(1, ...history.map(item => item.total_revenue));
-            const occupancyHeight = Math.max(3, Math.min(100, day.occupancy));
-            const revenueHeight = Math.max(3, Math.min(100, (day.total_revenue / revenueMax) * 100));
-            return <article className="trend-day" key={day.date}>
-              <div className="trend-values"><strong>{day.occupancy.toFixed(1)}%</strong><span>{day.total_revenue.toFixed(0)}</span></div>
-              <div className="trend-bars">
-                <i className="trend-bar occupancy" style={{ height: `${occupancyHeight}%` }} title={`Occupancy ${day.occupancy.toFixed(1)}%`} />
-                <i className="trend-bar revenue" style={{ height: `${revenueHeight}%` }} title={`Total revenue ${day.total_revenue.toFixed(2)}`} />
-              </div>
-              <span className="trend-label">{formatDashboardDate(day.date)}</span>
-              <small>{day.closed ? 'Closed' : 'Open'}</small>
-            </article>;
-          })}
-        </div> : <p className="muted">Historical dashboard data is loading…</p>}
-        <div className="chart-legend"><span><i className="legend-dot occupancy" />Occupancy</span><span><i className="legend-dot revenue" />Total revenue</span></div>
-        <p className="dashboard-source">Historical points use the hotel's actual daily reporting data. Closed dates use the archived Night Audit figures; the current open date remains live.</p>
+      <section className="panel dashboard-line-panel"><div className="panel-head"><div><p className="muted">Actual hotel history</p><h2>Occupancy & revenue trend</h2></div><span>Last 5 business days</span></div>
+        {history.length ? <div className="dashboard-line-chart"><svg viewBox="0 0 100 100" role="img" aria-label="Five-day occupancy and revenue trend"><line x1="10" y1="20" x2="90" y2="20" className="chart-grid-line" /><line x1="10" y1="56" x2="90" y2="56" className="chart-grid-line" /><line x1="10" y1="92" x2="90" y2="92" className="chart-axis-line" /><path d={linePath} className="chart-line occupancy-line" /><path d={revenuePath} className="chart-line revenue-line" />{chartPoints.map(point => <circle key={`occ-${point.date}`} cx={point.x} cy={point.y} r={point.date === selectedDate ? 2.3 : 1.8} className={point.date === selectedDate ? 'chart-point selected' : 'chart-point'}><title>{`${formatDashboardDate(point.date)} · Occupancy ${point.occupancy.toFixed(1)}%`}</title></circle>)}{revenuePoints.map(point => <circle key={`rev-${point.date}`} cx={point.x} cy={point.y} r={point.date === selectedDate ? 2.3 : 1.8} className={point.date === selectedDate ? 'chart-point revenue-point selected' : 'chart-point revenue-point'}><title>{`${formatDashboardDate(point.date)} · Revenue ${point.total_revenue.toFixed(2)}`}</title></circle>)}</svg><div className="line-chart-labels">{history.map(day => <span key={day.date} className={day.date === selectedDate ? 'selected' : ''}>{formatDashboardDate(day.date)}<small>{day.occupancy.toFixed(1)}%</small></span>)}</div></div> : <p className="muted">Historical dashboard data is loading…</p>}
+        <div className="chart-legend"><span><i className="legend-dot occupancy" />Occupancy %</span><span><i className="legend-dot revenue" />Total revenue</span></div><p className="dashboard-source">The chart uses actual reporting data. Closed dates use archived Night Audit figures; the current open date remains live.</p>
       </section>
-
-      <section className="panel dashboard-pie-panel">
-        <div className="panel-head">
-          <div><p className="muted">Current cashier activity</p><h2>Payment mix</h2></div>
-          <span>Business date</span>
-        </div>
-        <div className="dashboard-pie-layout">
-          <div className="dashboard-pie" style={{ background: paymentGradient }} aria-label="Payment mix pie chart" />
-          <div className="dashboard-pie-list">
-            {finance?.payment_breakdown.length ? finance.payment_breakdown.map((row, index) => {
-              const share = paymentTotal ? (Number(row.amount) / paymentTotal) * 100 : 0;
-              return <div key={row.method}><span><i className={`legend-dot chart-${Math.min(index, 5) + 1}`} />{row.method.replace(/_/g, ' ')}</span><strong>{Number(row.amount).toFixed(2)} <small>{share.toFixed(1)}%</small></strong></div>;
-            }) : <p className="muted">No posted payment activity for this business date.</p>}
-          </div>
-        </div>
-        <p className="dashboard-source">The pie uses only posted cashier/payment transactions for the current business date.</p>
+      <section className="panel dashboard-pie-panel"><div className="panel-head"><div><p className="muted">{historical ? 'Archived cashier activity' : 'Current cashier activity'}</p><h2>Payment mix</h2></div><span>{historical ? formatDashboardDate(selectedDate!) : 'Business date'}</span></div>
+        <div className="dashboard-pie-layout"><div className="dashboard-pie" style={{ background: paymentGradient }} aria-label="Payment mix pie chart" /><div className="dashboard-pie-list">{paymentRows.length ? paymentRows.map((row, index) => { const share = paymentTotal ? (Number(row.amount) / paymentTotal) * 100 : 0; return <div key={row.method}><span><i className={`legend-dot chart-${Math.min(index, 5) + 1}`} />{row.method.replace(/_/g, ' ')}</span><strong>{Number(row.amount).toFixed(2)} <small>{share.toFixed(1)}%</small></strong></div>; }) : <p className="muted">No posted payment activity for this business date.</p>}</div></div>
+        <p className="dashboard-source">{historical ? 'Payment mix is read from the archived Daily Closing pack.' : 'The pie uses only posted cashier/payment transactions for the current business date.'}</p>
       </section>
     </section>
-
-    <section className="workspace">
-      <div className="panel dashboard-status-panel">
-        <div className="panel-head"><div><p className="muted">Live inventory</p><h2>Room Status</h2></div><span>{rooms.length} rooms</span></div>
-        <div className="rooms">{rooms.length ? rooms.map(room => <div className={`room room-${room.status}`} key={room.id}><strong>{room.number}</strong><span>{typeById.get(room.room_type_id)?.name ?? 'Unassigned'} · {label(room.status)}</span></div>) : <p className="muted">No rooms configured yet.</p>}</div>
-      </div>
-
-      <div className="panel dashboard-analytics-panel">
-        <div className="panel-head"><div><p className="muted">At a glance</p><h2>Room mix</h2></div><span>Live</span></div>
-        <div className="dashboard-room-pie-layout">
-          <div className="dashboard-pie room-pie" style={{ background: `conic-gradient(${roomGradient})` }} aria-label="Live room status pie chart" />
-          <div className="dashboard-pie-list">
-            {statusCounts.map((item, index) => <div key={item.status}><span><i className={`legend-dot chart-${Math.min(index, 5) + 1}`} />{item.status.replace(/_/g, ' ')}</span><strong>{item.count}</strong></div>)}
-          </div>
-        </div>
-        <div className="dashboard-insight"><strong>{occupied} occupied room-night(s)</strong><span>{management ? management.occupancy.occupancy_rate.toFixed(1) : '0.0'}% occupancy · {totalRooms} rooms</span></div>
-      </div>
-
-      <div className="panel">
-        <div className="panel-head"><div><p className="muted">Live financial & operations</p><h2>Hotel performance</h2></div><span>{management?.finance.reconciliation_status || 'Loading'}</span></div>
-        <div className="operations">
-          <div><span>Total revenue</span><strong>{management ? Number(management.revenue.total).toFixed(2) : '—'}</strong></div>
-          <div><span>In-house guests</span><strong>{management?.occupancy.checked_in_guests ?? dashboard?.in_house_guests ?? '—'}</strong></div>
-          <div><span>Arrivals / departures</span><strong>{management ? management.occupancy.arrivals + ' / ' + management.occupancy.departures : '—'}</strong></div>
-          <div><span>Ledger</span><strong>{management ? (management.finance.ledger_balanced ? 'Balanced' : 'Review') : '—'}</strong></div>
-          <div><span>Room charges pending Night Audit</span><strong>{management?.period.posting_open ? 'Yes' : 'No'}</strong></div>
-        </div>
-        {management?.period.posting_open && <p className="dashboard-audit-note">The current business date is still open. Room revenue, ADR and RevPAR can remain at zero until Night Audit posts the pending room charges. This dashboard does not invent or pre-post those values.</p>}
-      </div>
-
-      <div className="panel dashboard-finance-panel">
-        <div className="panel-head"><div><p className="muted">Actual cashier activity</p><h2>Payment breakdown</h2></div><span>Current business date</span></div>
-        {finance?.payment_breakdown.length ? <div className="status-chart">{finance.payment_breakdown.map(row => <div className="status-bar-row" key={row.method}><div><span>{row.method.replace(/_/g, ' ')}</span><strong>{Number(row.amount).toFixed(2)}</strong></div><div className="status-bar-track"><i style={{ width: Math.min(100, Math.max(0, (Number(row.amount) / Math.max(1, finance.payments_net)) * 100)) + '%' }} /></div></div>)}</div> : <p className="muted">No posted payment activity for this business date.</p>}
-        <p className="dashboard-source">Dashboard financial figures are read from the hotel's current reporting and ledger data. No sample, generic, or forecast values are shown.</p>
-      </div>
-    </section>
+    {!historical ? <section className="workspace"><div className="panel dashboard-status-panel"><div className="panel-head"><div><p className="muted">Live inventory</p><h2>Room Status</h2></div><span>{rooms.length} rooms</span></div><div className="rooms">{rooms.length ? rooms.map(room => <div className={`room room-${room.status}`} key={room.id}><strong>{room.number}</strong><span>{typeById.get(room.room_type_id)?.name ?? 'Unassigned'} · {label(room.status)}</span></div>) : <p className="muted">No rooms configured yet.</p>}</div></div><div className="panel dashboard-analytics-panel"><div className="panel-head"><div><p className="muted">At a glance</p><h2>Room mix</h2></div><span>Live</span></div><div className="status-chart">{statusCounts.map(item => <div className="status-bar-row" key={item.status}><div><span>{item.status.replace(/_/g, ' ')}</span><strong>{item.count}</strong></div><div className="status-bar-track"><i style={{ width: `${(item.count / Math.max(1, rooms.length)) * 100}%` }} /></div></div>)}</div><div className="dashboard-insight"><strong>{occupied} occupied room-night(s)</strong><span>{currentOccupancy.toFixed(1)}% occupancy · {totalRooms} rooms</span></div></div></section> : <section className="workspace"><div className="panel dashboard-analytics-panel"><div className="panel-head"><div><p className="muted">Archived inventory</p><h2>Room occupancy snapshot</h2></div><span>{formatDashboardDate(selectedDate!)}</span></div><div className="historical-room-summary"><strong>{occupied} / {totalRooms}</strong><span>occupied rooms · {historicalOccupancy.toFixed(1)}% occupancy</span></div><div className="historical-room-bars"><div><span>Occupied</span><i style={{ width: `${historicalOccupancy}%` }} /></div><div><span>Available</span><i style={{ width: `${Math.max(0, 100 - historicalOccupancy)}%` }} /></div></div><p className="dashboard-source">Room-level live status is intentionally not shown in Historical View because the archived closing pack does not represent today's room inventory.</p></div><div className="panel"><div className="panel-head"><div><p className="muted">Archived financial & operations</p><h2>Hotel performance</h2></div><span>Closed</span></div><div className="operations"><div><span>Total revenue</span><strong>{Number(report?.revenue?.gross || 0).toFixed(2)}</strong></div><div><span>Occupied rooms</span><strong>{occupied}</strong></div><div><span>Archived closing status</span><strong>Closed</strong></div><div><span>Outstanding</span><strong>{Number(report?.outstanding || 0).toFixed(2)}</strong></div><div><span>Ledger</span><strong>{report?.finance?.reconciliation_status || 'Archived'}</strong></div></div></div></section>}
+    {!historical && <section className="panel"><div className="panel-head"><div><p className="muted">Live financial & operations</p><h2>Hotel performance</h2></div><span>{management?.finance.reconciliation_status || 'Loading'}</span></div><div className="operations"><div><span>Total revenue</span><strong>{management ? Number(management.revenue.total).toFixed(2) : '—'}</strong></div><div><span>In-house guests</span><strong>{management?.occupancy.checked_in_guests ?? dashboard?.in_house_guests ?? '—'}</strong></div><div><span>Arrivals / departures</span><strong>{management ? management.occupancy.arrivals + ' / ' + management.occupancy.departures : '—'}</strong></div><div><span>Ledger</span><strong>{management ? (management.finance.ledger_balanced ? 'Balanced' : 'Review') : '—'}</strong></div><div><span>Room charges pending Night Audit</span><strong>{management?.period.posting_open ? 'Yes' : 'No'}</strong></div></div>{management?.period.posting_open && <p className="dashboard-audit-note">The current business date is still open. Room revenue, ADR and RevPAR can remain at zero until Night Audit posts the pending room charges. This dashboard does not invent or pre-post those values.</p>}</section>}
+    {!historical && <section className="panel dashboard-finance-panel"><div className="panel-head"><div><p className="muted">Actual cashier activity</p><h2>Payment breakdown</h2></div><span>Current business date</span></div>{finance?.payment_breakdown.length ? <div className="status-chart">{finance.payment_breakdown.map(row => <div className="status-bar-row" key={row.method}><div><span>{row.method.replace(/_/g, ' ')}</span><strong>{Number(row.amount).toFixed(2)}</strong></div><div className="status-bar-track"><i style={{ width: Math.min(100, Math.max(0, (Number(row.amount) / Math.max(1, finance.payments_net)) * 100)) + '%' }} /></div></div>)}</div> : <p className="muted">No posted payment activity for this business date.</p>}<p className="dashboard-source">Dashboard financial figures are read from the hotel's current reporting and ledger data. No sample, generic, or forecast values are shown.</p></section>}
+    {historical && selectedHistory && <p className="dashboard-source dashboard-history-detail">Selected {formatDashboardDate(selectedDate!)} · payments {selectedHistory.payments.toFixed(2)} · outstanding {selectedHistory.outstanding.toFixed(2)} · archived closing record.</p>}
   </>;
 }
-
 function GuestsView({ user, guests, setGuests, onRefresh }: { user: User; guests: Guest[]; setGuests: React.Dispatch<React.SetStateAction<Guest[]>>; onRefresh: () => Promise<void> }) {
   const emptyForm = { full_name: '', phone: '', email: '', address: '', id_document: '' };
   const [query, setQuery] = useState('');
@@ -386,7 +309,7 @@ function RoomsView({ user, rooms, setRooms, roomTypes, onRefresh }: { user: User
 }
 
 function App() {
-  const [user, setUser] = useState<User | null>(null); const [management, setManagement] = useState<ManagementReport | null>(null); const [dashboardFinance, setDashboardFinance] = useState<DashboardFinance | null>(null); const [dashboardHistory, setDashboardHistory] = useState<DashboardHistoryDay[]>([]); const [authMode, setAuthMode] = useState<AuthMode>('login'); const [checking, setChecking] = useState(true); const [dashboard, setDashboard] = useState<Dashboard | null>(null); const [rooms, setRooms] = useState<Room[]>([]); const [roomTypes, setRoomTypes] = useState<RoomType[]>([]); const [guests, setGuests] = useState<Guest[]>([]); const [reservations, setReservations] = useState<Reservation[]>([]); const [frontDesk, setFrontDesk] = useState<FrontDeskData>({ arrivals: [], departures: [], in_house: [] }); const [billing, setBilling] = useState<BillingSummary[]>([]); const [view, setView] = useState<View>('Dashboard'); const [error, setError] = useState('');
+  const [user, setUser] = useState<User | null>(null); const [management, setManagement] = useState<ManagementReport | null>(null); const [dashboardFinance, setDashboardFinance] = useState<DashboardFinance | null>(null); const [dashboardDate, setDashboardDate] = useState<string | null>(null); const [dashboardHistoricalPack, setDashboardHistoricalPack] = useState<DashboardClosingPack | null>(null); const [dashboardHistory, setDashboardHistory] = useState<DashboardHistoryDay[]>([]); const [authMode, setAuthMode] = useState<AuthMode>('login'); const [checking, setChecking] = useState(true); const [dashboard, setDashboard] = useState<Dashboard | null>(null); const [rooms, setRooms] = useState<Room[]>([]); const [roomTypes, setRoomTypes] = useState<RoomType[]>([]); const [guests, setGuests] = useState<Guest[]>([]); const [reservations, setReservations] = useState<Reservation[]>([]); const [frontDesk, setFrontDesk] = useState<FrontDeskData>({ arrivals: [], departures: [], in_house: [] }); const [billing, setBilling] = useState<BillingSummary[]>([]); const [view, setView] = useState<View>('Dashboard'); const [error, setError] = useState('');
   const refreshGeneration = useRef(0);
   const visibleModules = user?.role === 'admin' ? modules : user?.role === 'reception' ? modules.filter(module => module !== 'Backup') : modules.filter(module => module !== 'Billing' && module !== 'Reports' && module !== 'Backup');
 
@@ -531,15 +454,36 @@ function App() {
     setUser(next); setView('Dashboard'); setError('');
   }
 
+  async function selectDashboardDate(value: string) {
+    if (!dashboard) return;
+    setError('');
+    setDashboardDate(value);
+    if (value === dashboard.business_date) { setDashboardHistoricalPack(null); return; }
+    try {
+      const pack = await api<DashboardClosingPack>(`/api/night-audit/pack/${value}/daily-closing.json`);
+      setDashboardHistoricalPack(pack);
+    } catch (err) {
+      setDashboardHistoricalPack(null);
+      setError(err instanceof Error ? `No archived Daily Closing is available for ${formatDashboardDate(value)}.` : 'Unable to load historical dashboard data.');
+    }
+  }
+
+  function returnDashboardToToday() {
+    if (!dashboard) return;
+    setDashboardDate(dashboard.business_date);
+    setDashboardHistoricalPack(null);
+    setError('');
+  }
+
   function logout() {
     refreshGeneration.current += 1;
-    localStorage.removeItem(TOKEN_KEY); setUser(null); setDashboard(null); setManagement(null); setDashboardFinance(null); setDashboardHistory([]); setRooms([]); setRoomTypes([]); setGuests([]); setReservations([]); setFrontDesk({ arrivals: [], departures: [], in_house: [] }); setBilling([]); setAuthMode('login');
+    localStorage.removeItem(TOKEN_KEY); setUser(null); setDashboard(null); setManagement(null); setDashboardFinance(null); setDashboardDate(null); setDashboardHistoricalPack(null); setDashboardHistory([]); setRooms([]); setRoomTypes([]); setGuests([]); setReservations([]); setFrontDesk({ arrivals: [], departures: [], in_house: [] }); setBilling([]); setAuthMode('login');
   }
 
   if (checking) return <main className="auth-shell"><p className="muted">Checking local session…</p></main>;
   if (!user) return <AuthScreen mode={authMode} setMode={setAuthMode} onAuthenticated={authenticated} />;
 
-  return <main className="shell"><header className="topbar"><div><div className="brand-lockup" aria-label="HighFly AI"><span className="brand-highfly">HighFly</span> <span className="brand-ai">AI</span></div><div><p className="eyebrow">LA SERENE HOTEL & RESORT</p><h1>Hotel Management System</h1></div></div><div className="user-actions"><div className="user-chip"><strong>{user.username}</strong><span>{user.role}</span></div><button className="logout-button" onClick={logout}>Log out</button></div></header><nav className="module-nav">{visibleModules.map(m => <button key={m} className={view === m ? 'active' : ''} onClick={() => setView(m)}>{m}</button>)}</nav>{error && <p className="error">{error}</p>}{view === 'Dashboard' && <><section className="welcome"><div><p className="muted">Operations dashboard</p><h2>{dashboard ? `Business date · ${dashboard.business_date}` : 'Loading hotel data…'}</h2></div></section><DashboardView dashboard={dashboard} management={management} finance={dashboardFinance} history={dashboardHistory} rooms={rooms} roomTypes={roomTypes} /></>}{view === 'Rooms' && <RoomsView user={user} rooms={rooms} setRooms={setRooms} roomTypes={roomTypes} onRefresh={refresh} />}{view === 'Guests' && <GuestsView user={user} guests={guests} setGuests={setGuests} onRefresh={refresh} />}{view === 'Reservations' && <ReservationsPMSView user={user} guests={guests} rooms={rooms} roomTypes={roomTypes} reservations={reservations} onRefresh={refresh} api={api} />}{view === 'Front Desk' && <FrontDeskPMSView user={user} data={frontDesk} rooms={rooms} reservations={reservations} guests={guests} roomTypes={roomTypes} onRefresh={refresh} api={api} />}{view === 'Housekeeping' && <HousekeepingView userRole={user.role} api={api} onRefresh={refresh} />}{view === 'Reports' && <ReportsView api={api} />}{view === 'Billing' && <BillingView userRole={user.role} summaries={billing} onRefresh={refresh} api={api} />}{view === 'Backup' && <BackupView api={api} />}<footer className="app-footer" aria-label="Application developer credit"><strong><span className="brand-highfly">HighFly</span> <span className="brand-ai">AI</span></strong></footer></main>;
+  return <main className="shell"><header className="topbar"><div><div className="brand-lockup" aria-label="HighFly AI"><span className="brand-highfly">HighFly</span> <span className="brand-ai">AI</span></div><div><p className="eyebrow">LA SERENE HOTEL & RESORT</p><h1>Hotel Management System</h1></div></div><div className="user-actions"><div className="user-chip"><strong>{user.username}</strong><span>{user.role}</span></div><button className="logout-button" onClick={logout}>Log out</button></div></header><nav className="module-nav">{visibleModules.map(m => <button key={m} className={view === m ? 'active' : ''} onClick={() => setView(m)}>{m}</button>)}</nav>{error && <p className="error">{error}</p>}{view === 'Dashboard' && <><section className="welcome dashboard-welcome"><div><p className="muted">{dashboardDate && dashboard && dashboardDate !== dashboard.business_date ? 'Historical dashboard' : 'Operations dashboard'}</p><h2>{dashboardDate && dashboard && dashboardDate !== dashboard.business_date ? `Historical View · ${formatDashboardDate(dashboardDate)}` : dashboard ? `Business date · ${dashboard.business_date}` : 'Loading hotel data…'}</h2></div><div className="dashboard-date-controls"><label>Business date<select value={dashboardDate || dashboard?.business_date || ''} onChange={e => void selectDashboardDate(e.target.value)} disabled={!dashboard}><option value={dashboard?.business_date || ''}>{dashboard ? `${formatDashboardDate(dashboard.business_date)} · Open / Today` : 'Loading…'}</option>{dashboardHistory.filter(day => day.date !== dashboard?.business_date).reverse().map(day => <option key={day.date} value={day.date}>{formatDashboardDate(day.date)} · {day.closed ? 'Closed' : 'Open'}</option>)}</select></label>{dashboardDate && dashboard && dashboardDate !== dashboard.business_date && <button className="secondary-button" type="button" onClick={returnDashboardToToday}>Return to Today</button>}</div></section><DashboardView dashboard={dashboard} management={management} finance={dashboardFinance} history={dashboardHistory} rooms={rooms} roomTypes={roomTypes} selectedDate={dashboardDate} historicalPack={dashboardHistoricalPack} /></>}{view === 'Rooms' && <RoomsView user={user} rooms={rooms} setRooms={setRooms} roomTypes={roomTypes} onRefresh={refresh} />}{view === 'Guests' && <GuestsView user={user} guests={guests} setGuests={setGuests} onRefresh={refresh} />}{view === 'Reservations' && <ReservationsPMSView user={user} guests={guests} rooms={rooms} roomTypes={roomTypes} reservations={reservations} onRefresh={refresh} api={api} />}{view === 'Front Desk' && <FrontDeskPMSView user={user} data={frontDesk} rooms={rooms} reservations={reservations} guests={guests} roomTypes={roomTypes} onRefresh={refresh} api={api} />}{view === 'Housekeeping' && <HousekeepingView userRole={user.role} api={api} onRefresh={refresh} />}{view === 'Reports' && <ReportsView api={api} />}{view === 'Billing' && <BillingView userRole={user.role} summaries={billing} onRefresh={refresh} api={api} />}{view === 'Backup' && <BackupView api={api} />}<footer className="app-footer" aria-label="Application developer credit"><strong><span className="brand-highfly">HighFly</span> <span className="brand-ai">AI</span></strong></footer></main>;
 }
 
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);
