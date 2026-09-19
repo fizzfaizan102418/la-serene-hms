@@ -260,3 +260,67 @@ body{color:var(--ink);background:radial-gradient(circle at top right,rgba(0,191,
 .dashboard-source{margin:16px 0 0;padding-top:12px;border-top:1px solid var(--line);color:#6c7870;font-size:12px;line-height:1.55}
 .dashboard-finance-panel .status-chart{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:28px}
 @media(max-width:760px){.dashboard-finance-panel{grid-column:auto}.dashboard-finance-panel .status-chart{grid-template-columns:1fr}}
+
+
+/* Real hotel analytics charts */
+:root{
+  --chart-1:#002147;
+  --chart-2:#00BFFF;
+  --chart-3:#6f8f78;
+  --chart-4:#b59d56;
+  --chart-5:#a66f69;
+  --chart-6:#7c8388;
+  --chart-muted:#e4ebe6;
+}
+.dashboard-chart-grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(320px,.85fr);gap:16px;margin-top:16px}
+.dashboard-trend-panel,.dashboard-pie-panel{min-height:360px}
+.dashboard-trend{height:238px;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;align-items:stretch;margin-top:18px;padding:12px 4px 0;border-bottom:1px solid var(--line)}
+.trend-day{display:grid;grid-template-rows:auto 1fr auto auto;gap:7px;min-width:0;text-align:center}
+.trend-values{display:grid;gap:2px;font-size:11px;color:#6c7870}
+.trend-values strong{font-size:12px;color:var(--brand)}
+.trend-bars{height:178px;display:flex;justify-content:center;align-items:end;gap:5px;padding:0 8px}
+.trend-bar{display:block;width:22px;min-height:4px;border-radius:7px 7px 2px 2px;transition:height .25s ease}
+.trend-bar.occupancy{background:linear-gradient(180deg,var(--accent),#78cfe9)}
+.trend-bar.revenue{background:linear-gradient(180deg,var(--brand),#365b7d)}
+.trend-label{font-size:12px;font-weight:700;color:#4f5c54}
+.trend-day small{font-size:10px;color:#8a948d;text-transform:uppercase;letter-spacing:.05em}
+.chart-legend{display:flex;flex-wrap:wrap;gap:16px;margin-top:13px;color:#65736b;font-size:12px}
+.chart-legend span{display:inline-flex;align-items:center;gap:6px}
+.legend-dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--chart-muted);flex:0 0 auto}
+.legend-dot.occupancy,.legend-dot.chart-2{background:var(--chart-2)}
+.legend-dot.revenue,.legend-dot.chart-1{background:var(--chart-1)}
+.legend-dot.chart-3{background:var(--chart-3)}
+.legend-dot.chart-4{background:var(--chart-4)}
+.legend-dot.chart-5{background:var(--chart-5)}
+.legend-dot.chart-6{background:var(--chart-6)}
+.dashboard-pie-layout,.dashboard-room-pie-layout{display:grid;grid-template-columns:170px minmax(0,1fr);gap:22px;align-items:center;margin-top:18px}
+.dashboard-pie{width:170px;height:170px;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(22,37,29,.06);position:relative}
+.dashboard-pie::after{content:'';position:absolute;inset:38px;border-radius:50%;background:#fff;border:1px solid var(--line)}
+.dashboard-pie-list{display:grid;gap:9px}
+.dashboard-pie-list>div{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid #edf1ee;font-size:12px}
+.dashboard-pie-list>div:last-child{border-bottom:0}
+.dashboard-pie-list>div>span{display:flex;align-items:center;gap:7px;text-transform:capitalize;color:#65736b}
+.dashboard-pie-list strong{white-space:nowrap;color:var(--brand)}
+.dashboard-pie-list small{font-size:10px;color:#8a948d;font-weight:600}
+.dashboard-source{max-width:760px}
+.dashboard-audit-note{margin:14px 0 0;padding:12px 14px;border-left:3px solid var(--accent);border-radius:9px;background:#f3f8fa;color:#65736b;font-size:12px;line-height:1.55}
+.dashboard-finance-panel{margin-top:0}
+@media(max-width:1000px){
+  .dashboard-chart-grid{grid-template-columns:1fr}
+}
+@media(max-width:760px){
+  .dashboard-chart-grid{margin-top:12px}
+  .dashboard-trend{gap:6px}
+  .trend-bars{padding:0 2px;gap:3px}
+  .trend-bar{width:16px}
+  .dashboard-pie-layout,.dashboard-room-pie-layout{grid-template-columns:130px minmax(0,1fr);gap:14px}
+  .dashboard-pie{width:130px;height:130px}
+  .dashboard-pie::after{inset:29px}
+}
+@media(max-width:520px){
+  .dashboard-trend-panel,.dashboard-pie-panel{min-height:auto}
+  .dashboard-trend{height:210px;overflow-x:auto;grid-template-columns:repeat(5,58px);justify-content:space-between}
+  .trend-bars{height:150px}
+  .dashboard-pie-layout,.dashboard-room-pie-layout{grid-template-columns:1fr}
+  .dashboard-pie{margin:0 auto}
+}
