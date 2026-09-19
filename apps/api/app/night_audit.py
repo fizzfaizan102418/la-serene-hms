@@ -22,7 +22,7 @@ from .auth import require_roles
 from .db import DATA_DIR, get_db
 from .financial_ops import ledger_reconciliation
 from .finance_controls import payment_reconciliation, revenue_report, trial_balance
-from .financial_authority import post_folio_charge_authoritative
+from .financial_authority import folio_ledger_summary, post_folio_charge_authoritative, stay_deposit_balance
 from .folio_integrity import item_has_active_charge
 from .models import AuditLog, BusinessDateState, Expense, FinancialTransaction, Folio, FolioItem, LedgerEntry, Payment, Reservation, Room, User
 from .business_date import get_current_business_date, lock_current_business_date
@@ -109,18 +109,62 @@ def build_summary(db: Session, business_date: date, finance: dict | None = None)
     expenses = db.scalar(select(func.coalesce(func.sum(Expense.amount), 0)).where(Expense.expense_date == business_date, Expense.status == "posted")) or Decimal("0.00")
     gross_revenue = money(room_revenue + food_revenue + service_charge + other_revenue)
     paid_total = money(sum(payment_totals.values(), Decimal("0.00")))
-    outstanding = Decimal("0.00")
-    for folio in db.scalars(select(Folio)).all():
-        items = [item for item in db.scalars(select(FolioItem).where(FolioItem.folio_id == folio.id)).all() if item_has_active_charge(db, item.id)]
-        total = sum((max(Decimal("0.00"), Decimal(i.quantity) * Decimal(i.unit_price) - Decimal(i.discount)) for i in items), Decimal("0.00"))
-        food_net = sum((max(Decimal("0.00"), Decimal(i.quantity) * Decimal(i.unit_price) - Decimal(i.discount)) for i in items if i.category.strip().lower() in FOOD_CATEGORIES), Decimal("0.00"))
-        total += food_net * FOOD_SERVICE_CHARGE_RATE
-        paid = db.scalar(select(func.coalesce(func.sum(Payment.amount), 0)).where(Payment.folio_id == folio.id)) or Decimal("0.00")
-        outstanding += max(Decimal("0.00"), total - Decimal(paid))
+    outstanding = money(sum((folio_ledger_summary(db, folio.id).balance for folio in db.scalars(select(Folio)).all()), Decimal("0.00")))
+
+    deposit_received = db.scalar(
+        select(func.coalesce(func.sum(LedgerEntry.amount), 0))
+        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
+        .where(
+            FinancialTransaction.business_date == business_date,
+            FinancialTransaction.status == "posted",
+            FinancialTransaction.transaction_type == "deposit_received",
+            LedgerEntry.account == "Guest Deposits",
+            LedgerEntry.direction == "credit",
+        )
+    ) or Decimal("0.00")
+    deposit_applied = db.scalar(
+        select(func.coalesce(func.sum(LedgerEntry.amount), 0))
+        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
+        .where(
+            FinancialTransaction.business_date == business_date,
+            FinancialTransaction.status == "posted",
+            FinancialTransaction.transaction_type == "deposit_applied",
+            LedgerEntry.account == "Guest Deposits",
+            LedgerEntry.direction == "debit",
+        )
+    ) or Decimal("0.00")
+    guest_deposit_balance = db.scalar(
+        select(func.coalesce(func.sum(LedgerEntry.amount), 0))
+        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
+        .where(
+            FinancialTransaction.status == "posted",
+            LedgerEntry.account == "Guest Deposits",
+        )
+    ) or Decimal("0.00")
+    deposit_credit = db.scalar(
+        select(func.coalesce(func.sum(LedgerEntry.amount), 0))
+        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
+        .where(
+            FinancialTransaction.status == "posted",
+            LedgerEntry.account == "Guest Deposits",
+            LedgerEntry.direction == "credit",
+        )
+    ) or Decimal("0.00")
+    deposit_debit = db.scalar(
+        select(func.coalesce(func.sum(LedgerEntry.amount), 0))
+        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
+        .where(
+            FinancialTransaction.status == "posted",
+            LedgerEntry.account == "Guest Deposits",
+            LedgerEntry.direction == "debit",
+        )
+    ) or Decimal("0.00")
+    guest_deposit_balance = money(Decimal(deposit_credit) - Decimal(deposit_debit))
+
     finance = finance or finance_snapshot(db, business_date)
     state = db.get(BusinessDateState, 1)
     posting_open = not bool(state and state.last_closed_business_date and state.last_closed_business_date >= business_date)
-    return {"business_date": business_date, "generated_at": datetime.utcnow(), "posting_open": posting_open, "occupancy": {"total_rooms": len(rooms), "occupied_rooms": status_counts.get("occupied", 0), "reserved_rooms": status_counts.get("reserved", 0), "available_rooms": status_counts.get("available", 0), "dirty_rooms": status_counts.get("dirty", 0), "out_of_order_rooms": status_counts.get("out_of_order", 0), "in_house_reservations": in_house}, "movement": {"arrivals": arrivals, "departures": departures, "no_shows": no_shows}, "revenue": {"room": money(room_revenue), "food": money(food_revenue), "food_service_charge": service_charge, "other": money(other_revenue), "gross": gross_revenue}, "payments": {method: money(amount) for method, amount in payment_totals.items()} | {"total": paid_total}, "outstanding": money(outstanding), "expenses": money(expenses), "net_operating": money(gross_revenue - Decimal(expenses)), "finance": finance}
+    return {"business_date": business_date, "generated_at": datetime.utcnow(), "posting_open": posting_open, "occupancy": {"total_rooms": len(rooms), "occupied_rooms": status_counts.get("occupied", 0), "reserved_rooms": status_counts.get("reserved", 0), "available_rooms": status_counts.get("available", 0), "dirty_rooms": status_counts.get("dirty", 0), "out_of_order_rooms": status_counts.get("out_of_order", 0), "in_house_reservations": in_house}, "movement": {"arrivals": arrivals, "departures": departures, "no_shows": no_shows}, "revenue": {"room": money(room_revenue), "food": money(food_revenue), "food_service_charge": service_charge, "other": money(other_revenue), "gross": gross_revenue}, "payments": {method: money(amount) for method, amount in payment_totals.items()} | {"total": paid_total}, "outstanding": money(outstanding), "guest_deposits": {"received_today": money(deposit_received), "applied_today": money(deposit_applied), "remaining_liability": guest_deposit_balance}, "expenses": money(expenses), "net_operating": money(gross_revenue - Decimal(expenses)), "finance": finance}
 
 
 def ledger_account_delta(db: Session, business_date: date, accounts: set[str], before: bool) -> Decimal:
@@ -157,8 +201,12 @@ def build_pre_close_preview(db: Session, business_date: date, summary: dict) -> 
     today_cash = ledger_account_delta(db, business_date, CASH_ACCOUNTS, False)
     today_receivables = ledger_account_delta(db, business_date, {"Guest Receivables"}, False)
     projected_cash = money(opening_cash + today_cash)
-    projected_receivables = money(max(Decimal("0.00"), opening_receivables + today_receivables + pending_total))
-    return {"business_date": business_date, "opening": {"cash": money(opening_cash), "guest_receivables": money(opening_receivables), "outstanding": money(max(Decimal("0.00"), opening_receivables))}, "activity": {"room_revenue": money(summary["revenue"]["room"]), "payments_received": money(summary["payments"]["total"]), "cash_received": money(today_cash), "expenses": money(summary["expenses"]), "ledger_transactions": summary["finance"]["ledger_transactions"], "guest_receivables_delta": money(today_receivables)}, "pending_night_audit": {"room_charges_count": len(pending), "room_charges_total": pending_total, "items": pending}, "projected_close": {"room_revenue": money(summary["revenue"]["room"] + pending_total), "cash": projected_cash, "guest_receivables": projected_receivables, "outstanding": projected_receivables, "gross_revenue": money(summary["revenue"]["gross"] + pending_total)}, "controls": {"trial_balance": "balanced" if summary["finance"]["trial_balance"]["balanced"] else "review", "revenue_difference": money(summary["finance"]["revenue_difference"]), "cash_difference": money(summary["finance"]["cash_difference"])} }
+    pending_stay_ids = {row["stay_id"] for row in pending}
+    anticipated_deposit_application = money(sum((stay_deposit_balance(db, stay_id) for stay_id in pending_stay_ids), Decimal("0.00")))
+    current_receivables = money(max(Decimal("0.00"), opening_receivables + today_receivables))
+    anticipated_deposit_application = money(min(anticipated_deposit_application, current_receivables + pending_total))
+    projected_receivables = money(max(Decimal("0.00"), current_receivables + pending_total - anticipated_deposit_application))
+    return {"business_date": business_date, "opening": {"cash": money(opening_cash), "guest_receivables": money(opening_receivables), "outstanding": money(max(Decimal("0.00"), opening_receivables))}, "activity": {"room_revenue": money(summary["revenue"]["room"]), "payments_received": money(summary["payments"]["total"]), "cash_received": money(today_cash), "expenses": money(summary["expenses"]), "ledger_transactions": summary["finance"]["ledger_transactions"], "guest_receivables_delta": money(today_receivables)}, "pending_night_audit": {"room_charges_count": len(pending), "room_charges_total": pending_total, "anticipated_deposit_application": anticipated_deposit_application, "items": pending}, "projected_close": {"room_revenue": money(summary["revenue"]["room"] + pending_total), "cash": projected_cash, "guest_receivables": projected_receivables, "outstanding": projected_receivables, "gross_revenue": money(summary["revenue"]["gross"] + pending_total)}, "controls": {"trial_balance": "balanced" if summary["finance"]["trial_balance"]["balanced"] else "review", "revenue_difference": money(summary["finance"]["revenue_difference"]), "cash_difference": money(summary["finance"]["cash_difference"])} }
 
 
 def pack_dir(business_date: date) -> Path:
@@ -184,6 +232,7 @@ def build_xlsx(pack: Path, summary: dict, notes: str | None, closed_by: str, clo
         ("Trial Balance", [(f"{row['account']} | debit", float(row["debit"])) for row in summary["finance"]["trial_balance"]["accounts"]] + [("Total debit", float(summary["finance"]["trial_balance"]["total_debit"])), ("Total credit", float(summary["finance"]["trial_balance"]["total_credit"])), ("Balanced", summary["finance"]["trial_balance"]["balanced"])]),
         ("Payment Reconciliation", [(f"{row['method']} | received", float(row["received"])) for row in summary["finance"]["payment_reconciliation"]["methods"]] + [("Received total", float(summary["finance"]["payment_reconciliation"]["received_total"])), ("Refunded total", float(summary["finance"]["payment_reconciliation"]["refunded_total"])), ("Net total", float(summary["finance"]["payment_reconciliation"]["net_total"]))]),
         ("Revenue Reconciliation", [("Ledger revenue", float(summary["finance"]["revenue_reconciliation"]["ledger_total"])), ("Operational folio charges", float(summary["finance"]["revenue_reconciliation"]["operational_total"])), ("Difference", float(summary["finance"]["revenue_reconciliation"]["difference"])), ("Report total", float(summary["finance"]["revenue_reconciliation"]["total"]))]),
+        ("Guest Deposits", [("Received today", float(summary["guest_deposits"]["received_today"])), ("Applied today", float(summary["guest_deposits"]["applied_today"])), ("Remaining deposit liability", float(summary["guest_deposits"]["remaining_liability"]))]),
         ("Operating", [("Outstanding (end-of-day)", float(summary["outstanding"])), ("Expenses (today)", float(summary["expenses"])), ("Net operating (today)", float(summary["net_operating"]))]),
     ]
     row = 7
@@ -209,6 +258,7 @@ def build_pdf(pack: Path, summary: dict, notes: str | None, closed_by: str, clos
     tb = summary["finance"]["trial_balance"]; section("Trial Balance", [["Account", "Debit"]] + [[row["account"], f"{row['debit']:.2f}"] for row in tb["accounts"]] + [["Total debit", f"{tb['total_debit']:.2f}"], ["Total credit", f"{tb['total_credit']:.2f}"], ["Balanced", tb["balanced"]]])
     pr = summary["finance"]["payment_reconciliation"]; section("Payment Reconciliation", [["Method", "Received / Refunded / Net"]] + [[row["method"], f"{row['received']:.2f} / {row['refunded']:.2f} / {row['net']:.2f}"] for row in pr["methods"]] + [["Totals", f"{pr['received_total']:.2f} / {pr['refunded_total']:.2f} / {pr['net_total']:.2f}"]])
     rr = summary["finance"]["revenue_reconciliation"]; section("Revenue Reconciliation", [["Control", "Amount"], ["Ledger revenue", f"{rr['ledger_total']:.2f}"], ["Operational folio charges", f"{rr['operational_total']:.2f}"], ["Difference", f"{rr['difference']:.2f}"], ["Revenue report total", f"{rr['total']:.2f}"]])
+    gd = summary["guest_deposits"]; section("Guest Deposits", [["Control", "Amount"], ["Received today", f"{gd['received_today']:.2f}"], ["Applied today", f"{gd['applied_today']:.2f}"], ["Remaining deposit liability", f"{gd['remaining_liability']:.2f}"]])
     section("Finance Control", [["Control", "Result"], ["Overall status", summary["finance"]["status"]], ["Ledger balanced", summary["finance"]["ledger_balanced"]], ["Cash difference", f"{summary['finance']['cash_difference']:.2f}"], ["Revenue difference", f"{summary['finance']['revenue_difference']:.2f}"], ["Ledger transactions", summary["finance"]["ledger_transactions"]]])
     section("Operating", [["Metric", "Amount"], ["Outstanding (end-of-day)", f"{summary['outstanding']:.2f}"], ["Expenses (today)", f"{summary['expenses']:.2f}"], ["Net operating (today)", f"{summary['net_operating']:.2f}"]])
     story.extend([Paragraph("Closing Notes", styles["Heading3"]), Paragraph((notes or "No closing notes recorded.").replace("\n", "<br/>"), styles["BodyText"]), Spacer(1, 8 * mm), Table([["Prepared / Closed By", "Head Office Received / Verified"], [closed_by, ""], ["Signature: __________________________", "Signature: __________________________"]], colWidths=[80 * mm, 80 * mm], style=TableStyle([("GRID", (0,0), (-1,-1), 0.5, colors.HexColor("#D0CCC3")), ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"), ("TOPPADDING", (0,0), (-1,-1), 7), ("BOTTOMPADDING", (0,0), (-1,-1), 7)]))])
