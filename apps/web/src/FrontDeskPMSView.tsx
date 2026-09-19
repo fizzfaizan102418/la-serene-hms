@@ -156,7 +156,7 @@ export default function FrontDeskPMSView({ user, data, rooms, reservations, gues
   }
 
   const card = (reservation: Reservation, kind: 'arrival' | 'departure' | 'in-house') => (
-    <article className="desk-card" key={reservation.id} onClick={() => selectReservation(reservation.id)} style={{ cursor: 'pointer' }}>
+    <article className={`desk-card desk-card-enhanced ${kind === 'departure' ? 'desk-card-departure' : kind === 'arrival' ? 'desk-card-arrival' : ''}`} key={reservation.id} onClick={() => selectReservation(reservation.id)} style={{ cursor: 'pointer' }}>
       <div className="desk-card-main"><div className="desk-card-title"><strong>{reservation.guest_name}</strong><span className="status-pill">{kind === 'arrival' ? 'Arrival' : kind === 'departure' ? 'Due out' : 'In house'}</span></div><span>Reservation #{reservation.id} · {reservation.check_in} → {reservation.check_out}</span><small>{reservation.room_ids.map(id => roomById.get(id)?.number ?? id).join(', ') || 'Room not assigned'} · {nights(reservation.check_in, reservation.check_out)} night(s)</small></div>
       <div className="desk-actions">
         {kind === 'arrival' && canOperate && <button className="primary-button small-button" disabled={busy} onClick={e => { e.stopPropagation(); void checkIn(reservation.id); }}>Check in</button>}
@@ -224,6 +224,12 @@ export default function FrontDeskPMSView({ user, data, rooms, reservations, gues
     {selected && <section className="panel selected-stay-summary frontdesk-selected-stay"><div className="selected-stay-top"><div><p className="muted">Selected guest</p><h2>{selected.guest_name}</h2><span>Reservation #{selected.id} · Stay details and operational actions</span></div><span className="status-pill status-pill-active">{selected.status.replace(/_/g, ' ')}</span></div><div className="selected-stay-grid"><div><span>Room</span><strong>{selectedRooms.map(room => room?.number).join(', ') || 'Unassigned'}</strong></div><div><span>Stay</span><strong>{selected.check_in} → {selected.check_out}</strong></div><div><span>Nights</span><strong>{nights(selected.check_in, selected.check_out)}</strong></div><div><span>Contact</span><strong>{selectedGuest?.phone || selectedGuest?.email || 'No contact recorded'}</strong></div></div><div className="selected-stay-actions">{canOperate && <button className="primary-button" type="button" onClick={() => setCheckoutReservation(selected)}>Checkout / folio</button>}<button className="secondary-button" type="button" onClick={() => setSelectedId(null)}>Close guest</button></div></section>}
 
     <section className="stats frontdesk-kpis">{[["Arrivals today", data.arrivals.length], ["Departures today", data.departures.length], ["In house", data.in_house.length], ["Reserved", reservations.filter(r => r.status === 'reserved').length], ["Occupied rooms", rooms.filter(r => r.status === 'occupied').length], ["Dirty rooms", rooms.filter(r => r.status === 'dirty').length]].map(([label, value]) => <article className="stat" key={String(label)}><span>{label}</span><strong>{value}</strong></article>)}</section>
+    <section className="frontdesk-priority-strip">
+      <div><span className="priority-dot arrivals" /><div><strong>Arrivals</strong><small>{data.arrivals.length ? 'Ready for check-in' : 'Nothing waiting'}</small></div><b>{data.arrivals.length}</b></div>
+      <div><span className="priority-dot departures" /><div><strong>Departures</strong><small>{data.departures.length ? 'Checkout queue' : 'Nothing due'}</small></div><b>{data.departures.length}</b></div>
+      <div><span className="priority-dot rooms" /><div><strong>Room readiness</strong><small>{rooms.filter(r => r.status === 'dirty').length ? 'Cleaning required' : 'No dirty rooms reported'}</small></div><b>{rooms.filter(r => r.status === 'dirty').length}</b></div>
+      <div><span className="priority-dot occupied" /><div><strong>In house</strong><small>Checked-in guests</small></div><b>{data.in_house.length}</b></div>
+    </section>
 
     <div className="desk-grid frontdesk-operational-grid">
       <div className="panel frontdesk-queue-panel"><div className="panel-head"><div><p className="muted">Today</p><h2>Arrivals</h2><span>{data.arrivals.length}</span></div></div>{data.arrivals.length ? data.arrivals.map(r => card(r, 'arrival')) : <p className="muted">No arrivals today.</p>}</div>
