@@ -10,3 +10,22 @@
 .reports-shell .report-note{padding:10px 12px;border-left:3px solid #00BFFF;border-radius:8px;background:#f4f9fb;color:#65736b;font-size:12px;line-height:1.55}
 .night-audit-page .page-heading{padding:18px 20px;border:1px solid #dce5de;border-radius:20px;background:linear-gradient(135deg,#fff,#f6faf7)}
 .night-audit-page>.panel{border-color:#dce5de;box-shadow:0 8px 24px rgba(24,45,34,.045)}
+
+
+/* PR 6 — Reports UX */
+.reports-shell .reports-heading{margin-bottom:14px;}
+.reports-shell .reports-filter-panel{display:grid;grid-template-columns:minmax(180px,1fr) minmax(180px,1fr) auto;align-items:end;gap:12px;margin-bottom:16px;}
+.reports-shell .reports-filter-panel label{display:grid;gap:5px;max-width:none;color:#475569;font-size:12px;font-weight:750;}
+.reports-shell .reports-filter-panel input{width:100%;min-height:42px;padding:10px 12px;border:1px solid var(--ls-border);border-radius:10px;background:var(--ls-surface);color:var(--ls-ink);}
+.reports-shell .reports-filter-panel button{min-width:130px;}
+.reports-shell .reports-kpis{gap:10px;margin-bottom:16px;}
+.reports-shell .reports-kpis .report-kpi{min-height:78px;padding:13px 14px;}
+.reports-shell .reports-kpis .report-kpi-alert{border-top:3px solid var(--ls-amber);background:var(--ls-amber-soft);}
+.reports-shell .reports-workspace{gap:14px;align-items:start;}
+.reports-shell .reports-workspace .panel{min-height:0;}
+.reports-shell .report-revenue-panel{border-top:3px solid var(--ls-gold);}
+.reports-shell .report-payments-panel{border-top:3px solid #3B82F6;}
+.reports-shell .report-guests-panel{border-top:3px solid #64748B;}
+.reports-shell .report-list>div{min-height:42px;align-items:center;}
+.reports-shell .report-list strong{color:#1E293B;}
+@media(max-width:720px){.reports-shell .reports-filter-panel{grid-template-columns:1fr;}.reports-shell .reports-filter-panel button{width:100%;}.reports-shell .reports-kpis{grid-template-columns:1fr;}}
