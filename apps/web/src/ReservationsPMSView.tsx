@@ -342,7 +342,7 @@ export default function ReservationsPMSView({ user, guests, rooms, roomTypes, re
     <div className="workspace" style={{ gridTemplateColumns: 'minmax(0, 1.25fr) minmax(360px, 1fr)' }}>
       <div className="panel">
         <div className="panel-head"><div><h2>Reservation register</h2><span>{visibleReservationCount} active · {hiddenHistoryCount} historical hidden</span></div></div>
-        <div style={{ display: 'flex', gap: 10, marginBottom: 14, alignItems: 'center' }}>
+        <div className="reservation-search-bar">
           <input aria-label="Search reservations" placeholder="Search guest, room, reservation #, or date" value={reservationSearch} onChange={e => setReservationSearch(e.target.value)} style={{ flex: 1 }} />
           {reservationSearch && <button type="button" className="secondary-button small-button" onClick={() => setReservationSearch('')}>Clear</button>}
         </div>
@@ -352,8 +352,8 @@ export default function ReservationsPMSView({ user, guests, rooms, roomTypes, re
           </article>) : <p className="muted">{searchNeedle ? 'No reservations match your search.' : 'No active reservations.'}</p>}
         </div>
 
-        {selected && <div className="panel" style={{ marginTop: 16, background: '#fbfaf7' }}>
-          <div className="panel-head"><div><p className="muted" style={{ margin: 0 }}>Stay operations</p><h2>Reservation #{selected.id}</h2></div><b>{selected.status}</b></div>
+        {selected && <div className="panel reservation-detail-panel">
+          <div className="panel-head"><div><p className="muted" style={{ margin: 0 }}>Stay operations</p><h2>Reservation #{selected.id}</h2></div><span className={`reservation-status status-${selected.status}`}>{selected.status.replace(/_/g, ' ')}</span></div>
           <p><strong>{selected.guest_name}</strong> · {selected.check_in} → {selected.check_out}</p>
 
           {canOperate && selected.status === 'reserved' && <section style={{ padding: 14, borderRadius: 14, background: '#f4f1ea', marginBottom: 14 }}>
@@ -375,8 +375,8 @@ export default function ReservationsPMSView({ user, guests, rooms, roomTypes, re
               const detail = details[stay.id];
               const availableDestinations = rooms.filter(r => r.status === 'available' && r.id !== stay.room_id);
               const open = openStayId === stay.id;
-              return <article key={stay.id} style={{ display: 'block', padding: 16, background: 'white', border: open ? '1px solid #c7d2c4' : '1px solid transparent' }}>
-                <div className="panel-head" style={{ marginBottom: 8 }}><div><strong>Room {stay.room_number}</strong><span style={{ display: 'block' }}>{stay.check_in} → {stay.check_out} · {stay.status}</span></div><b>{money(Number(stay.agreed_rate))} / night</b></div>
+              return <article className={`reservation-stay-card ${open ? 'open' : ''}`} key={stay.id}>
+                <div className="panel-head stay-card-head"><div><strong>Room {stay.room_number}</strong><span>{stay.check_in} → {stay.check_out}</span></div><div><span className={`reservation-status status-${stay.status}`}>{stay.status.replace(/_/g, ' ')}</span><b>{money(Number(stay.agreed_rate))} / night</b></div></div>
                 <div className="two-col">
                   <div><small className="muted">Booking guest</small><div><strong>{stay.guest_name || 'Unassigned'}</strong></div></div>
                   <div><small className="muted">Payment</small><div>{stay.payment_due_policy} · deposit {money(Number(stay.deposit_received))} / {money(Number(stay.deposit_required))}</div></div>
