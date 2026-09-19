@@ -494,3 +494,538 @@ body{background:radial-gradient(circle at top right,rgba(231,173,37,.10),transpa
 
 .dashboard-arrival-status{display:inline-flex!important;width:max-content;margin-top:4px;padding:3px 7px;border-radius:999px;background:#fff3d7;color:#8a5a00;font-size:9px!important;font-weight:800!important;text-transform:none!important}
 .dashboard-arrival-status.checked-in{background:#e8f5ec;color:#287247}
+
+
+/* =========================================================
+   LA SERENE — DASHBOARD PREMIUM LIGHT UX
+   Production-safe visual layer. No data, API, accounting,
+   reservation, folio, payment or Night Audit behavior changes.
+   ========================================================= */
+:root{
+  --ui-canvas:#F8FAFC;
+  --ui-surface:#FFFFFF;
+  --ui-sidebar:#0F172A;
+  --ui-primary:#1E293B;
+  --ui-secondary:#64748B;
+  --ui-border:#E2E8F0;
+  --ui-border-soft:#F1F5F9;
+  --ui-gold:#D4AF37;
+  --ui-gold-soft:#FBF5DF;
+  --ui-green:#16A34A;
+  --ui-green-soft:#ECFDF3;
+  --ui-amber:#D97706;
+  --ui-amber-soft:#FFF7ED;
+  --ui-red:#DC2626;
+  --ui-red-soft:#FEF2F2;
+  --ui-blue:#3B82F6;
+  --ui-blue-soft:#EFF6FF;
+  --ui-emerald:#10B981;
+  --ui-shadow:0 10px 30px rgba(15,23,42,.06);
+  --ui-shadow-hover:0 14px 34px rgba(15,23,42,.10);
+}
+
+/* Premium application frame / sidebar */
+body{
+  background:var(--ui-canvas);
+  color:var(--ui-primary);
+}
+.shell{
+  max-width:none;
+  width:auto;
+  margin-left:236px;
+  padding:26px 34px 48px;
+}
+.topbar{
+  min-height:72px;
+  padding:14px 18px;
+  border:1px solid var(--ui-border);
+  border-radius:18px;
+  background:rgba(255,255,255,.96);
+  box-shadow:var(--ui-shadow);
+}
+.topbar h1{
+  color:var(--ui-primary);
+  font-size:clamp(22px,2.5vw,32px);
+  letter-spacing:-.035em;
+}
+.topbar .eyebrow{
+  color:var(--ui-secondary);
+  margin-bottom:3px;
+}
+.brand-lockup{
+  background:var(--ui-sidebar);
+  border:0;
+  color:#fff;
+  border-radius:12px;
+  padding:9px 11px;
+}
+.brand-highfly{color:#fff;}
+.brand-ai{color:#38BDF8;}
+.user-chip{
+  background:var(--ui-canvas);
+  border:1px solid var(--ui-border);
+  color:var(--ui-primary);
+}
+.user-chip span{color:var(--ui-secondary);}
+.logout-button{color:var(--ui-secondary);}
+.logout-button:hover{background:var(--ui-border-soft);color:var(--ui-primary);}
+
+/* Dark slate navigation rail */
+.module-nav{
+  position:fixed;
+  z-index:40;
+  left:16px;
+  top:16px;
+  bottom:16px;
+  width:204px;
+  margin:0;
+  padding:18px 12px;
+  display:flex;
+  flex-direction:column;
+  align-items:stretch;
+  gap:5px;
+  overflow-y:auto;
+  overflow-x:hidden;
+  border:1px solid #1E293B;
+  border-radius:20px;
+  background:var(--ui-sidebar);
+  box-shadow:0 18px 45px rgba(15,23,42,.16);
+}
+.module-nav::before{
+  content:'LA SERENE';
+  display:block;
+  padding:5px 10px 15px;
+  color:#fff;
+  font-size:12px;
+  font-weight:850;
+  letter-spacing:.16em;
+  border-bottom:1px solid rgba(148,163,184,.16);
+  margin-bottom:7px;
+}
+.module-nav button{
+  width:100%;
+  min-height:42px;
+  padding:10px 12px;
+  text-align:left;
+  color:#94A3B8;
+  border-radius:10px;
+  font-weight:700;
+  transition:background .16s ease,color .16s ease,transform .16s ease;
+}
+.module-nav button:hover{
+  color:#F8FAFC;
+  background:#1E293B;
+  transform:translateX(1px);
+}
+.module-nav button.active{
+  color:#fff;
+  background:linear-gradient(90deg,rgba(212,175,55,.20),rgba(212,175,55,.07));
+  box-shadow:inset 3px 0 0 var(--ui-gold);
+}
+.module-nav button:nth-child(1)::before{content:'⌂';}
+.module-nav button:nth-child(2)::before{content:'▦';}
+.module-nav button:nth-child(3)::before{content:'●';}
+.module-nav button:nth-child(4)::before{content:'▣';}
+.module-nav button:nth-child(5)::before{content:'→';}
+.module-nav button:nth-child(6)::before{content:'✓';}
+.module-nav button:nth-child(7)::before{content:'▤';}
+.module-nav button:nth-child(8)::before{content:'$';}
+.module-nav button:nth-child(9)::before{content:'↥';}
+.module-nav button::before{
+  display:inline-block;
+  width:24px;
+  color:#94A3B8;
+  font-size:14px;
+}
+.module-nav button.active::before{color:var(--ui-gold);}
+
+.dashboard-welcome{
+  margin-top:24px;
+  padding:4px 2px 16px;
+}
+.dashboard-welcome h2{
+  color:var(--ui-primary);
+  font-size:clamp(25px,3vw,34px);
+  letter-spacing:-.04em;
+}
+.dashboard-welcome .muted{color:var(--ui-secondary);}
+.dashboard-date-controls select,
+.dashboard-date-controls input{
+  border-color:var(--ui-border);
+  background:var(--ui-surface);
+  color:var(--ui-primary);
+}
+.dashboard-date-controls label{color:var(--ui-secondary);}
+
+/* Clear live / historical state */
+.dashboard-mode-badge.live{
+  background:var(--ui-green-soft);
+  color:#15803D;
+  border-color:#BBF7D0;
+}
+.dashboard-mode-badge.historical{
+  background:var(--ui-gold-soft);
+  color:#8A6500;
+  border-color:#EAD58B;
+}
+
+/* KPI hierarchy */
+.dashboard-kpi-grid{
+  grid-template-columns:repeat(6,minmax(0,1fr));
+  gap:12px;
+  margin-bottom:18px;
+}
+.dashboard-kpi{
+  position:relative;
+  min-height:108px;
+  padding:17px 17px 15px;
+  border:1px solid var(--ui-border);
+  border-radius:14px;
+  background:var(--ui-surface);
+  box-shadow:0 5px 18px rgba(15,23,42,.045);
+  overflow:hidden;
+  transition:transform .16s ease,box-shadow .16s ease;
+}
+.dashboard-kpi:hover{
+  transform:translateY(-2px);
+  box-shadow:var(--ui-shadow-hover);
+}
+.dashboard-kpi::before{
+  content:'';
+  position:absolute;
+  left:0;
+  top:0;
+  bottom:0;
+  width:3px;
+  background:var(--ui-gold);
+}
+.dashboard-kpi span{
+  color:var(--ui-secondary);
+  font-size:11px;
+  font-weight:700;
+  letter-spacing:.02em;
+}
+.dashboard-kpi strong{
+  color:var(--ui-primary);
+  font-size:25px;
+  letter-spacing:-.035em;
+}
+.dashboard-kpi:nth-child(1)::before{background:var(--ui-blue);}
+.dashboard-kpi:nth-child(2)::before{background:var(--ui-emerald);}
+.dashboard-kpi:nth-child(3)::before{background:var(--ui-gold);}
+.dashboard-kpi:nth-child(4)::before{background:var(--ui-gold);}
+.dashboard-kpi:nth-child(5)::before{background:var(--ui-green);}
+.dashboard-kpi:nth-child(6)::before{background:var(--ui-amber);}
+.dashboard-kpi:nth-child(5) strong{color:#15803D;}
+.dashboard-kpi:nth-child(6) strong{color:#B45309;}
+
+/* Panels: white, crisp, spacious */
+.dashboard-main-grid,
+.dashboard-three-grid,
+.dashboard-two-grid{
+  gap:16px;
+}
+.dashboard-main-grid{margin-bottom:16px;}
+.panel{
+  background:var(--ui-surface);
+  border:1px solid var(--ui-border);
+  border-radius:16px;
+  box-shadow:0 6px 20px rgba(15,23,42,.045);
+}
+.dashboard-main-grid>.panel,
+.dashboard-three-grid>.panel,
+.dashboard-two-grid>.panel{
+  overflow:hidden;
+}
+.panel-head{
+  margin-bottom:16px;
+}
+.panel-head h2{
+  color:var(--ui-primary);
+  font-size:17px;
+  letter-spacing:-.025em;
+}
+.panel-head .muted{color:var(--ui-secondary);}
+.panel-head>span{
+  color:var(--ui-secondary);
+  font-size:11px;
+  font-weight:700;
+}
+
+/* Revenue chart */
+.dashboard-revenue-card{
+  border-top:3px solid var(--ui-emerald);
+}
+.dashboard-line-chart svg{
+  height:235px;
+}
+.chart-grid-line{stroke:#E2E8F0;}
+.chart-axis-line{stroke:#CBD5E1;}
+.dashboard-line-panel .chart-line.revenue-line{
+  stroke:var(--ui-emerald);
+  stroke-width:2.6;
+}
+.dashboard-line-panel .chart-point.revenue-point{
+  fill:var(--ui-emerald);
+  stroke:#fff;
+  stroke-width:1.5;
+}
+.dashboard-line-panel .chart-point.revenue-point.selected{
+  fill:var(--ui-gold);
+  stroke:var(--ui-primary);
+  stroke-width:1.8;
+}
+.line-chart-labels button:hover,
+.line-chart-labels button.selected{
+  background:var(--ui-gold-soft);
+  color:#8A6500;
+}
+.line-chart-labels button small{color:var(--ui-secondary);}
+.dashboard-chart-detail>div{
+  background:#F8FAFC;
+  border-color:var(--ui-border);
+}
+.dashboard-chart-detail strong{color:var(--ui-primary);}
+.dashboard-chart-detail>div:first-child strong{color:var(--ui-emerald);}
+.chart-legend{color:var(--ui-secondary);}
+.legend-dot.revenue{background:var(--ui-emerald)!important;}
+
+/* Operations card */
+.dashboard-ops-card{
+  border-top:3px solid var(--ui-blue);
+}
+.dashboard-ops-grid{
+  gap:8px;
+}
+.dashboard-ops-grid>div{
+  background:#F8FAFC;
+  border-color:var(--ui-border);
+}
+.dashboard-ops-grid span{color:var(--ui-secondary);}
+.dashboard-ops-grid strong{color:var(--ui-primary);}
+
+/* Room status — instant scanning */
+.dashboard-three-grid>.panel:first-child{
+  border-top:3px solid var(--ui-blue);
+}
+.dashboard-room-grid{
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:7px;
+}
+.dashboard-room{
+  position:relative;
+  padding:10px 10px 10px 13px;
+  border:1px solid var(--ui-border);
+  border-radius:10px;
+  background:#fff;
+  overflow:hidden;
+}
+.dashboard-room::before{
+  content:'';
+  position:absolute;
+  left:0;
+  top:0;
+  bottom:0;
+  width:3px;
+}
+.dashboard-room.room-available::before{background:var(--ui-green);}
+.dashboard-room.room-reserved::before{background:var(--ui-amber);}
+.dashboard-room.room-occupied::before{background:var(--ui-blue);}
+.dashboard-room.room-dirty::before{background:var(--ui-red);}
+.dashboard-room.room-out_of_order::before{background:#64748B;}
+.dashboard-room strong{color:var(--ui-primary);}
+.dashboard-room span{
+  color:var(--ui-secondary);
+  font-size:10px;
+  font-weight:700;
+}
+.dashboard-room small{color:#94A3B8;}
+
+/* Front desk / walk-in clarity */
+.dashboard-three-grid>.panel:nth-child(2){
+  border-top:3px solid var(--ui-gold);
+}
+.dashboard-list>div{
+  border-bottom:1px solid var(--ui-border-soft);
+}
+.dashboard-list strong{color:var(--ui-primary);}
+.dashboard-list span{color:var(--ui-secondary);}
+.dashboard-list b{color:#94A3B8;}
+.dashboard-arrival-status{
+  background:var(--ui-amber-soft);
+  color:#B45309;
+  border:1px solid #FED7AA;
+}
+.dashboard-arrival-status.checked-in{
+  background:var(--ui-green-soft);
+  color:#15803D;
+  border-color:#BBF7D0;
+}
+.dashboard-mini-stats span{
+  background:#F8FAFC;
+  border:1px solid var(--ui-border);
+  color:var(--ui-secondary);
+}
+.dashboard-mini-stats strong{color:var(--ui-primary);}
+
+/* Cashier / payment mix */
+.dashboard-three-grid>.panel:nth-child(3){
+  border-top:3px solid var(--ui-gold);
+}
+.dashboard-pie{
+  box-shadow:inset 0 0 0 1px rgba(15,23,42,.05);
+}
+.dashboard-pie::after{
+  background:#fff;
+  border-color:var(--ui-border);
+}
+.dashboard-pie-list>div{
+  border-bottom-color:var(--ui-border-soft);
+}
+.dashboard-pie-list>div>span{color:var(--ui-secondary);}
+.dashboard-pie-list strong{color:var(--ui-primary);}
+.dashboard-cashier-summary-grid>div{
+  background:#F8FAFC;
+  border-color:var(--ui-border);
+}
+.dashboard-cashier-summary-grid strong{color:var(--ui-primary);}
+
+/* Financial controls */
+.dashboard-two-grid>.panel:first-child{
+  border-top:3px solid var(--ui-green);
+}
+.dashboard-two-grid>.panel:last-child{
+  border-top:3px solid var(--ui-gold);
+}
+.dashboard-control-grid>div{
+  background:#F8FAFC;
+  border-color:var(--ui-border);
+}
+.dashboard-control-grid span{color:var(--ui-secondary);}
+.dashboard-control-grid strong{color:var(--ui-primary);}
+.dashboard-control-grid>div:nth-child(2) strong{
+  color:var(--ui-green);
+}
+.dashboard-audit-note{
+  background:var(--ui-amber-soft);
+  border-left-color:var(--ui-amber);
+  color:#92400E;
+}
+
+/* Historical mode */
+.dashboard-history-banner{
+  background:var(--ui-gold-soft);
+  border:1px solid #EAD58B;
+  border-left:4px solid var(--ui-gold);
+  color:#6B5514;
+}
+.historical-room-summary strong{color:var(--ui-primary);}
+.dashboard-source{color:var(--ui-secondary);}
+
+/* Global notices/errors in the new light system */
+.notice{
+  background:var(--ui-green-soft);
+  color:#166534;
+  border-color:#BBF7D0;
+}
+.error{
+  background:var(--ui-red-soft);
+  color:#991B1B;
+  border-color:#FECACA;
+}
+
+/* Buttons */
+.primary-button{
+  background:var(--ui-gold);
+  color:#1E293B;
+  box-shadow:0 5px 14px rgba(212,175,55,.18);
+}
+.primary-button:hover:not(:disabled){
+  background:#C5A02B;
+  filter:none;
+  box-shadow:0 7px 18px rgba(212,175,55,.25);
+}
+.secondary-button{
+  background:#F8FAFC;
+  color:var(--ui-primary);
+  border:1px solid var(--ui-border);
+}
+.secondary-button:hover:not(:disabled){
+  background:#F1F5F9;
+}
+
+/* Make status semantics consistent with requested palette */
+.room-available{box-shadow:inset 0 0 0 1px rgba(22,163,74,.30)!important;}
+.room-reserved{box-shadow:inset 0 0 0 1px rgba(217,119,6,.28)!important;}
+.room-occupied{box-shadow:inset 0 0 0 1px rgba(59,130,246,.30)!important;}
+.room-dirty{box-shadow:inset 0 0 0 1px rgba(220,38,38,.28)!important;}
+.room-out_of_order{box-shadow:inset 0 0 0 1px rgba(100,116,139,.30)!important;}
+
+/* Footer */
+.app-footer{
+  color:var(--ui-secondary);
+}
+.app-footer .brand-highfly{color:var(--ui-primary);}
+.app-footer .brand-ai{color:#0284C7;}
+
+/* Responsive: sidebar becomes compact top navigation */
+@media(max-width:1000px){
+  .shell{
+    margin-left:0;
+    padding:20px 22px 40px;
+  }
+  .module-nav{
+    position:static;
+    width:100%;
+    height:auto;
+    min-height:0;
+    margin:16px 0 0;
+    padding:6px;
+    flex-direction:row;
+    align-items:center;
+    overflow-x:auto;
+    overflow-y:hidden;
+    border-radius:14px;
+  }
+  .module-nav::before{display:none;}
+  .module-nav button{
+    width:auto;
+    min-width:max-content;
+    text-align:center;
+  }
+  .module-nav button::before{display:none;}
+  .module-nav button.active{
+    box-shadow:inset 0 -3px 0 var(--ui-gold);
+  }
+}
+@media(max-width:900px){
+  .dashboard-kpi-grid{grid-template-columns:repeat(3,minmax(0,1fr));}
+  .dashboard-room-grid{grid-template-columns:repeat(4,minmax(0,1fr));}
+}
+@media(max-width:700px){
+  .shell{padding:16px 14px 32px;}
+  .topbar{align-items:flex-start;flex-direction:column;}
+  .user-actions{width:100%;justify-content:space-between;}
+  .dashboard-kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr));}
+  .dashboard-room-grid{grid-template-columns:repeat(3,minmax(0,1fr));}
+}
+@media(max-width:520px){
+  .dashboard-kpi{min-height:92px;padding:13px;}
+  .dashboard-kpi strong{font-size:21px;}
+  .dashboard-room-grid{grid-template-columns:repeat(2,minmax(0,1fr));}
+  .dashboard-hero{padding:18px;}
+  .dashboard-hero h2{font-size:22px;}
+  .dashboard-line-chart svg{height:205px;}
+}
+
+
+/* Universal dashboard chart roles */
+:root{
+  --chart-1:#10B981;
+  --chart-2:#3B82F6;
+  --chart-3:#D4AF37;
+  --chart-4:#F59E0B;
+  --chart-5:#A855F7;
+  --chart-6:#64748B;
+  --chart-muted:#E2E8F0;
+}
