@@ -55,7 +55,7 @@ export default function NightAuditView({ api }: Props) {
       setMessage(`${filename} downloaded for business date ${date}.`);
     } catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to download closing pack'); }
   }
-  if (!summary) return <section className="page"><div className="page-heading"><div><p className="muted">End-of-day controls</p><h2>Night Audit & Daily Closing</h2></div></div>{message && <p className="notice">{message}</p>}<p className="muted">No archived closing pack is available for the selected date.</p></section>;
+  if (!summary) return <section className="page night-audit-page"><div className="page-heading"><div><p className="muted">End-of-day controls</p><h2>Night Audit & Daily Closing</h2></div></div>{message && <p className="notice">{message}</p>}<p className="muted">No archived closing pack is available for the selected date.</p></section>;
   const f = summary.finance;
   const p = summary.pre_close;
   return <section className="page">
