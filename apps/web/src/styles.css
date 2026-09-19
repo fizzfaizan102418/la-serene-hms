@@ -402,3 +402,16 @@ body{background:radial-gradient(circle at top right,rgba(231,173,37,.10),transpa
   .dashboard-history-banner strong{white-space:normal}
   .dashboard-line-chart svg{height:210px}
 }
+
+
+/* Today's cashier summary */
+.dashboard-cashier-summary{margin-top:16px;padding:14px 0 0;border-top:1px solid var(--line)}
+.cashier-summary-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px}
+.cashier-summary-head strong{font-size:14px;color:var(--brand)}
+.cashier-summary-head span{font-size:11px;color:#8a948d;text-transform:uppercase;letter-spacing:.05em}
+.cashier-summary-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.cashier-summary-grid>div{display:grid;gap:3px;padding:10px 11px;border-radius:11px;background:#fff8e9;border:1px solid #eadfc7}
+.cashier-summary-grid span{font-size:11px;color:#756f61}
+.cashier-summary-grid strong{font-size:15px;color:var(--brand)}
+.dashboard-cashier-summary .dashboard-source{margin-top:10px;padding-top:9px;font-size:11px}
+@media(max-width:520px){.cashier-summary-grid{grid-template-columns:1fr 1fr}.cashier-summary-grid>div{padding:9px}.cashier-summary-grid strong{font-size:14px}}
