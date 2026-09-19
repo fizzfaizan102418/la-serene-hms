@@ -20,6 +20,7 @@ export default function NightAuditView({ api }: Props) {
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [archive, setArchive] = useState<Pack | null>(null);
+  const [confirmingClose, setConfirmingClose] = useState(false);
 
   async function loadCurrent() {
     setMessage('');
@@ -89,10 +90,10 @@ ${outstanding > 0.005 ? '<div class="alert"><strong>Attention:</strong> outstand
   }
 
   async function closeDay() {
-    if (!summary || !summary.posting_open || archive) return;
+    if (!summary || !summary.posting_open || archive || busy) return;
     if (summary.finance.status !== 'balanced') { setMessage('Financial controls are not balanced. Resolve the reconciliation before closing the business date.'); return; }
-    if (!window.confirm(`Close business day ${summary.business_date}? This locks the period, creates the closing pack and advances the business date.`)) return;
-    setBusy(true); setMessage('');
+    setConfirmingClose(false);
+    setBusy(true); setMessage('Closing business day…');
     try { const result = await api<any>('/api/night-audit/close', { method: 'POST', body: JSON.stringify({ notes: notes || null }) }); setSummary({ ...result.summary, posting_open: false }); setArchive({ report: result.summary, closing: { notes: notes || null, closed_by: result.closed_by, closed_at: result.closed_at } }); setReportDate(result.business_date); setCurrentDate(result.next_business_date); setMessage(`Daily closing completed for ${result.business_date}. Next business date is ${result.next_business_date}.`); }
     catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to close business day'); await loadCurrent(); }
     finally { setBusy(false); }
@@ -125,7 +126,13 @@ ${outstanding > 0.005 ? '<div class="alert"><strong>Attention:</strong> outstand
       <section className="panel"><div className="panel-head"><h2>Trial balance — current date</h2><span>{f.trial_balance.balanced ? 'Balanced' : 'Review required'}</span></div><div className="report-list">{f.trial_balance.accounts.length ? f.trial_balance.accounts.map(row => <div key={row.account}><span>{row.account}</span><strong>D {money(row.debit)} · C {money(row.credit)}</strong></div>) : <div><span>No current-date ledger activity</span><strong>0.00</strong></div>}<div><span>Total debit today</span><strong>{money(f.trial_balance.total_debit)}</strong></div><div><span>Total credit today</span><strong>{money(f.trial_balance.total_credit)}</strong></div></div></section>
       <section className="panel"><div className="panel-head"><h2>Payment reconciliation — current date</h2><span>Net {money(f.payment_reconciliation.net_total)}</span></div><div className="report-list">{f.payment_reconciliation.methods.length ? f.payment_reconciliation.methods.map(row => <div key={row.method}><span>{row.method}</span><strong>+{money(row.received)} / -{money(row.refunded)}</strong></div>) : <div><span>No current-date payment activity</span><strong>0.00</strong></div>}<div><span>Received today</span><strong>{money(f.payment_reconciliation.received_total)}</strong></div><div><span>Refunded today</span><strong>{money(f.payment_reconciliation.refunded_total)}</strong></div></div></section>
       <section className="panel"><div className="panel-head"><h2>Revenue reconciliation — current date</h2><span>{money(f.revenue_reconciliation.difference)} difference</span></div><div className="report-list"><div><span>Ledger revenue today</span><strong>{money(f.revenue_reconciliation.ledger_total)}</strong></div><div><span>Operational folio charges today</span><strong>{money(f.revenue_reconciliation.operational_total)}</strong></div><div><span>Revenue report total today</span><strong>{money(f.revenue_reconciliation.total)}</strong></div></div></section>
-      {!archive && summary.posting_open && <section className="panel form-panel"><div className="panel-head"><h2>Close business day</h2><span>Admin only</span></div><p className="muted">Review the pre-close projection above. Night Audit will post only the listed pending room nights, re-run the financial controls, create the immutable closing pack, and then advance the business date.</p><label>Closing notes<textarea rows={5} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Cashier variance, pending follow-up, Head Office comments..." /></label><button className="primary-button" onClick={() => void closeDay()} disabled={busy || f.status !== 'balanced'}>{busy ? 'Closing...' : f.status !== 'balanced' ? 'Resolve reconciliation first' : 'Complete daily closing'}</button></section>}
+      {!archive && summary.posting_open && <section className="panel form-panel"><div className="panel-head"><h2>Close business day</h2><span>Admin only</span></div><p className="muted">Review the pre-close projection above. Night Audit will post only the listed pending room nights, re-run the financial controls, create the immutable closing pack, and then advance the business date.</p><label>Closing notes<textarea rows={5} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Cashier variance, pending follow-up, Head Office comments..." /></label><div className="desk-actions" style={{ alignItems: 'center', marginTop: 8 }}>
+        {!confirmingClose ? <button type="button" className="primary-button" onClick={() => { setMessage(''); setConfirmingClose(true); }} disabled={busy || f.status !== 'balanced'}>{f.status !== 'balanced' ? 'Resolve reconciliation first' : 'Complete daily closing'}</button> : <>
+          <span className="muted">Confirm closing {summary.business_date}? This will post the listed pending room nights, create the closing pack, and advance the business date.</span>
+          <button type="button" className="secondary-button" onClick={() => setConfirmingClose(false)} disabled={busy}>Cancel</button>
+          <button type="button" className="primary-button" onClick={() => void closeDay()} disabled={busy}>{busy ? 'Closing…' : 'Confirm daily closing'}</button>
+        </>}
+      </div></section>}
       {!archive && !summary.posting_open && <section className="panel form-panel"><div className="panel-head"><h2>Daily closing completed</h2><span>Closed</span></div><p className="muted">{`Business date ${summary.business_date} has already been closed. No further daily closing action is required for this business date.`}</p><p className="muted">The hotel is ready for activity on the next business date.</p></section>}
     </div>
   </section>;
