@@ -50,6 +50,8 @@ export default function FrontDeskPMSView({ user, data, rooms, reservations, gues
   const roomById = useMemo(() => new Map(rooms.map(room => [room.id, room])), [rooms]);
   const typeById = useMemo(() => new Map(roomTypes.map(type => [type.id, type])), [roomTypes]);
   const selected = selectedId ? reservations.find(r => r.id === selectedId) ?? null : null;
+  const selectedRooms = selected?.room_ids.map(id => roomById.get(id)).filter(Boolean) ?? [];
+  const selectedGuest = selected ? guests.find(g => g.id === selected.guest_id) ?? null : null;
   const rackDays = useMemo(() => Array.from({ length: 14 }, (_, index) => addDays(rackStart, index)), [rackStart]);
   const availableRooms = useMemo(() => rooms.filter(room => room.status === 'available'), [rooms]);
   const walkInGuestMatches = useMemo(() => {
@@ -155,7 +157,7 @@ export default function FrontDeskPMSView({ user, data, rooms, reservations, gues
 
   const card = (reservation: Reservation, kind: 'arrival' | 'departure' | 'in-house') => (
     <article className="desk-card" key={reservation.id} onClick={() => selectReservation(reservation.id)} style={{ cursor: 'pointer' }}>
-      <div><strong>#{reservation.id} · {reservation.guest_name}</strong><span>{reservation.check_in} → {reservation.check_out} · {nights(reservation.check_in, reservation.check_out)} night(s)</span><small>Room(s): {reservation.room_ids.map(id => roomById.get(id)?.number ?? id).join(', ') || 'Unassigned'}</small></div>
+      <div className="desk-card-main"><div className="desk-card-title"><strong>{reservation.guest_name}</strong><span className="status-pill">{kind === 'arrival' ? 'Arrival' : kind === 'departure' ? 'Due out' : 'In house'}</span></div><span>Reservation #{reservation.id} · {reservation.check_in} → {reservation.check_out}</span><small>{reservation.room_ids.map(id => roomById.get(id)?.number ?? id).join(', ') || 'Room not assigned'} · {nights(reservation.check_in, reservation.check_out)} night(s)</small></div>
       <div className="desk-actions">
         {kind === 'arrival' && canOperate && <button className="primary-button small-button" disabled={busy} onClick={e => { e.stopPropagation(); void checkIn(reservation.id); }}>Check in</button>}
         {(kind === 'departure' || kind === 'in-house') && canOperate && <button className="primary-button small-button" disabled={busy} onClick={e => { e.stopPropagation(); setCheckoutReservation(reservation); }}>Checkout / folio</button>}
@@ -171,7 +173,7 @@ export default function FrontDeskPMSView({ user, data, rooms, reservations, gues
     {message && <p className="notice">{message}</p>}
 
     <section className="panel" style={{ marginBottom: 16 }}>
-      <div className="panel-head"><div><p className="muted">Guest · reservation · room · folio</p><h2>Universal search</h2></div><span>{searchResults.length} result(s)</span></div>
+      <div className="panel-head"><div><p className="muted">Find a guest, reservation, room or folio</p><h2>Quick search</h2></div><span>{searchResults.length} result(s)</span></div>
       <form className="search-bar" onSubmit={universalSearch}>
         <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Search guest name, phone, reservation #, room or folio" aria-label="Universal front desk search" />
         <button className="secondary-button" disabled={busy || !searchQuery.trim()}>Search</button>
@@ -218,6 +220,8 @@ export default function FrontDeskPMSView({ user, data, rooms, reservations, gues
         <div className="billing-actions" style={{ marginTop: 14 }}><span className="muted">The walk-in is checked in immediately after the transaction commits.</span><button className="primary-button" disabled={busy || !walkInGuest || !walkInRooms.length}>{busy ? 'Checking in…' : 'Create walk-in & check in'}</button></div>
       </form>}
     </section>}
+
+    {selected && <section className="panel selected-stay-summary"><div className="selected-stay-top"><div><p className="muted">Selected guest</p><h2>{selected.guest_name}</h2><span>Reservation #{selected.id} · Stay details and operational actions</span></div><span className="status-pill status-pill-active">{selected.status.replace(/_/g, ' ')}</span></div><div className="selected-stay-grid"><div><span>Room</span><strong>{selectedRooms.map(room => room?.number).join(', ') || 'Unassigned'}</strong></div><div><span>Stay</span><strong>{selected.check_in} → {selected.check_out}</strong></div><div><span>Nights</span><strong>{nights(selected.check_in, selected.check_out)}</strong></div><div><span>Contact</span><strong>{selectedGuest?.phone || selectedGuest?.email || 'No contact recorded'}</strong></div></div><div className="selected-stay-actions">{canOperate && <button className="primary-button" type="button" onClick={() => setCheckoutReservation(selected)}>Checkout / folio</button>}<button className="secondary-button" type="button" onClick={() => setSelectedId(null)}>Close guest</button></div></section>}
 
     <section className="stats">{[["Arrivals today", data.arrivals.length], ["Departures today", data.departures.length], ["In house", data.in_house.length], ["Reserved", reservations.filter(r => r.status === 'reserved').length], ["Occupied rooms", rooms.filter(r => r.status === 'occupied').length], ["Dirty rooms", rooms.filter(r => r.status === 'dirty').length]].map(([label, value]) => <article className="stat" key={String(label)}><span>{label}</span><strong>{value}</strong></article>)}</section>
 
