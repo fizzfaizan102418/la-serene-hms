@@ -254,14 +254,14 @@ export default function BillingView({ userRole, summaries, onRefresh, api }: Pro
     <div className="page-heading"><div><p className="muted">Folios, charges, payments and balances</p><h2>Billing</h2></div><span className="room-count">{registerStats.total} folios</span></div>
     {message && <p className="notice">{message}</p>}
 
-    <section className="stats">
-      {[['Total Folios', registerStats.total], ['Open', registerStats.open], ['Closed', registerStats.closed], ['Paid', registerStats.paid], ['Outstanding', registerStats.due]].map(([label, value]) => <article className="stat" key={String(label)}><span>{label}</span><strong>{value}</strong></article>)}
+    <section className="stats billing-kpis">
+      {[['Total Folios', registerStats.total], ['Open', registerStats.open], ['Closed', registerStats.closed], ['Paid', registerStats.paid], ['Outstanding', registerStats.due]].map(([label, value]) => <article className={label === 'Outstanding' ? 'stat billing-kpi billing-kpi-alert' : 'stat billing-kpi' key={String(label)}><span>{label}</span><strong>{value}</strong></article>)}
     </section>
 
-    <div className="billing-layout">
-      <div className="panel">
-        <div className="panel-head"><div><h2>Folio register</h2><span>{filteredSummaries.length} matching folios</span></div></div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 2fr) repeat(3, minmax(120px, 1fr))', gap: 10, marginBottom: 14 }}>
+    <div className="billing-layout billing-workspace">
+      <div className="panel billing-register-panel">
+        <div className="panel-head"><div><p className="muted">Search, filter and open a folio</p><h2>Folio register</h2></div><span>{filteredSummaries.length} matching folios</span></div>
+        <div className="billing-filters">
           <input aria-label="Search folios" placeholder="Search guest, room, folio # or reservation #" value={query} onChange={e => setQuery(e.target.value)} />
           <select aria-label="Folio status" value={folioStatusFilter} onChange={e => setFolioStatusFilter(e.target.value)}><option value="all">All folio statuses</option><option value="open">Open</option><option value="closed">Closed</option></select>
           <select aria-label="Payment status" value={paymentFilter} onChange={e => setPaymentFilter(e.target.value)}><option value="all">All payment statuses</option><option value="paid">Paid</option><option value="partial">Partial</option><option value="due">Due</option></select>
@@ -273,9 +273,9 @@ export default function BillingView({ userRole, summaries, onRefresh, api }: Pro
             const payStatus = paymentStatus(summary);
             const folioStatus = summary.status.toLowerCase() === 'closed' ? 'closed' : 'open';
             const roomNumbers = roomNumbersByReservation[summary.reservation_id] || [];
-            return <button key={summary.folio_id} className={`billing-row ${selected === summary.folio_id ? 'selected' : ''}`} onClick={() => void openFolio(summary.folio_id)}>
-              <div style={{ minWidth: 0 }}><strong>Folio #{summary.folio_id} · {summary.guest_name}</strong>{roomNumbers.length > 0 && <span>Rooms {roomNumbers.join(', ')}</span>}<span>Reservation #{summary.reservation_id}</span><span style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 5 }}><span style={badgeStyle(folioStatus)}>{normalizeStatus(summary.status)}</span><span style={badgeStyle(payStatus)}>{paymentLabel(payStatus)}</span></span></div>
-              <div style={{ textAlign: 'right' }}><b>PKR {money(summary.total)}</b><small>{summary.balance > 0 ? `PKR ${money(summary.balance)} due` : 'PKR 0.00 due'}</small></div>
+            return <button type="button" key={summary.folio_id} className={`billing-row ${selected === summary.folio_id ? 'selected' : ''}`} onClick={() => void openFolio(summary.folio_id)}>
+              <div className="billing-row-main"><strong>Folio #{summary.folio_id} · {summary.guest_name}</strong>{roomNumbers.length > 0 && <span>Rooms {roomNumbers.join(', ')}</span>}<span>Reservation #{summary.reservation_id}</span><span style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 5 }}><span style={badgeStyle(folioStatus)}>{normalizeStatus(summary.status)}</span><span style={badgeStyle(payStatus)}>{paymentLabel(payStatus)}</span></span></div>
+              <div className="billing-row-amount"><b>PKR {money(summary.total)}</b><small className={summary.balance > 0 ? 'billing-balance-due' : 'billing-balance-paid'}>{summary.balance > 0 ? `PKR ${money(summary.balance)} due` : 'PKR 0.00 due'}</small></div>
             </button>;
           }) : <p className="muted">No folios match the current search and filters.</p>}
         </div>
@@ -291,14 +291,14 @@ export default function BillingView({ userRole, summaries, onRefresh, api }: Pro
       </div>
 
       <div className="side-stack">
-        {folio && <div className="panel">
+        {folio && <div className="panel billing-detail-panel">
           <div className="panel-head"><div><p className="muted">Folio #{folio.id} · Reservation #{folio.reservation_id}</p><h2>Folio details</h2></div><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}><span style={badgeStyle(selectedFolioStatus)}>{normalizeStatus(folio.status)}</span><span style={badgeStyle(selectedPaymentStatus)}>{paymentLabel(selectedPaymentStatus)}</span></div></div>
           <div className="billing-totals"><div><span>Subtotal</span><b>PKR {money(folio.subtotal)}</b></div><div><span>Discounts</span><b>PKR {money(folio.discounts)}</b></div><div><span>Food service charge (10%)</span><b>PKR {money(folio.food_service_charge)}</b></div><div className="grand"><span>Total</span><b>PKR {money(folio.total)}</b></div><div><span>Paid</span><b>PKR {money(folio.paid)}</b></div><div className="balance"><span>Balance</span><b>PKR {money(folio.balance)}</b></div></div>
 
-          <div className="panel-head" style={{ marginTop: 18 }}><h3>Charges</h3><span>{folio.items.length} line items</span></div>
+          <div className="panel-head billing-section-head" style={{ marginTop: 18 }}><h3>Charges</h3><span>{folio.items.length} line items</span></div>
           <div className="folio-items">{folio.items.length ? folio.items.map(item => { const state = itemState(item); return <article key={item.id}><div><strong>{item.description}</strong><span>{item.category} · {Number(item.quantity)} × PKR {money(item.unit_price)}{Number(item.discount) ? ` · discount PKR ${money(item.discount)}` : ''}</span></div><div className="desk-actions"><b>PKR {money(item.line_total)}</b><span className="muted">{state === 'reversed' ? 'Reversed · audit retained' : state === 'posted' ? 'Posted · immutable' : 'Financial status unavailable'}</span>{isAdmin && folio.status === 'open' && state === 'posted' && <><button className="secondary-button small-button" disabled={busyItemId === item.id} onClick={() => startEdit(item)}>Edit</button><button className="secondary-button small-button" disabled={busyItemId === item.id} onClick={() => void removeItem(item)}>{busyItemId === item.id ? 'Working…' : 'Remove'}</button></>}</div></article>; }) : <p className="muted">No charges yet.</p>}</div>
 
-          <div className="panel-head" style={{ marginTop: 18 }}><h3>Payments</h3><span>{folio.payments.length} payments</span></div>
+          <div className="panel-head billing-section-head" style={{ marginTop: 18 }}><h3>Payments</h3><span>{folio.payments.length} payments</span></div>
           <div className="folio-items">{folio.payments.length ? folio.payments.map(payment => <article key={payment.id}><div><strong>PKR {money(payment.amount)}</strong><span>{methodLabel(payment.method)}{payment.reference ? ` · ${payment.reference}` : ''}</span></div><span className="muted">Payment #{payment.id}</span></article>) : <p className="muted">No payments recorded.</p>}</div>
 
           {canOperate && <div className="billing-actions">{folio.status === 'open' && <button className="secondary-button" onClick={() => void addRoomCharges()}>Add room charges</button>}<button className="secondary-button" onClick={() => void printReceipt()}>Print receipt</button>{folio.status === 'open' && folio.balance === 0 && <button className="primary-button" onClick={() => void closeFolio()}>Close folio</button>}</div>}
