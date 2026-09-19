@@ -20,6 +20,7 @@ type FrontDeskData = { arrivals: Reservation[]; departures: Reservation[]; in_ho
 type BillingSummary = { folio_id: number; reservation_id: number; guest_name: string; status: string; total: number; paid: number; balance: number };
 type ManagementReport = { business_date: string; rooms: { total: number; out_of_order: number; available_room_nights: number }; occupancy: { occupied_room_nights: number; occupancy_rate: number; checked_in_guests: number; arrivals: number; departures: number }; revenue: { room: number; total: number; adr: number; revpar: number }; finance: { reconciliation_status: string; revenue_difference: number; cash_difference: number; ledger_balanced: boolean }; receivables: { outstanding: number }; period: { posting_open: boolean } };
 type DashboardFinance = { payments_received: number; payments_refunded: number; payments_net: number; payment_breakdown: { method: string; amount: number; received: number; refunded: number }[] };
+type DashboardClosingPack = { report: { revenue: { room: number; gross: number }; payments: Record<string, number>; outstanding: number; occupancy: { total_rooms: number; occupied_rooms: number } } };
 type DashboardHistoryDay = { date: string; occupancy: number; room_revenue: number | null; adr: number | null; revpar: number | null; total_revenue: number; payments: number; outstanding: number; closed: boolean };
 type AuthMode = 'login' | 'bootstrap';
 type View = 'Dashboard' | 'Rooms' | 'Guests' | 'Reservations' | 'Front Desk' | 'Housekeeping' | 'Reports' | 'Billing' | 'Backup';
@@ -427,7 +428,7 @@ function App() {
         const historyRows = await Promise.all(historyDates.map(async date => {
           const liveReport = await api<any>(`/api/reports/summary?from_date=${date}&to_date=${date}`);
           try {
-            const pack = await api<ClosingPack>(`/api/night-audit/pack/${date}/daily-closing.json`);
+            const pack = await api<DashboardClosingPack>(`/api/night-audit/pack/${date}/daily-closing.json`);
             const p = pack.report;
             const roomsSold = Number(p.occupancy?.occupied_rooms || 0);
             const roomsTotal = Math.max(0, Number(p.occupancy?.total_rooms || 0));
