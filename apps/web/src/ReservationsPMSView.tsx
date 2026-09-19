@@ -111,6 +111,7 @@ export default function ReservationsPMSView({ user, guests, rooms, roomTypes, re
   const today = todayValue();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [reservationSearch, setReservationSearch] = useState('');
+  const [reservationStatusFilter, setReservationStatusFilter] = useState('active');
   const [checkIn, setCheckIn] = useState(today);
   const [checkOut, setCheckOut] = useState('');
   const [bookingGuest, setBookingGuest] = useState('');
@@ -341,7 +342,7 @@ export default function ReservationsPMSView({ user, guests, rooms, roomTypes, re
     {message && <p className="notice">{message}</p>}
     <div className="workspace" style={{ gridTemplateColumns: 'minmax(0, 1.25fr) minmax(360px, 1fr)' }}>
       <div className="panel">
-        <div className="panel-head"><div><h2>Reservation register</h2><span>{visibleReservationCount} active · {hiddenHistoryCount} historical hidden</span></div></div>
+        <div className="panel-head"><div><p className="muted">Booking lifecycle</p><h2>Reservation register</h2><span>{visibleReservationCount} matching · {hiddenHistoryCount} historical records</span></div><div className="reservation-register-summary">{[['Reserved', reservations.filter(r => r.status === 'reserved').length],['Checked in', reservations.filter(r => r.status === 'checked_in').length],['History', hiddenHistoryCount]].map(([label,value]) => <span key={String(label)}><strong>{value}</strong>{label}</span>)}</div></div>
         <div className="reservation-search-bar">
           <input aria-label="Search reservations" placeholder="Search guest, room, reservation #, or date" value={reservationSearch} onChange={e => setReservationSearch(e.target.value)} style={{ flex: 1 }} />
           {reservationSearch && <button type="button" className="secondary-button small-button" onClick={() => setReservationSearch('')}>Clear</button>}
