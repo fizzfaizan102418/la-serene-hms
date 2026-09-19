@@ -89,9 +89,10 @@ function DashboardView({ dashboard, management, finance, history, rooms, roomTyp
     : 'var(--chart-muted) 0 100%';
   let roomOffset = 0;
   const roomColors: Record<string, string> = { occupied: '#3B82F6', available: '#E2E8F0', reserved: '#F59E0B', dirty: '#64748B', out_of_order: '#DC2626' };
-  const roomTotal = Math.max(0, statusCounts.reduce((sum, row) => sum + row.count, 0));
+  const roomChartCounts = statusCounts.map(row => ({ ...row, count: row.status === 'occupied' ? Math.max(row.count, Number(dashboard?.occupied_rooms || 0)) : row.count }));
+  const roomTotal = Math.max(0, roomChartCounts.reduce((sum, row) => sum + row.count, 0));
   const roomGradient = roomTotal > 0
-    ? statusCounts.map(row => { const start = roomOffset; roomOffset += (row.count / roomTotal) * 100; return `${roomColors[row.status]} ${start.toFixed(2)}% ${roomOffset.toFixed(2)}%`; }).join(', ')
+    ? roomChartCounts.map(row => { const start = roomOffset; roomOffset += (row.count / roomTotal) * 100; return `${roomColors[row.status]} ${start.toFixed(2)}% ${roomOffset.toFixed(2)}%`; }).join(', ')
     : '#E2E8F0 0 100%';
   const occupied = historical ? Number(report?.occupancy?.occupied_rooms || 0) : Number(management?.occupancy.occupied_room_nights ?? dashboard?.occupied_rooms ?? 0);
   const totalRooms = historical ? Number(report?.occupancy?.total_rooms || 0) : Number(management?.rooms.total ?? dashboard?.total_rooms ?? rooms.length);
@@ -138,9 +139,9 @@ function DashboardView({ dashboard, management, finance, history, rooms, roomTyp
       <section className="panel dashboard-ops-card">
         <div className="panel-head"><div><p className="muted">{historical ? 'Archived performance' : 'Today at a glance'}</p><h2>{historical ? 'Closing snapshot' : 'Operations'}</h2></div><span>{historical ? 'Closed' : dashboard?.business_date || '—'}</span></div>
         {!historical && <div className="dashboard-room-pie-layout">
-          <div className="dashboard-pie dashboard-room-pie" style={{ background: `conic-gradient(${roomGradient})` }} aria-label="Room status distribution pie chart" />
+          <div className="dashboard-pie dashboard-room-pie" style={{ background: roomGradient }} aria-label="Room status distribution pie chart" />
           <div className="dashboard-pie-list">
-            {statusCounts.map(row => <div key={row.status}><span><i className="legend-dot" style={{ background: roomColors[row.status] }} />{roomLabel(row.status)}</span><strong>{row.count}</strong></div>)}
+            {roomChartCounts.map(row => <div key={row.status}><span><i className="legend-dot" style={{ background: roomColors[row.status] }} />{roomLabel(row.status)}</span><strong>{row.count}</strong></div>)}
           </div>
         </div>}
         <div className="dashboard-ops-grid">
@@ -158,7 +159,7 @@ function DashboardView({ dashboard, management, finance, history, rooms, roomTyp
 
       <section className="panel"><div className="panel-head"><div><p className="muted">Front desk</p><h2>Today's arrivals</h2></div><span>{arrivals.length}</span></div>{arrivals.length ? <div className="dashboard-list">{arrivals.map(r => <div key={r.id}><div><strong>{reservationGuest(r)}</strong><span>Room {reservationRooms(r)}</span><small className={r.status === 'checked_in' ? 'dashboard-arrival-status checked-in' : 'dashboard-arrival-status'}>{r.status === 'checked_in' ? 'Checked in' : 'Expected arrival'}</small></div><b>{r.check_in}</b></div>)}</div> : <p className="muted">No arrivals recorded for this business date.</p>}<div className="dashboard-mini-stats"><span>Departures <strong>{departures.length}</strong></span><span>In house <strong>{inHouse.length}</strong></span><span>Reservations <strong>{currentReservations.length}</strong></span></div></section>
 
-      <section className="panel"><div className="panel-head"><div><p className="muted">Cashier</p><h2>Payment mix</h2></div><span>Posted</span></div><div className="dashboard-pie-layout"><div className="dashboard-pie" style={{ background: `conic-gradient(${paymentGradient})` }} aria-label="Payment mix pie chart" /><div className="dashboard-pie-list">{paymentRows.length ? paymentRows.map((row, index) => <div key={row.method}><span><i className={`legend-dot chart-${Math.min(index, 5) + 1}`} />{row.method.replace(/_/g, ' ')}</span><strong>PKR {Number(row.amount).toLocaleString('en-PK')}</strong></div>) : <p className="muted">No posted payment activity for this business date.</p>}</div></div><div className="cashier-summary-grid dashboard-cashier-summary-grid"><div><span>Received</span><strong>PKR {finance ? Number(finance.payments_received).toLocaleString('en-PK') : '—'}</strong></div><div><span>Refunded</span><strong>PKR {finance ? Number(finance.payments_refunded).toLocaleString('en-PK') : '—'}</strong></div><div><span>Net posted</span><strong>PKR {finance ? Number(finance.payments_net).toLocaleString('en-PK') : '—'}</strong></div><div><span>Outstanding</span><strong>PKR {management ? Number(management.receivables.outstanding).toLocaleString('en-PK') : '—'}</strong></div></div></section>
+      <section className="panel"><div className="panel-head"><div><p className="muted">Cashier</p><h2>Payment mix</h2></div><span>Posted</span></div><div className="dashboard-pie-layout"><div className="dashboard-pie" style={{ background: paymentGradient }} aria-label="Payment mix pie chart" /><div className="dashboard-pie-list">{paymentRows.length ? paymentRows.map((row, index) => <div key={row.method}><span><i className={`legend-dot chart-${Math.min(index, 5) + 1}`} />{row.method.replace(/_/g, ' ')}</span><strong>PKR {Number(row.amount).toLocaleString('en-PK')}</strong></div>) : <p className="muted">No posted payment activity for this business date.</p>}</div></div><div className="cashier-summary-grid dashboard-cashier-summary-grid"><div><span>Received</span><strong>PKR {finance ? Number(finance.payments_received).toLocaleString('en-PK') : '—'}</strong></div><div><span>Refunded</span><strong>PKR {finance ? Number(finance.payments_refunded).toLocaleString('en-PK') : '—'}</strong></div><div><span>Net posted</span><strong>PKR {finance ? Number(finance.payments_net).toLocaleString('en-PK') : '—'}</strong></div><div><span>Outstanding</span><strong>PKR {management ? Number(management.receivables.outstanding).toLocaleString('en-PK') : '—'}</strong></div></div></section>
     </section>}
 
     {!historical && <section className="dashboard-two-grid">
