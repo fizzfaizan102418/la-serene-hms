@@ -291,7 +291,7 @@ def close_day(payload: ClosingConfirm | None = None, db: Session = Depends(get_d
     accrued_room_charges = accrue_room_charges_for_business_date(db, business_date=business_date, created_by=user.id)
     finance = finance_snapshot(db, business_date)
     if finance["status"] != "balanced":
-        db.rollback(); raise HTTPException(status_code=409, detail={"message": "Financial reconciliation requires review before Night Audit can close", "business_date": business_date, "finance": serializable(finance)})
+        db.rollback(); raise HTTPException(status_code=409, detail=serializable({"message": "Financial reconciliation requires review before Night Audit can close", "business_date": business_date, "finance": finance}))
     summary = build_summary(db, business_date, finance); summary["night_audit"] = {"room_charges_accrued": accrued_room_charges}; summary["pre_close"] = build_pre_close_preview(db, business_date, summary); closed_at = datetime.utcnow(); pack = create_pack(summary, payload.notes if payload else None, user.username, closed_at)
     state.last_closed_at = closed_at; state.last_closed_business_date = business_date; state.current_business_date = business_date + timedelta(days=1); state.opened_at = closed_at
     audit(db, user.id, "daily_close", business_date, {"business_date": business_date, "summary": summary, "notes": payload.notes if payload else None, "pack": pack, "closed_by": user.username, "closed_at": closed_at, "next_business_date": state.current_business_date})
