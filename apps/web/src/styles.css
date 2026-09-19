@@ -324,3 +324,45 @@ body{color:var(--ink);background:radial-gradient(circle at top right,rgba(0,191,
   .dashboard-pie-layout,.dashboard-room-pie-layout{grid-template-columns:1fr}
   .dashboard-pie{margin:0 auto}
 }
+
+
+/* Dashboard historical date selector and line analytics */
+.dashboard-welcome{align-items:flex-end;gap:20px}
+.dashboard-date-controls{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap}
+.dashboard-date-controls label{display:grid;gap:6px;color:#65736b;font-size:12px;font-weight:700}
+.dashboard-date-controls select{min-width:190px;padding:10px 34px 10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);font:inherit}
+.dashboard-history-banner{display:flex;align-items:flex-start;gap:12px;margin:0 0 16px;padding:14px 16px;border:1px solid #e4bd55;border-left:4px solid var(--accent);border-radius:12px;background:#fff8df;color:#5c4b18}
+.dashboard-history-banner strong{white-space:nowrap}
+.dashboard-history-banner span{font-size:12px;line-height:1.55;color:#756631}
+.dashboard-line-panel{min-height:360px}
+.dashboard-line-chart{margin-top:12px}
+.dashboard-line-chart svg{display:block;width:100%;height:245px;overflow:visible}
+.chart-grid-line{stroke:#e8ece9;stroke-width:.7}
+.chart-axis-line{stroke:#cfd8d2;stroke-width:1}
+.chart-line{fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+.occupancy-line{stroke:var(--accent)}
+.revenue-line{stroke:var(--brand)}
+.chart-point{fill:var(--accent);stroke:#fff;stroke-width:.8}
+.revenue-point{fill:var(--brand)}
+.chart-point.selected{stroke:#7a5b00;stroke-width:1.2}
+.line-chart-labels{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-top:-2px;text-align:center;color:#59675f;font-size:11px;font-weight:700}
+.line-chart-labels span{display:grid;gap:3px}
+.line-chart-labels span.selected{color:var(--brand)}
+.line-chart-labels small{font-size:10px;color:#8a948d;font-weight:500}
+.historical-room-summary{display:flex;align-items:baseline;gap:10px;margin:22px 0 16px}
+.historical-room-summary strong{font-size:32px;color:var(--brand)}
+.historical-room-summary span{color:#65736b;font-size:12px}
+.historical-room-bars{display:grid;gap:12px}
+.historical-room-bars>div{display:grid;grid-template-columns:70px 1fr;align-items:center;gap:10px;font-size:12px;color:#65736b}
+.historical-room-bars i{display:block;height:10px;border-radius:999px;background:linear-gradient(90deg,var(--accent),#e8b11b)}
+.historical-room-bars>div+div i{background:#dfe5e1}
+.dashboard-history-detail{margin:16px 0 0}
+@media(max-width:760px){
+  .dashboard-welcome{align-items:stretch}
+  .dashboard-date-controls{width:100%}
+  .dashboard-date-controls label{flex:1}
+  .dashboard-date-controls select{width:100%}
+  .dashboard-history-banner{display:grid}
+  .dashboard-history-banner strong{white-space:normal}
+  .dashboard-line-chart svg{height:210px}
+}
