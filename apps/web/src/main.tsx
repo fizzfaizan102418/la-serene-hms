@@ -539,7 +539,66 @@ function App() {
   if (checking) return <main className="auth-shell"><p className="muted">Checking local session…</p></main>;
   if (!user) return <AuthScreen mode={authMode} setMode={setAuthMode} onAuthenticated={authenticated} />;
 
-  return <main className="shell"><header className="topbar"><div><div className="brand-lockup" aria-label="HighFly AI"><span className="brand-highfly">HighFly</span> <span className="brand-ai">AI</span></div><div><p className="eyebrow">LA SERENE HOTEL & RESORT</p><h1>Hotel Management System</h1></div></div><div className="user-actions"><div className="user-chip"><strong>{user.username}</strong><span>{user.role}</span></div><button className="logout-button" onClick={logout}>Log out</button></div></header><nav className="module-nav">{visibleModules.map(m => <button key={m} className={view === m ? 'active' : ''} onClick={() => setView(m)}>{m}</button>)}</nav>{error && <p className="error">{error}</p>}{view === 'Dashboard' && <><section className="welcome dashboard-welcome"><div><p className="muted">{dashboardDate && dashboard && dashboardDate !== dashboard.business_date ? 'Historical dashboard' : 'Operations dashboard'}</p><h2>{dashboardDate && dashboard && dashboardDate !== dashboard.business_date ? `Historical View · ${formatDashboardDate(dashboardDate)}` : dashboard ? `Business date · ${dashboard.business_date}` : 'Loading hotel data…'}</h2></div><div className="dashboard-date-controls"><label>Business date<input type="date" value={dashboardDate || dashboard?.business_date || ''} max={dashboard?.business_date || undefined} onChange={e => void selectDashboardDate(e.target.value)} disabled={!dashboard} /></label><label>Recent dates<select value={dashboardDate || dashboard?.business_date || ''} onChange={e => void selectDashboardDate(e.target.value)} disabled={!dashboard}><option value={dashboard?.business_date || ''}>{dashboard ? `${formatDashboardDate(dashboard.business_date)} · Open / Today` : 'Loading…'}</option>{dashboardHistory.filter(day => day.date !== dashboard?.business_date).reverse().map(day => <option key={day.date} value={day.date}>{formatDashboardDate(day.date)} · {day.closed ? 'Closed' : 'Open'}</option>)}</select></label>{dashboardDate && dashboard && dashboardDate !== dashboard.business_date && <button className="secondary-button" type="button" onClick={returnDashboardToToday}>Return to Today</button>}</div></section><DashboardView dashboard={dashboard} management={management} finance={dashboardFinance} history={dashboardHistory} rooms={rooms} roomTypes={roomTypes} selectedDate={dashboardDate} historicalPack={dashboardHistoricalPack} reservations={reservations} frontDesk={frontDesk} onSelectDate={selectDashboardDate} /></>}{view === 'Rooms' && <RoomsView user={user} rooms={rooms} setRooms={setRooms} roomTypes={roomTypes} onRefresh={refresh} />}{view === 'Guests' && <GuestsView user={user} guests={guests} setGuests={setGuests} onRefresh={refresh} />}{view === 'Reservations' && <ReservationsPMSView user={user} guests={guests} rooms={rooms} roomTypes={roomTypes} reservations={reservations} onRefresh={refresh} api={api} />}{view === 'Front Desk' && <FrontDeskPMSView user={user} data={frontDesk} rooms={rooms} reservations={reservations} guests={guests} roomTypes={roomTypes} onRefresh={refresh} api={api} />}{view === 'Housekeeping' && <HousekeepingView userRole={user.role} api={api} onRefresh={refresh} />}{view === 'Reports' && <ReportsView api={api} />}{view === 'Billing' && <BillingView userRole={user.role} summaries={billing} onRefresh={refresh} api={api} />}{view === 'Backup' && <BackupView api={api} />}<footer className="app-footer" aria-label="Application developer credit"><strong><span className="brand-highfly">HighFly</span> <span className="brand-ai">AI</span></strong></footer></main>;
+  const navSections = [
+    { label: 'Operations', items: ['Dashboard', 'Rooms', 'Front Desk', 'Housekeeping'] as View[] },
+    { label: 'Management', items: ['Guests', 'Reservations'] as View[] },
+    { label: 'Finance & Reports', items: ['Reports', 'Billing', 'Backup'] as View[] },
+  ];
+  const navIcons: Record<View, string> = {
+    Dashboard: '⌂',
+    Rooms: '▦',
+    Guests: '♙',
+    Reservations: '▤',
+    'Front Desk': '▣',
+    Housekeeping: '✦',
+    Reports: '◒',
+    Billing: '▱',
+    Backup: '↥',
+  };
+
+  return <main className="shell">
+    <aside className="app-sidebar" aria-label="Primary navigation">
+      <div className="sidebar-brand">
+        <div className="sidebar-brand-mark" aria-hidden="true">LS</div>
+        <div><strong>LA SERENE</strong><span>HOTEL & RESORT</span></div>
+      </div>
+      <div className="sidebar-live"><i aria-hidden="true" />Live operations</div>
+      <nav className="module-nav">
+        {navSections.map(section => {
+          const items = section.items.filter(module => visibleModules.includes(module));
+          if (!items.length) return null;
+          return <div className="nav-section" key={section.label}>
+            <p>{section.label}</p>
+            {items.map(m => <button key={m} className={view === m ? 'active' : ''} onClick={() => setView(m)} aria-current={view === m ? 'page' : undefined}><span className="nav-icon" aria-hidden="true">{navIcons[m]}</span><span className="nav-label">{m}</span></button>)}
+          </div>;
+        })}
+      </nav>
+      <div className="sidebar-user">
+        <div className="sidebar-avatar" aria-hidden="true">{user.username.slice(0,1).toUpperCase()}</div>
+        <div><strong>{user.username}</strong><span>{user.role}</span></div>
+      </div>
+    </aside>
+
+    <header className="topbar">
+      <div className="topbar-context">
+        <div>
+          <p className="eyebrow">{view === 'Dashboard' ? 'OPERATIONS' : view.toUpperCase()}</p>
+          <h1>{view}</h1>
+        </div>
+        <div className="topbar-date">
+          <span className="topbar-status"><i aria-hidden="true" />LIVE</span>
+          <span><small>Business date</small><strong>{dashboard?.business_date || '—'}</strong></span>
+        </div>
+      </div>
+      <div className="user-actions">
+        <div className="user-chip"><strong>{user.username}</strong><span>{user.role}</span></div>
+        <button className="logout-button" onClick={logout}>Log out</button>
+      </div>
+    </header>
+
+    {error && <p className="error">{error}</p>}
+    {view === 'Dashboard' && <><section className="welcome dashboard-welcome"><div><p className="muted">{dashboardDate && dashboard && dashboardDate !== dashboard.business_date ? 'Historical dashboard' : 'Operations dashboard'}</p><h2>{dashboardDate && dashboard && dashboardDate !== dashboard.business_date ? `Historical View · ${formatDashboardDate(dashboardDate)}` : dashboard ? `Business date · ${dashboard.business_date}` : 'Loading hotel data…'}</h2></div><div className="dashboard-date-controls"><label>Business date<input type="date" value={dashboardDate || dashboard?.business_date || ''} max={dashboard?.business_date || undefined} onChange={e => void selectDashboardDate(e.target.value)} disabled={!dashboard} /></label><label>Recent dates<select value={dashboardDate || dashboard?.business_date || ''} onChange={e => void selectDashboardDate(e.target.value)} disabled={!dashboard}><option value={dashboard?.business_date || ''}>{dashboard ? `${formatDashboardDate(dashboard.business_date)} · Open / Today` : 'Loading…'}</option>{dashboardHistory.filter(day => day.date !== dashboard?.business_date).reverse().map(day => <option key={day.date} value={day.date}>{formatDashboardDate(day.date)} · {day.closed ? 'Closed' : 'Open'}</option>)}</select></label>{dashboardDate && dashboard && dashboardDate !== dashboard.business_date && <button className="secondary-button" type="button" onClick={returnDashboardToToday}>Return to Today</button>}</div></section><DashboardView dashboard={dashboard} management={management} finance={dashboardFinance} history={dashboardHistory} rooms={rooms} roomTypes={roomTypes} selectedDate={dashboardDate} historicalPack={dashboardHistoricalPack} reservations={reservations} frontDesk={frontDesk} onSelectDate={selectDashboardDate} /></>}{view === 'Rooms' && <RoomsView user={user} rooms={rooms} setRooms={setRooms} roomTypes={roomTypes} onRefresh={refresh} />}{view === 'Guests' && <GuestsView user={user} guests={guests} setGuests={setGuests} onRefresh={refresh} />}{view === 'Reservations' && <ReservationsPMSView user={user} guests={guests} rooms={rooms} roomTypes={roomTypes} reservations={reservations} onRefresh={refresh} api={api} />}{view === 'Front Desk' && <FrontDeskPMSView user={user} data={frontDesk} rooms={rooms} reservations={reservations} guests={guests} roomTypes={roomTypes} onRefresh={refresh} api={api} />}{view === 'Housekeeping' && <HousekeepingView userRole={user.role} api={api} onRefresh={refresh} />}{view === 'Reports' && <ReportsView api={api} />}{view === 'Billing' && <BillingView userRole={user.role} summaries={billing} onRefresh={refresh} api={api} />}{view === 'Backup' && <BackupView api={api} />}<footer className="app-footer" aria-label="Application developer credit"><strong><span className="brand-highfly">HighFly</span> <span className="brand-ai">AI</span></strong></footer>
+  </main>;
 }
 
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);
