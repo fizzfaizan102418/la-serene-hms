@@ -139,3 +139,10 @@ body:has(.desk-grid) .selected-stay-grid strong { display:block; overflow-wrap:a
 body:has(.desk-grid) .selected-stay-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:14px; }
 @media (max-width:820px){body:has(.desk-grid) .selected-stay-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
 @media (max-width:620px){body:has(.desk-grid) .desk-card{align-items:stretch;flex-direction:column;}body:has(.desk-grid) .desk-card .desk-actions{justify-content:flex-start;width:100%;}body:has(.desk-grid) .selected-stay-grid{grid-template-columns:1fr;}body:has(.desk-grid) .selected-stay-actions{justify-content:stretch;}body:has(.desk-grid) .selected-stay-actions button{flex:1;}}
+
+
+/* PR 9 — Front Desk priority workflow */
+body:has(.desk-grid) .desk-card-enhanced{border-color:#e4e8e2;background:#fbfcfa}
+body:has(.desk-grid) .desk-card-departure{border-left:3px solid #dc2626}
+body:has(.desk-grid) .desk-card-arrival{border-left:3px solid #d4af37}
+body:has(.desk-grid) .frontdesk-priority-strip{margin:14px 0}
