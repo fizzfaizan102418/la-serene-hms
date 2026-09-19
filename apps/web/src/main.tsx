@@ -89,9 +89,10 @@ function DashboardView({ dashboard, management, finance, history, rooms, roomTyp
     : 'var(--chart-muted) 0 100%';
   let roomOffset = 0;
   const roomColors: Record<string, string> = { occupied: '#3B82F6', available: '#E2E8F0', reserved: '#F59E0B', dirty: '#64748B', out_of_order: '#DC2626' };
-  const roomTotal = Math.max(0, statusCounts.reduce((sum, row) => sum + row.count, 0));
+  const roomChartCounts = statusCounts.map(row => ({ ...row, count: row.status === 'occupied' ? Math.max(row.count, Number(dashboard?.occupied_rooms || 0)) : row.count }));
+  const roomTotal = Math.max(0, roomChartCounts.reduce((sum, row) => sum + row.count, 0));
   const roomGradient = roomTotal > 0
-    ? statusCounts.map(row => { const start = roomOffset; roomOffset += (row.count / roomTotal) * 100; return `${roomColors[row.status]} ${start.toFixed(2)}% ${roomOffset.toFixed(2)}%`; }).join(', ')
+    ? roomChartCounts.map(row => { const start = roomOffset; roomOffset += (row.count / roomTotal) * 100; return `${roomColors[row.status]} ${start.toFixed(2)}% ${roomOffset.toFixed(2)}%`; }).join(', ')
     : '#E2E8F0 0 100%';
   const occupied = historical ? Number(report?.occupancy?.occupied_rooms || 0) : Number(management?.occupancy.occupied_room_nights ?? dashboard?.occupied_rooms ?? 0);
   const totalRooms = historical ? Number(report?.occupancy?.total_rooms || 0) : Number(management?.rooms.total ?? dashboard?.total_rooms ?? rooms.length);
@@ -140,7 +141,7 @@ function DashboardView({ dashboard, management, finance, history, rooms, roomTyp
         {!historical && <div className="dashboard-room-pie-layout">
           <div className="dashboard-pie dashboard-room-pie" style={{ background: roomGradient }} aria-label="Room status distribution pie chart" />
           <div className="dashboard-pie-list">
-            {statusCounts.map(row => <div key={row.status}><span><i className="legend-dot" style={{ background: roomColors[row.status] }} />{roomLabel(row.status)}</span><strong>{row.count}</strong></div>)}
+            {roomChartCounts.map(row => <div key={row.status}><span><i className="legend-dot" style={{ background: roomColors[row.status] }} />{roomLabel(row.status)}</span><strong>{row.count}</strong></div>)}
           </div>
         </div>}
         <div className="dashboard-ops-grid">
