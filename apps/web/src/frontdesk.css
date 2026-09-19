@@ -121,3 +121,21 @@ body:has(.desk-grid) .notice { margin-bottom: 14px; }
   body:has(.desk-grid) .page > .panel:last-child .panel-head { min-width: 620px; }
   body:has(.desk-grid) .page > .panel:last-child .panel-head::after { display: none; }
 }
+
+
+/* Front Desk UX refresh */
+body:has(.desk-grid) .desk-card { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+body:has(.desk-grid) .desk-card-main { min-width:0; display:grid; gap:4px; }
+body:has(.desk-grid) .desk-card-title { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+body:has(.desk-grid) .status-pill { display:inline-flex; width:max-content; padding:4px 9px; border-radius:999px; background:#edf1ec; color:#4d5d50; font-size:11px; font-weight:750; text-transform:uppercase; letter-spacing:.04em; }
+body:has(.desk-grid) .status-pill-active { background:#e7f2e5; color:#335c39; }
+body:has(.desk-grid) .selected-stay-summary { margin:16px 0; padding:20px; border-color:#cfdccf; background:linear-gradient(135deg,#fff 0%,#f7faf6 100%); box-shadow:0 10px 28px rgba(38,52,42,.06); }
+body:has(.desk-grid) .selected-stay-top { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; }
+body:has(.desk-grid) .selected-stay-top h2 { margin:2px 0 4px; font-size:24px; }
+body:has(.desk-grid) .selected-stay-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-top:18px; }
+body:has(.desk-grid) .selected-stay-grid>div { padding:12px 14px; border:1px solid #dfe6dc; border-radius:12px; background:#fff; }
+body:has(.desk-grid) .selected-stay-grid span { display:block; color:#6d766e; font-size:11px; text-transform:uppercase; letter-spacing:.04em; margin-bottom:5px; }
+body:has(.desk-grid) .selected-stay-grid strong { display:block; overflow-wrap:anywhere; font-size:14px; }
+body:has(.desk-grid) .selected-stay-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:14px; }
+@media (max-width:820px){body:has(.desk-grid) .selected-stay-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
+@media (max-width:620px){body:has(.desk-grid) .desk-card{align-items:stretch;flex-direction:column;}body:has(.desk-grid) .desk-card .desk-actions{justify-content:flex-start;width:100%;}body:has(.desk-grid) .selected-stay-grid{grid-template-columns:1fr;}body:has(.desk-grid) .selected-stay-actions{justify-content:stretch;}body:has(.desk-grid) .selected-stay-actions button{flex:1;}}
