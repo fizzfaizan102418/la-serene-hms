@@ -1017,3 +1017,15 @@ body{
   .dashboard-hero h2{font-size:22px;}
   .dashboard-line-chart svg{height:205px;}
 }
+
+
+/* Universal dashboard chart roles */
+:root{
+  --chart-1:#10B981;
+  --chart-2:#3B82F6;
+  --chart-3:#D4AF37;
+  --chart-4:#F59E0B;
+  --chart-5:#A855F7;
+  --chart-6:#64748B;
+  --chart-muted:#E2E8F0;
+}
