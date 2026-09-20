@@ -51,7 +51,7 @@ export default function PMSLayout({ user, view, modules, onViewChange, onLogout,
         <div className="pms-hotel-context">
           <span>PROPERTY</span>
           <strong>La Serene Hotel & Resort</strong>
-          <small>Front desk workspace</small>
+          <small>Operations workspace</small>
         </div>
         <nav className="pms-nav" aria-label="Hotel modules">
           <div className="pms-nav-section">Operations</div>
@@ -60,7 +60,7 @@ export default function PMSLayout({ user, view, modules, onViewChange, onLogout,
           {nav(controls)}
         </nav>
         <div className="pms-sidebar-footer">
-          <span className="pms-live-dot" /> Local production system
+          <span className="pms-live-dot" /> System online
         </div>
       </aside>
 
