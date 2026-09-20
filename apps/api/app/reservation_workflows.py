@@ -222,7 +222,9 @@ def extend_stay(reservation_id: int, payload: ExtendStay, db: Session = Depends(
     if conflicts: raise HTTPException(status_code=409, detail=f"Extension conflicts with room(s): {', '.join(conflicts)}")
     old_checkout = reservation.check_out; reservation.check_out = payload.new_check_out
     for stay in db.scalars(select(Stay).where(Stay.reservation_id == reservation_id)).all():
-        stay.check_out = payload.new_check_out; ensure_stay_children(db, stay)
+        stay.check_out = payload.new_check_out
+        stay.deposit_required = money(stay.agreed_rate * (payload.new_check_out - stay.check_in).days)
+        ensure_stay_children(db, stay)
     audit(db, user.id, "extend", reservation_id, {"from_check_out": str(old_checkout), "to_check_out": str(payload.new_check_out), "room_ids": room_ids})
     db.commit()
     return {"reservation_id": reservation_id, "old_check_out": old_checkout, "new_check_out": reservation.check_out, "room_ids": room_ids}
