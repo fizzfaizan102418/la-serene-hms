@@ -1955,3 +1955,11 @@ input[type="number"]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0
  .housekeeping-stats{grid-template-columns:1fr;}
  .guest-history-summary{grid-template-columns:1fr;}
 }
+
+/* PR 10 — Money flow clarity */
+.billing-stay-funding{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0;}
+.billing-stay-funding>div{display:grid;gap:2px;padding:9px 10px;border:1px solid var(--ls-border);border-radius:9px;background:var(--ls-surface-soft);}
+.billing-stay-funding span{font-size:9px;color:var(--ls-muted);text-transform:uppercase;font-weight:800;letter-spacing:.05em;}
+.billing-stay-funding strong{font-size:13px;color:var(--ls-ink);}
+.billing-receive-panel{border-top:3px solid var(--ls-gold);}
+@media(max-width:760px){.billing-stay-funding{grid-template-columns:1fr;}}
