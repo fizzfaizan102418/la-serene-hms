@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 type Summary = { folio_id: number; reservation_id: number; guest_name: string; status: string; total: number; paid: number; balance: number };
 type Item = { id: number; description: string; category: string; quantity: number; unit_price: number; discount: number; line_total: number };
 type Payment = { id: number; amount: number; method: string; reference?: string | null };
-type Folio = { id: number; reservation_id: number; status: string; items: Item[]; payments: Payment[]; subtotal: number; discounts: number; food_service_charge: number; total: number; paid: number; balance: number };
+type Folio = { id: number; reservation_id: number; status: string; active_stay_id?: number | null; deposit_balance: number; deposit_required: number; items: Item[]; payments: Payment[]; subtotal: number; discounts: number; food_service_charge: number; total: number; paid: number; balance: number };
 type FinancialTransaction = { id: number; transaction_type: string; status: string; reference_type?: string | null; reference_id?: string | null; folio_id?: number | null; reversal_of_id?: number | null };
 type ReservationLookup = { id: number; room_ids: number[] };
 type RoomLookup = { id: number; number: string };
@@ -55,7 +55,10 @@ export default function BillingView({ userRole, summaries, onRefresh, api }: Pro
   const [unitPrice, setUnitPrice] = useState('');
   const [discount, setDiscount] = useState('0');
   const [amount, setAmount] = useState('');
+  const [depositAmount, setDepositAmount] = useState('');
   const [method, setMethod] = useState('cash');
+  const [depositMethod, setDepositMethod] = useState('cash');
+  const [depositReference, setDepositReference] = useState('');
   const [reference, setReference] = useState('');
   const [message, setMessage] = useState('');
   const [editingItem, setEditingItem] = useState<Item | null>(null);
@@ -226,6 +229,16 @@ export default function BillingView({ userRole, summaries, onRefresh, api }: Pro
     finally { setBusyItemId(null); }
   }
 
+  async function addDeposit(event: React.FormEvent) {
+    event.preventDefault();
+    try {
+      const id = await ensureSelected();
+      if (!folio?.active_stay_id) throw new Error('No active in-house stay is available for this folio');
+      await api(`/api/folios/${id}/deposits`, { method: 'POST', body: JSON.stringify({ amount: Number(depositAmount), method: depositMethod, reference: depositReference || null }) });
+      await loadFolio(id); setDepositAmount(''); setDepositReference(''); setMessage('Guest deposit recorded. It will be applied automatically to eligible room charges during Night Audit.'); await onRefresh();
+    } catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to record guest deposit'); }
+  }
+
   async function addPayment(event: React.FormEvent) {
     event.preventDefault();
     try { const id = await ensureSelected(); await api<Payment>(`/api/folios/${id}/payments`, { method: 'POST', body: JSON.stringify({ amount: Number(amount), method, reference: reference || null }) }); await loadFolio(id); setAmount(''); setReference(''); setMessage('Payment recorded.'); await onRefresh(); }
@@ -350,7 +363,17 @@ table{width:100%;border-collapse:collapse}th{padding:8px 7px;background:#F8FAFC;
 
         {isAdmin && editingItem && folio?.status === 'open' && <form className="panel form-panel" onSubmit={saveEdit}><div className="panel-head"><div><h2>Edit charge</h2><span>Creates an audited reversal and replacement</span></div><button type="button" className="secondary-button small-button" onClick={() => setEditingItem(null)}>Cancel</button></div><label>Description<input value={editDescription} onChange={e => setEditDescription(e.target.value)} required /></label><label>Category<select value={editCategory} onChange={e => setEditCategory(e.target.value)}><option value="service">Service</option><option value="food">Food & beverage</option><option value="room">Room</option><option value="adjustment">Adjustment</option><option value="other">Other</option></select></label><div className="two-col"><label>Quantity<input type="number" min="0.01" step="0.01" value={editQuantity} onChange={e => setEditQuantity(e.target.value)} required /></label><label>Unit price<input type="number" min="0" step="0.01" value={editUnitPrice} onChange={e => setEditUnitPrice(e.target.value)} required /></label></div><label>Discount<input type="number" min="0" step="0.01" value={editDiscount} onChange={e => setEditDiscount(e.target.value)} /></label><label>Reason<input value={editReason} onChange={e => setEditReason(e.target.value)} required /></label><p className="muted">The original posted charge is never overwritten. Its financial transactions are reversed atomically, then the corrected charge is posted.</p><button className="primary-button" disabled={busyItemId === editingItem.id || !editUnitPrice}>{busyItemId === editingItem.id ? 'Saving…' : 'Save correction'}</button></form>}
         {canOperate && folio?.status === 'open' && !editingItem && <form className="panel form-panel" onSubmit={addCharge}><div className="panel-head"><h2>Add charge</h2><span>Charges post immediately</span></div><label>Description<input value={description} onChange={e => setDescription(e.target.value)} required /></label><label>Category<select value={category} onChange={e => setCategory(e.target.value)}><option value="service">Service</option><option value="food">Food & beverage</option><option value="room">Room</option><option value="adjustment">Adjustment</option><option value="other">Other</option></select></label><div className="two-col"><label>Quantity<input type="number" min="0.01" step="0.01" value={quantity} onChange={e => setQuantity(e.target.value)} required /></label><label>Unit price<input type="number" min="0" step="0.01" value={unitPrice} onChange={e => setUnitPrice(e.target.value)} required /></label></div><label>Discount<input type="number" min="0" step="0.01" value={discount} onChange={e => setDiscount(e.target.value)} /></label><button className="primary-button" disabled={!selected || !unitPrice}>Post charge</button></form>}
-        {canOperate && folio?.status === 'open' && <form className="panel form-panel" onSubmit={addPayment}><div className="panel-head"><h2>Record payment</h2></div><label>Amount<input type="number" min="0.01" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} required /></label><label>Method<select value={method} onChange={e => setMethod(e.target.value)}><option value="cash">Cash</option><option value="card">Card</option><option value="bank_transfer">Bank transfer</option><option value="other">Other</option></select></label><label>Reference<input value={reference} onChange={e => setReference(e.target.value)} /></label><button className="primary-button" disabled={!selected || !amount}>Record payment</button></form>}
+        {canOperate && folio?.status === 'open' && <form className="panel form-panel" onSubmit={addPayment}>        {canOperate && folio?.status === 'open' && <form className="panel form-panel" onSubmit={addDeposit}>
+          <div className="panel-head"><h2>Record guest deposit</h2><span>Advance payment for the current/future stay</span></div>
+          <p className="muted">Held as a guest deposit, not a folio payment. Night Audit applies available deposits to eligible room charges.</p>
+          <label>Amount<input type="number" min="0.01" step="0.01" value={depositAmount} onChange={e => setDepositAmount(e.target.value)} required /></label>
+          <label>Method<select value={depositMethod} onChange={e => setDepositMethod(e.target.value)}><option value="cash">Cash</option><option value="card">Card</option><option value="bank_transfer">Bank transfer</option><option value="other">Other</option></select></label>
+          <label>Reference<input value={depositReference} onChange={e => setDepositReference(e.target.value)} /></label>
+          <p className="muted">Current deposit: PKR {money(folio?.deposit_balance || 0)} / required: PKR {money(folio?.deposit_required || 0)}</p>
+          <button className="primary-button" disabled={!selected || !depositAmount || !folio?.active_stay_id}>Record guest deposit</button>
+        </form>}
+
+<div className="panel-head"><h2>Record payment</h2></div><label>Amount<input type="number" min="0.01" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} required /></label><label>Method<select value={method} onChange={e => setMethod(e.target.value)}><option value="cash">Cash</option><option value="card">Card</option><option value="bank_transfer">Bank transfer</option><option value="other">Other</option></select></label><label>Reference<input value={reference} onChange={e => setReference(e.target.value)} /></label><button className="primary-button" disabled={!selected || !amount}>Record payment</button></form>}
       </div>
     </div>
   </section>;
