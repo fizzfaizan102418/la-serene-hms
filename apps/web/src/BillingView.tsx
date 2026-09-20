@@ -373,9 +373,13 @@ table{width:100%;border-collapse:collapse}th{padding:8px 7px;background:#F8FAFC;
           <button className="primary-button" disabled={!selected || !depositAmount || !folio?.active_stay_id}>Record guest deposit</button>
         </form>}
 
-        {canOperate && folio?.status === 'open' && <form className="panel form-panel" onSubmit={addPayment}></form>}
-
-<div className="panel-head"><h2>Record payment</h2></div><label>Amount<input type="number" min="0.01" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} required /></label><label>Method<select value={method} onChange={e => setMethod(e.target.value)}><option value="cash">Cash</option><option value="card">Card</option><option value="bank_transfer">Bank transfer</option><option value="other">Other</option></select></label><label>Reference<input value={reference} onChange={e => setReference(e.target.value)} /></label><button className="primary-button" disabled={!selected || !amount}>Record payment</button></form>}
+        {canOperate && folio?.status === 'open' && <form className="panel form-panel" onSubmit={addPayment}>
+          <div className="panel-head"><h2>Record payment</h2></div>
+          <label>Amount<input type="number" min="0.01" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} required /></label>
+          <label>Method<select value={method} onChange={e => setMethod(e.target.value)}><option value="cash">Cash</option><option value="card">Card</option><option value="bank_transfer">Bank transfer</option><option value="other">Other</option></select></label>
+          <label>Reference<input value={reference} onChange={e => setReference(e.target.value)} /></label>
+          <button className="primary-button" disabled={!selected || !amount}>Record payment</button>
+        </form>}
       </div>
     </div>
   </section>;
