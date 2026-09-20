@@ -224,10 +224,19 @@ def ledger_reconciliation(business_date: date | None = None, db: Session = Depen
     charge_receivable = money(sum((e.amount for e in entry_rows if e.account == "Guest Receivables" and e.direction == "debit" and tx_types.get(e.transaction_id) in {"folio_charge", "service_charge"}), Decimal("0.00")) - sum((e.amount for e in entry_rows if e.account == "Guest Receivables" and e.direction == "credit" and tx_types.get(e.transaction_id) == "folio_discount"), Decimal("0.00")))
     payment_cash = money(sum((e.amount for e in entry_rows if e.account in CASH_ACCOUNTS and e.direction == "debit" and tx_types.get(e.transaction_id) == "folio_payment"), Decimal("0.00")))
     refund_cash = money(sum((e.amount for e in entry_rows if e.account in CASH_ACCOUNTS and e.direction == "credit" and tx_types.get(e.transaction_id) == "payment_refund"), Decimal("0.00")))
+    service_charge_by_folio: dict[int, Decimal] = {}
+    for entry in entry_rows:
+        if entry.account == "Guest Receivables" and entry.direction == "debit" and tx_types.get(entry.transaction_id) == "service_charge" and entry.folio_id is not None:
+            service_charge_by_folio[entry.folio_id] = money(service_charge_by_folio.get(entry.folio_id, Decimal("0.00")) + entry.amount)
+    payment_by_folio: dict[int, Decimal] = {}
+    for entry in entry_rows:
+        if entry.account == "Guest Receivables" and entry.direction == "credit" and tx_types.get(entry.transaction_id) == "folio_payment" and entry.folio_id is not None:
+            payment_by_folio[entry.folio_id] = money(payment_by_folio.get(entry.folio_id, Decimal("0.00")) + entry.amount)
+    service_charge_collected = money(sum((min(service_charge_by_folio.get(fid, Decimal("0.00")), payment_by_folio.get(fid, Decimal("0.00"))) for fid in service_charge_by_folio), Decimal("0.00")))
     settlement_receivable = money(sum((e.amount for e in entry_rows if e.account == "Guest Receivables" and e.direction == "credit" and tx_types.get(e.transaction_id) == "folio_payment"), Decimal("0.00")) - sum((e.amount for e in entry_rows if e.account == "Guest Receivables" and e.direction == "debit" and tx_types.get(e.transaction_id) == "payment_refund"), Decimal("0.00")))
-    net_cash = money(payment_cash - refund_cash); charge_difference = money(ledger_revenue - charge_receivable); settlement_difference = money(net_cash - settlement_receivable)
+    net_cash = money(payment_cash - refund_cash - service_charge_collected); hotel_settlement_receivable = money(settlement_receivable - service_charge_collected); charge_difference = money(ledger_revenue - charge_receivable); settlement_difference = money(net_cash - hotel_settlement_receivable)
     status = "balanced" if debits == credits and charge_difference == Decimal("0.00") and settlement_difference == Decimal("0.00") else "review"
-    return {"business_date": target_date, "ledger": {"transactions": len(transactions), "debits": debits, "credits": credits, "balanced": debits == credits, "revenue_credits": ledger_revenue, "cash_debits": payment_cash, "cash_credits": refund_cash, "net_cash": net_cash}, "authority": {"folio_charges": charge_receivable, "payments": payment_cash, "refunds": refund_cash, "net_cash": net_cash}, "reconciliation": {"charge_difference": charge_difference, "settlement_difference": settlement_difference, "cash_difference": settlement_difference, "status": status}}
+    return {"business_date": target_date, "ledger": {"transactions": len(transactions), "debits": debits, "credits": credits, "balanced": debits == credits, "revenue_credits": ledger_revenue, "cash_debits": payment_cash, "cash_credits": refund_cash, "net_cash": net_cash, "service_charge_collected": service_charge_collected}, "authority": {"folio_charges": charge_receivable, "payments": payment_cash, "refunds": refund_cash, "net_cash": net_cash, "service_charge_collected": service_charge_collected}, "reconciliation": {"charge_difference": charge_difference, "settlement_difference": settlement_difference, "cash_difference": settlement_difference, "service_charge_collected": service_charge_collected, "status": status}}
 
 
 @router.get("/night-audit/reconciliation")
@@ -264,7 +273,11 @@ def create_deposit_with_ledger(stay_id: int, payload: dict, idempotency_key: str
             return {"id": existing_deposit.id, "stay_id": stay.id, "transaction_type": existing_deposit.transaction_type, "amount": existing_deposit.amount, "balance": stay_deposit_ledger_balance(db, stay.id), "replayed": True}
     folio = db.scalar(select(Folio).where(Folio.reservation_id == stay.reservation_id)); reservation = db.get(Reservation, stay.reservation_id); current = stay_deposit_ledger_balance(db, stay.id); signed = amount if transaction_type in {"received", "adjusted"} else -amount; new_balance = money(current + signed)
     if new_balance < 0: raise HTTPException(status_code=409, detail="Deposit transaction exceeds available deposit balance")
-    if transaction_type == "received" and stay.deposit_required > 0 and new_balance > stay.deposit_required: raise HTTPException(status_code=409, detail="Deposit received exceeds required deposit")
+    required_deposit = money(stay.agreed_rate * max(0, (stay.check_out - stay.check_in).days))
+    if required_deposit > 0 and new_balance > required_deposit:
+        raise HTTPException(status_code=409, detail=f"Deposit received exceeds the stay's current required deposit of {required_deposit}")
+    if transaction_type == "received" and stay.deposit_required != required_deposit:
+        stay.deposit_required = required_deposit
     deposit = DepositTransaction(stay_id=stay.id, folio_id=folio.id if folio else None, transaction_type=transaction_type, amount=amount, payment_method=payload.get("payment_method"), reference=key or payload.get("reference"), notes=payload.get("notes"), created_by=user.id); db.add(deposit); db.flush()
     method = payload.get("payment_method") or "other"; cash_account = {"cash": "Cash", "card": "Card Clearing", "bank_transfer": "Bank", "other": "Other Payment"}.get(method, "Other Payment"); financial_key = key or f"deposit:{deposit.id}"
     try:
