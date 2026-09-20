@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 import './frontdesk.css';
+import './product-redesign.css';
 import BillingView from './BillingView';
 import HousekeepingView from './HousekeepingView';
 import ReportsView from './ReportsView';
