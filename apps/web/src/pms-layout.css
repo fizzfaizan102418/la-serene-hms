@@ -52,3 +52,16 @@
  .pms-topbar-actions{gap:8px}.pms-breadcrumb span,.pms-breadcrumb b{display:none}
  .pms-nav{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
+
+/* Shared enterprise PMS language for existing React views */
+.pms-content .page-heading,.pms-content .welcome{background:#fff;border:1px solid #e4e8ee;border-radius:10px;padding:20px 22px;margin-bottom:18px}
+.pms-content .page-heading h2,.pms-content .welcome h2{font-size:22px;letter-spacing:-.02em;margin:3px 0 0}
+.pms-content .panel{border:1px solid #e4e8ee;border-radius:10px;box-shadow:0 1px 2px rgba(20,30,45,.03);background:#fff}
+.pms-content .panel-head{padding:16px 18px;border-bottom:1px solid #edf0f4}
+.pms-content .panel-head h2{font-size:15px;letter-spacing:-.01em}
+.pms-content button.primary-button,.pms-content button.secondary-button{border-radius:7px;font-weight:700}
+.pms-content input,.pms-content select,.pms-content textarea{border-color:#d9dfe7;border-radius:7px;background:#fff;box-shadow:none}
+.pms-content table{border-collapse:separate;border-spacing:0}
+.pms-content th{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#7a8493;background:#f7f8fa}
+.pms-content td{font-size:12px;border-color:#edf0f4}
+.pms-content .notice,.pms-content .error{border-radius:8px}
