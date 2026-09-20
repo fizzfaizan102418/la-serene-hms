@@ -2,13 +2,14 @@ from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import APIRouter, Depends, HTTPException, Header
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .auth import require_roles
 from .db import get_db
 from .financial_models import PaymentRefund
-from .financial_ops import router as financial_ops_router
+from .financial_ops import router as financial_ops_router, create_deposit_with_ledger
 from .deposit_transfer import router as deposit_transfer_router
 from .front_desk import router as front_desk_router
 from .housekeeping import router as housekeeping_router
@@ -62,7 +63,15 @@ def build_folio_response(db: Session, folio: Folio) -> FolioResponse:
     food_net = money(sum((item_line_total(i) for i in items if is_food_item(i)), Decimal("0.00")))
     food_service_charge = money(food_net * FOOD_SERVICE_CHARGE_RATE)
     ledger = folio_ledger_summary(db, folio.id)
-    return FolioResponse(id=folio.id, reservation_id=folio.reservation_id, status=folio.status, items=[FolioItemResponse(id=i.id, description=i.description, category=i.category, quantity=i.quantity, unit_price=i.unit_price, discount=i.discount, line_total=item_line_total(i)) for i in items], payments=[PaymentResponse.model_validate(p) for p in payments], subtotal=subtotal, discounts=discounts, food_service_charge=food_service_charge, total=ledger.total, paid=ledger.paid, balance=ledger.balance)
+    active_stays = db.scalars(select(Stay).where(Stay.reservation_id == folio.reservation_id, Stay.status == "checked_in").order_by(Stay.id)).all()
+    active_stay = active_stays[0] if len(active_stays) == 1 else None
+    deposit_balance = Decimal("0.00")
+    deposit_required = Decimal("0.00")
+    if active_stay is not None:
+        from .financial_ops import stay_deposit_ledger_balance
+        deposit_balance = stay_deposit_ledger_balance(db, active_stay.id)
+        deposit_required = money(active_stay.agreed_rate * max(0, (active_stay.check_out - active_stay.check_in).days))
+    return FolioResponse(id=folio.id, reservation_id=folio.reservation_id, status=folio.status, active_stay_id=active_stay.id if active_stay else None, deposit_balance=deposit_balance, deposit_required=deposit_required, items=[FolioItemResponse(id=i.id, description=i.description, category=i.category, quantity=i.quantity, unit_price=i.unit_price, discount=i.discount, line_total=item_line_total(i)) for i in items], payments=[PaymentResponse.model_validate(p) for p in payments], subtotal=subtotal, discounts=discounts, food_service_charge=food_service_charge, total=ledger.total, paid=ledger.paid, balance=ledger.balance)
 
 def audit(db: Session, user_id: int, action: str, entity_type: str, entity_id: int, details: dict):
     import json
@@ -180,6 +189,23 @@ def remove_folio_item(folio_id: int, item_id: int, db: Session = Depends(get_db)
     if has_posted_folio_item_transaction(db, item.id): raise HTTPException(status_code=409, detail="Posted folio charges are immutable; use a ledger adjustment or reversal")
     if item.stay_id is not None: raise HTTPException(status_code=409, detail="Stay-generated room charges cannot be manually deleted")
     audit(db, user.id, "delete", "folio_item", item.id, {"folio_id": folio_id, "description": item.description}); db.delete(item); db.commit()
+
+class FolioDepositCreate(BaseModel):
+    amount: Decimal = Field(gt=0)
+    method: str = Field(pattern="^(cash|card|bank_transfer|other)$")
+    reference: str | None = Field(default=None, max_length=100)
+
+
+@router.post("/folios/{folio_id}/deposits")
+def add_folio_deposit(folio_id: int, payload: FolioDepositCreate, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "reception"))):
+    folio = db.get(Folio, folio_id)
+    if not folio: raise HTTPException(status_code=404, detail="Folio not found")
+    if folio.status != "open": raise HTTPException(status_code=409, detail="Folio is already closed")
+    stays = db.scalars(select(Stay).where(Stay.reservation_id == folio.reservation_id, Stay.status == "checked_in").order_by(Stay.id)).all()
+    if not stays: raise HTTPException(status_code=409, detail="No active in-house stay is available for a guest deposit")
+    if len(stays) > 1: raise HTTPException(status_code=409, detail="Select the specific stay when a reservation has multiple active stays")
+    return create_deposit_with_ledger(stays[0].id, {"transaction_type": "received", "amount": payload.amount, "payment_method": payload.method, "reference": payload.reference, "notes": "Folio advance / guest deposit"}, None, db, user)
+
 
 @router.post("/folios/{folio_id}/payments", response_model=PaymentResponse, status_code=201)
 def add_payment(folio_id: int, payload: PaymentCreate, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"), db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "reception"))):
