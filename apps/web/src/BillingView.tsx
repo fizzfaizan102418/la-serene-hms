@@ -241,8 +241,25 @@ export default function BillingView({ userRole, summaries, onRefresh, api }: Pro
 
   async function addPayment(event: React.FormEvent) {
     event.preventDefault();
-    try { const id = await ensureSelected(); await api<Payment>(`/api/folios/${id}/payments`, { method: 'POST', body: JSON.stringify({ amount: Number(amount), method, reference: reference || null }) }); await loadFolio(id); setAmount(''); setReference(''); setMessage('Payment recorded.'); await onRefresh(); }
-    catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to record payment'); }
+    try {
+      const id = await ensureSelected();
+      const received = Number(amount);
+      if (!Number.isFinite(received) || received <= 0) throw new Error('Enter a valid amount');
+      const currentDue = Math.max(0, Number(folio?.balance || 0));
+      const paymentAmount = Math.min(received, currentDue);
+      const advanceAmount = Math.max(0, received - paymentAmount);
+      if (paymentAmount > 0) {
+        await api<Payment>(`/api/folios/${id}/payments`, { method: 'POST', body: JSON.stringify({ amount: paymentAmount, method, reference: reference || null }) });
+      }
+      if (advanceAmount > 0) {
+        if (!folio?.active_stay_id) throw new Error('This stay has no active in-house stay for an advance');
+        await api(`/api/folios/${id}/deposits`, { method: 'POST', body: JSON.stringify({ amount: advanceAmount, method, reference: reference || null }) });
+      }
+      await loadFolio(id);
+      setAmount(''); setReference('');
+      setMessage(advanceAmount > 0 ? `Received PKR ${money(received)}. PKR ${money(paymentAmount)} covered the current balance and PKR ${money(advanceAmount)} was held for the stay.` : 'Money received.');
+      await onRefresh();
+    } catch (err) { setMessage(err instanceof Error ? err.message : 'Unable to receive money'); }
   }
 
   async function closeFolio() {
@@ -363,23 +380,33 @@ table{width:100%;border-collapse:collapse}th{padding:8px 7px;background:#F8FAFC;
 
         {isAdmin && editingItem && folio?.status === 'open' && <form className="panel form-panel" onSubmit={saveEdit}><div className="panel-head"><div><h2>Edit charge</h2><span>Creates an audited reversal and replacement</span></div><button type="button" className="secondary-button small-button" onClick={() => setEditingItem(null)}>Cancel</button></div><label>Description<input value={editDescription} onChange={e => setEditDescription(e.target.value)} required /></label><label>Category<select value={editCategory} onChange={e => setEditCategory(e.target.value)}><option value="service">Service</option><option value="food">Food & beverage</option><option value="room">Room</option><option value="adjustment">Adjustment</option><option value="other">Other</option></select></label><div className="two-col"><label>Quantity<input type="number" min="0.01" step="0.01" value={editQuantity} onChange={e => setEditQuantity(e.target.value)} required /></label><label>Unit price<input type="number" min="0" step="0.01" value={editUnitPrice} onChange={e => setEditUnitPrice(e.target.value)} required /></label></div><label>Discount<input type="number" min="0" step="0.01" value={editDiscount} onChange={e => setEditDiscount(e.target.value)} /></label><label>Reason<input value={editReason} onChange={e => setEditReason(e.target.value)} required /></label><p className="muted">The original posted charge is never overwritten. Its financial transactions are reversed atomically, then the corrected charge is posted.</p><button className="primary-button" disabled={busyItemId === editingItem.id || !editUnitPrice}>{busyItemId === editingItem.id ? 'Saving…' : 'Save correction'}</button></form>}
         {canOperate && folio?.status === 'open' && !editingItem && <form className="panel form-panel" onSubmit={addCharge}><div className="panel-head"><h2>Add charge</h2><span>Charges post immediately</span></div><label>Description<input value={description} onChange={e => setDescription(e.target.value)} required /></label><label>Category<select value={category} onChange={e => setCategory(e.target.value)}><option value="service">Service</option><option value="food">Food & beverage</option><option value="room">Room</option><option value="adjustment">Adjustment</option><option value="other">Other</option></select></label><div className="two-col"><label>Quantity<input type="number" min="0.01" step="0.01" value={quantity} onChange={e => setQuantity(e.target.value)} required /></label><label>Unit price<input type="number" min="0" step="0.01" value={unitPrice} onChange={e => setUnitPrice(e.target.value)} required /></label></div><label>Discount<input type="number" min="0" step="0.01" value={discount} onChange={e => setDiscount(e.target.value)} /></label><button className="primary-button" disabled={!selected || !unitPrice}>Post charge</button></form>}
-        {canOperate && folio?.status === 'open' && <form className="panel form-panel" onSubmit={addDeposit}>
-          <div className="panel-head"><div><p className="muted">Receive money</p><h2>Receive advance</h2></div><span>Money for the guest's stay</span></div>
-          <p className="muted">Use this when the guest pays ahead. The money is held for the stay and should not be collected again when the next room charge is posted.</p>
-          <label>Amount received<input type="number" min="0.01" step="0.01" value={depositAmount} onChange={e => setDepositAmount(e.target.value)} required /></label>
-          <label>Method<select value={depositMethod} onChange={e => setDepositMethod(e.target.value)}><option value="cash">Cash</option><option value="card">Card</option><option value="bank_transfer">Bank transfer</option><option value="other">Other</option></select></label>
-          <label>Reference<input value={depositReference} onChange={e => setDepositReference(e.target.value)} /></label>
-          <div className="billing-stay-funding"><div><span>Advance held</span><strong>PKR {money(folio?.deposit_balance || 0)}</strong></div><div><span>Stay target</span><strong>PKR {money(folio?.deposit_required || 0)}</strong></div><div><span>Still due</span><strong>PKR {money(folio?.balance || 0)}</strong></div></div>
-          <button className="primary-button" disabled={!selected || !depositAmount || !folio?.active_stay_id}>Receive advance</button>
+        {canOperate && folio?.status === 'open' && <form className="panel form-panel" onSubmit={addPayment}>
+          <div className="panel-head"><div><p className="muted">Guest payment</p><h2>Receive money</h2></div><span>Simple front-desk payment</span></div>
+          <div className="billing-simple-summary">
+            <div><span>Stay total</span><strong>PKR {money(folio.deposit_required || folio.total)}</strong></div>
+            <div><span>Received</span><strong>PKR {money(Number(folio.paid || 0) + Number(folio.deposit_balance || 0))}</strong></div>
+            <div className="balance"><span>Still to collect</span><strong>PKR {money(folio.balance)}</strong></div>
+          </div>
+          <label>Amount received<input type="number" min="0.01" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="Enter amount" required /></label>
+          <label>Method<select value={method} onChange={e => setMethod(e.target.value)}><option value="cash">Cash</option><option value="card">Card</option><option value="bank_transfer">Bank transfer</option><option value="other">Other</option></select></label>
+          <label>Reference <span className="muted">(optional)</span><input value={reference} onChange={e => setReference(e.target.value)} /></label>
+          <button className="primary-button" disabled={!selected || !amount}>Receive Money</button>
+          <p className="billing-help-text">If you pay more than the current balance, the extra amount is kept as an advance for the stay.</p>
         </form>}
 
-        {canOperate && folio?.status === 'open' && <form className="panel form-panel" onSubmit={addPayment}>
-          <div className="panel-head"><div><p className="muted">Receive money</p><h2>Collect remaining balance</h2></div><span>Collect what is still due</span></div>
-          <label>Amount received<input type="number" min="0.01" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} required /></label>
-          <label>Method<select value={method} onChange={e => setMethod(e.target.value)}><option value="cash">Cash</option><option value="card">Card</option><option value="bank_transfer">Bank transfer</option><option value="other">Other</option></select></label>
-          <label>Reference<input value={reference} onChange={e => setReference(e.target.value)} /></label>
-          <button className="primary-button" disabled={!selected || !amount}>Collect remaining balance</button>
-        </form>}
+        {isAdmin && folio?.status === 'open' && !editingItem && <details className="panel form-panel billing-advanced">
+          <summary>Advanced billing</summary>
+          <div className="billing-advanced-content">
+            <form onSubmit={addCharge}>
+              <div className="panel-head"><div><h3>Add other charge</h3><span>For admin use</span></div></div>
+              <label>Description<input value={description} onChange={e => setDescription(e.target.value)} required /></label>
+              <label>Category<select value={category} onChange={e => setCategory(e.target.value)}><option value="service">Service</option><option value="food">Food & beverage</option><option value="room">Room</option><option value="adjustment">Adjustment</option><option value="other">Other</option></select></label>
+              <div className="two-col"><label>Quantity<input type="number" min="0.01" step="0.01" value={quantity} onChange={e => setQuantity(e.target.value)} required /></label><label>Unit price<input type="number" min="0" step="0.01" value={unitPrice} onChange={e => setUnitPrice(e.target.value)} required /></label></div>
+              <label>Discount<input type="number" min="0" step="0.01" value={discount} onChange={e => setDiscount(e.target.value)} /></label>
+              <button className="secondary-button" disabled={!selected || !unitPrice}>Post charge</button>
+            </form>
+          </div>
+        </details>}
       </div>
     </div>
   </section>;
