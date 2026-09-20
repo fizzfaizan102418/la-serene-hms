@@ -406,19 +406,7 @@ table{width:100%;border-collapse:collapse}th{padding:8px 7px;background:#F8FAFC;
             </form>
           </div>
         </details>}
-        {isAdmin && folio?.status === 'open' && !editingItem && <details className="panel form-panel billing-advanced">
-          <summary>Advanced billing</summary>
-          <div className="billing-advanced-content">
-            <form onSubmit={addCharge}>
-              <div className="panel-head"><div><h3>Add other charge</h3><span>For admin use</span></div></div>
-              <label>Description<input value={description} onChange={e => setDescription(e.target.value)} required /></label>
-              <label>Category<select value={category} onChange={e => setCategory(e.target.value)}><option value="service">Service</option><option value="food">Food & beverage</option><option value="room">Room</option><option value="adjustment">Adjustment</option><option value="other">Other</option></select></label>
-              <div className="two-col"><label>Quantity<input type="number" min="0.01" step="0.01" value={quantity} onChange={e => setQuantity(e.target.value)} required /></label><label>Unit price<input type="number" min="0" step="0.01" value={unitPrice} onChange={e => setUnitPrice(e.target.value)} required /></label></div>
-              <label>Discount<input type="number" min="0" step="0.01" value={discount} onChange={e => setDiscount(e.target.value)} /></label>
-              <button className="secondary-button" disabled={!selected || !unitPrice}>Post charge</button>
-            </form>
-          </div>
-        </details>}
+}
       </div>
     </div>
   </section>;
