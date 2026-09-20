@@ -172,6 +172,9 @@ class FolioResponse(BaseModel):
     id: int
     reservation_id: int
     status: str
+    active_stay_id: int | None = None
+    deposit_balance: Decimal = Decimal("0.00")
+    deposit_required: Decimal = Decimal("0.00")
     items: list[FolioItemResponse]
     payments: list[PaymentResponse]
     subtotal: Decimal
