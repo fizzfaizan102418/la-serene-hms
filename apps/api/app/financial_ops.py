@@ -229,10 +229,13 @@ def ledger_reconciliation(business_date: date | None = None, db: Session = Depen
         if entry.account == "Guest Receivables" and entry.direction == "debit" and tx_types.get(entry.transaction_id) == "service_charge" and entry.folio_id is not None:
             service_charge_by_folio[entry.folio_id] = money(service_charge_by_folio.get(entry.folio_id, Decimal("0.00")) + entry.amount)
     payment_by_folio: dict[int, Decimal] = {}
+    refund_by_folio: dict[int, Decimal] = {}
     for entry in entry_rows:
         if entry.account == "Guest Receivables" and entry.direction == "credit" and tx_types.get(entry.transaction_id) == "folio_payment" and entry.folio_id is not None:
             payment_by_folio[entry.folio_id] = money(payment_by_folio.get(entry.folio_id, Decimal("0.00")) + entry.amount)
-    service_charge_collected = money(sum((min(service_charge_by_folio.get(fid, Decimal("0.00")), payment_by_folio.get(fid, Decimal("0.00"))) for fid in service_charge_by_folio), Decimal("0.00")))
+        if entry.account == "Guest Receivables" and entry.direction == "debit" and tx_types.get(entry.transaction_id) == "payment_refund" and entry.folio_id is not None:
+            refund_by_folio[entry.folio_id] = money(refund_by_folio.get(entry.folio_id, Decimal("0.00")) + entry.amount)
+    service_charge_collected = money(sum((min(service_charge_by_folio.get(fid, Decimal("0.00")), max(Decimal("0.00"), payment_by_folio.get(fid, Decimal("0.00")) - refund_by_folio.get(fid, Decimal("0.00")))) for fid in service_charge_by_folio), Decimal("0.00")))
     settlement_receivable = money(sum((e.amount for e in entry_rows if e.account == "Guest Receivables" and e.direction == "credit" and tx_types.get(e.transaction_id) == "folio_payment"), Decimal("0.00")) - sum((e.amount for e in entry_rows if e.account == "Guest Receivables" and e.direction == "debit" and tx_types.get(e.transaction_id) == "payment_refund"), Decimal("0.00")))
     net_cash = money(payment_cash - refund_cash - service_charge_collected); hotel_settlement_receivable = money(settlement_receivable - service_charge_collected); charge_difference = money(ledger_revenue - charge_receivable); settlement_difference = money(net_cash - hotel_settlement_receivable)
     status = "balanced" if debits == credits and charge_difference == Decimal("0.00") and settlement_difference == Decimal("0.00") else "review"
