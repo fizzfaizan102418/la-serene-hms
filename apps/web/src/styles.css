@@ -1963,3 +1963,8 @@ input[type="number"]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0
 .billing-stay-funding strong{font-size:13px;color:var(--ls-ink);}
 .billing-receive-panel{border-top:3px solid var(--ls-gold);}
 @media(max-width:760px){.billing-stay-funding{grid-template-columns:1fr;}}
+
+
+/* Simple front-desk billing language */
+.billing-help-text{margin:10px 0 0;padding:9px 10px;border-radius:9px;background:var(--ls-surface-muted);color:var(--ls-muted);font-size:11px;line-height:1.45;}
+.billing-receive-panel h2{letter-spacing:-.02em;}
