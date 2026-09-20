@@ -379,7 +379,6 @@ table{width:100%;border-collapse:collapse}th{padding:8px 7px;background:#F8FAFC;
         </div>}
 
         {isAdmin && editingItem && folio?.status === 'open' && <form className="panel form-panel" onSubmit={saveEdit}><div className="panel-head"><div><h2>Edit charge</h2><span>Creates an audited reversal and replacement</span></div><button type="button" className="secondary-button small-button" onClick={() => setEditingItem(null)}>Cancel</button></div><label>Description<input value={editDescription} onChange={e => setEditDescription(e.target.value)} required /></label><label>Category<select value={editCategory} onChange={e => setEditCategory(e.target.value)}><option value="service">Service</option><option value="food">Food & beverage</option><option value="room">Room</option><option value="adjustment">Adjustment</option><option value="other">Other</option></select></label><div className="two-col"><label>Quantity<input type="number" min="0.01" step="0.01" value={editQuantity} onChange={e => setEditQuantity(e.target.value)} required /></label><label>Unit price<input type="number" min="0" step="0.01" value={editUnitPrice} onChange={e => setEditUnitPrice(e.target.value)} required /></label></div><label>Discount<input type="number" min="0" step="0.01" value={editDiscount} onChange={e => setEditDiscount(e.target.value)} /></label><label>Reason<input value={editReason} onChange={e => setEditReason(e.target.value)} required /></label><p className="muted">The original posted charge is never overwritten. Its financial transactions are reversed atomically, then the corrected charge is posted.</p><button className="primary-button" disabled={busyItemId === editingItem.id || !editUnitPrice}>{busyItemId === editingItem.id ? 'Saving…' : 'Save correction'}</button></form>}
-        {canOperate && folio?.status === 'open' && !editingItem && <form className="panel form-panel" onSubmit={addCharge}><div className="panel-head"><h2>Add charge</h2><span>Charges post immediately</span></div><label>Description<input value={description} onChange={e => setDescription(e.target.value)} required /></label><label>Category<select value={category} onChange={e => setCategory(e.target.value)}><option value="service">Service</option><option value="food">Food & beverage</option><option value="room">Room</option><option value="adjustment">Adjustment</option><option value="other">Other</option></select></label><div className="two-col"><label>Quantity<input type="number" min="0.01" step="0.01" value={quantity} onChange={e => setQuantity(e.target.value)} required /></label><label>Unit price<input type="number" min="0" step="0.01" value={unitPrice} onChange={e => setUnitPrice(e.target.value)} required /></label></div><label>Discount<input type="number" min="0" step="0.01" value={discount} onChange={e => setDiscount(e.target.value)} /></label><button className="primary-button" disabled={!selected || !unitPrice}>Post charge</button></form>}
         {canOperate && folio?.status === 'open' && <form className="panel form-panel" onSubmit={addPayment}>
           <div className="panel-head"><div><p className="muted">Guest payment</p><h2>Receive money</h2></div><span>Simple front-desk payment</span></div>
           <div className="billing-simple-summary">
@@ -394,6 +393,19 @@ table{width:100%;border-collapse:collapse}th{padding:8px 7px;background:#F8FAFC;
           <p className="billing-help-text">If you pay more than the current balance, the extra amount is kept as an advance for the stay.</p>
         </form>}
 
+        {isAdmin && folio?.status === 'open' && !editingItem && <details className="panel form-panel billing-advanced">
+          <summary>Advanced billing</summary>
+          <div className="billing-advanced-content">
+            <form onSubmit={addCharge}>
+              <div className="panel-head"><div><h3>Add other charge</h3><span>For admin use</span></div></div>
+              <label>Description<input value={description} onChange={e => setDescription(e.target.value)} required /></label>
+              <label>Category<select value={category} onChange={e => setCategory(e.target.value)}><option value="service">Service</option><option value="food">Food & beverage</option><option value="room">Room</option><option value="adjustment">Adjustment</option><option value="other">Other</option></select></label>
+              <div className="two-col"><label>Quantity<input type="number" min="0.01" step="0.01" value={quantity} onChange={e => setQuantity(e.target.value)} required /></label><label>Unit price<input type="number" min="0" step="0.01" value={unitPrice} onChange={e => setUnitPrice(e.target.value)} required /></label></div>
+              <label>Discount<input type="number" min="0" step="0.01" value={discount} onChange={e => setDiscount(e.target.value)} /></label>
+              <button className="secondary-button" disabled={!selected || !unitPrice}>Post charge</button>
+            </form>
+          </div>
+        </details>}
         {isAdmin && folio?.status === 'open' && !editingItem && <details className="panel form-panel billing-advanced">
           <summary>Advanced billing</summary>
           <div className="billing-advanced-content">
