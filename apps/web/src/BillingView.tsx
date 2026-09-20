@@ -406,7 +406,6 @@ table{width:100%;border-collapse:collapse}th{padding:8px 7px;background:#F8FAFC;
             </form>
           </div>
         </details>}
-}
       </div>
     </div>
   </section>;
