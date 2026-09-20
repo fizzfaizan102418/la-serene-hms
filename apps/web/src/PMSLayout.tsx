@@ -2,7 +2,7 @@ import React from 'react';
 
 export type PMSView = 'Dashboard' | 'Rooms' | 'Guests' | 'Reservations' | 'Front Desk' | 'Housekeeping' | 'Reports' | 'Billing' | 'Backup';
 
-type PMSLayoutProps = {
+type Props = {
   user: { username: string; role: string };
   view: PMSView;
   modules: PMSView[];
@@ -12,72 +12,50 @@ type PMSLayoutProps = {
   children: React.ReactNode;
 };
 
-const moduleMeta: Record<PMSView, { label: string; short: string; group: 'Operations' | 'Finance & control' }> = {
-  Dashboard: { label: 'Dashboard', short: 'D', group: 'Operations' },
-  Rooms: { label: 'Rooms', short: 'R', group: 'Operations' },
-  Guests: { label: 'Guests', short: 'G', group: 'Operations' },
-  Reservations: { label: 'Reservations', short: 'RS', group: 'Operations' },
-  'Front Desk': { label: 'Front Desk', short: 'FD', group: 'Operations' },
-  Housekeeping: { label: 'Housekeeping', short: 'HK', group: 'Operations' },
-  Reports: { label: 'Reports', short: 'RP', group: 'Finance & control' },
-  Billing: { label: 'Billing', short: 'BL', group: 'Finance & control' },
-  Backup: { label: 'Backup', short: 'BK', group: 'Finance & control' },
+const meta: Record<PMSView, { label: string; group: 'Daily work' | 'Management' }> = {
+  Dashboard: { label: 'Home', group: 'Daily work' },
+  Rooms: { label: 'Rooms', group: 'Daily work' },
+  Guests: { label: 'Guests', group: 'Daily work' },
+  Reservations: { label: 'Reservations', group: 'Daily work' },
+  'Front Desk': { label: 'Front Desk', group: 'Daily work' },
+  Housekeeping: { label: 'Housekeeping', group: 'Daily work' },
+  Reports: { label: 'Reports', group: 'Management' },
+  Billing: { label: 'Billing', group: 'Management' },
+  Backup: { label: 'Backup', group: 'Management' },
 };
 
-export default function PMSLayout({ user, view, modules, onViewChange, onLogout, error, children }: PMSLayoutProps) {
-  const operations = modules.filter(item => moduleMeta[item].group === 'Operations');
-  const controls = modules.filter(item => moduleMeta[item].group === 'Finance & control');
+const icon: Record<PMSView, string> = {
+  Dashboard: '⌂', Rooms: '▦', Guests: '◉', Reservations: '▤', 'Front Desk': '▣',
+  Housekeeping: '✓', Reports: '▥', Billing: '₨', Backup: '↥',
+};
 
-  const nav = (items: PMSView[]) => items.map(item => (
-    <button
-      type="button"
-      key={item}
-      className={`pms-nav-item ${view === item ? 'active' : ''}`}
-      onClick={() => onViewChange(item)}
-      aria-current={view === item ? 'page' : undefined}
-    >
-      <span className="pms-nav-icon" aria-hidden="true">{moduleMeta[item].short}</span>
-      <span>{moduleMeta[item].label}</span>
+export default function PMSLayout({ user, view, modules, onViewChange, onLogout, error, children }: Props) {
+  const daily = modules.filter(v => meta[v].group === 'Daily work');
+  const management = modules.filter(v => meta[v].group === 'Management');
+
+  const renderNav = (items: PMSView[]) => items.map(item => (
+    <button key={item} type="button" className={`simple-nav-item ${view === item ? 'active' : ''}`} onClick={() => onViewChange(item)} aria-current={view === item ? 'page' : undefined}>
+      <span className="simple-nav-icon" aria-hidden="true">{icon[item]}</span><span>{meta[item].label}</span>
     </button>
   ));
 
-  return (
-    <div className="pms-app">
-      <aside className="pms-sidebar">
-        <div className="pms-brand">
-          <div className="pms-brand-mark">LS</div>
-          <div><strong>LA SERENE</strong><span>Hotel Management</span></div>
-        </div>
-        <div className="pms-hotel-context">
-          <span>PROPERTY</span>
-          <strong>La Serene Hotel & Resort</strong>
-          <small>Operations workspace</small>
-        </div>
-        <nav className="pms-nav" aria-label="Hotel modules">
-          <div className="pms-nav-section">Operations</div>
-          {nav(operations)}
-          {controls.length > 0 && <div className="pms-nav-section">Finance & control</div>}
-          {nav(controls)}
-        </nav>
-        <div className="pms-sidebar-footer">
-          <span className="pms-live-dot" /> System online
-        </div>
-      </aside>
-
-      <div className="pms-main">
-        <header className="pms-topbar">
-          <div className="pms-breadcrumb"><span>La Serene</span><b>/</b><strong>{moduleMeta[view].label}</strong></div>
-          <div className="pms-topbar-actions">
-            <div className="pms-user">
-              <span className="pms-avatar">{user.username.slice(0, 1).toUpperCase()}</span>
-              <div><strong>{user.username}</strong><small>{user.role}</small></div>
-            </div>
-            <button type="button" className="pms-logout" onClick={onLogout}>Log out</button>
-          </div>
-        </header>
-        {error && <div className="pms-global-error" role="alert">{error}</div>}
-        <main className="pms-content">{children}</main>
-      </div>
+  return <div className="simple-pms">
+    <aside className="simple-sidebar">
+      <div className="simple-brand"><div className="simple-brand-mark">LS</div><div><strong>LA SERENE</strong><small>Hotel Management</small></div></div>
+      <div className="simple-property"><small>PROPERTY</small><strong>La Serene Hotel & Resort</strong><span>Business date managed in Home</span></div>
+      <nav aria-label="Hotel modules">
+        <div className="simple-nav-label">DAILY WORK</div>{renderNav(daily)}
+        {management.length > 0 && <><div className="simple-nav-label">MANAGEMENT</div>{renderNav(management)}</>}
+      </nav>
+      <div className="simple-sidebar-bottom"><span className="simple-online-dot" /> System online</div>
+    </aside>
+    <div className="simple-main">
+      <header className="simple-topbar">
+        <div><div className="simple-page-kicker">LA SERENE HOTEL</div><h1>{meta[view].label}</h1></div>
+        <div className="simple-account"><div className="simple-avatar">{user.username.slice(0,1).toUpperCase()}</div><div><strong>{user.username}</strong><small>{user.role}</small></div><button type="button" onClick={onLogout}>Log out</button></div>
+      </header>
+      {error && <div className="simple-error" role="alert">{error}</div>}
+      <main className="simple-content">{children}</main>
     </div>
-  );
+  </div>;
 }
