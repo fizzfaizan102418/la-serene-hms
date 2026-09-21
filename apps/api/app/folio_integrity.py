@@ -22,6 +22,13 @@ def item_line_total(item: FolioItem) -> Decimal:
 
 
 def item_has_active_charge(db: Session, item_id: int) -> bool:
+    """Whether a folio item is an active authoritative charge.
+
+    A folio item with no financial transaction yet is still an active
+    authoritative charge and must be repairable. A posted transaction is active
+    unless it has been reversed. Items whose only posted transactions were
+    reversed are no longer active.
+    """
     transactions = db.scalars(
         select(FinancialTransaction)
         .where(
@@ -30,6 +37,9 @@ def item_has_active_charge(db: Session, item_id: int) -> bool:
         )
         .order_by(FinancialTransaction.id)
     ).all()
+    if not transactions:
+        return True
+
     for transaction in transactions:
         if transaction.status != "posted":
             continue
