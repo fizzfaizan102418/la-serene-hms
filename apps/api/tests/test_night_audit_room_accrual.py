@@ -11,7 +11,7 @@ import app.models  # noqa: F401
 import app.pms_core  # noqa: F401
 from app.financial_authority import folio_ledger_summary
 from app.ledger import post_deposit_received
-from app.models import BusinessDateState, DepositTransaction, FinancialTransaction, Folio, FolioItem, Guest, Reservation, ReservationRoom, Role, Room, RoomType, StayRateSegment, User
+from app.models import BusinessDateState, DepositTransaction, FinancialTransaction, Folio, FolioItem, Guest, LedgerEntry, Reservation, ReservationRoom, Role, Room, RoomType, StayRateSegment, User
 from app.pms_core import Stay
 from app.room_charge_accrual import accrue_room_charges_for_business_date
 from app.front_desk import post_accrued_room_charges
@@ -216,8 +216,16 @@ class NightAuditRoomAccrualTests(unittest.TestCase):
             )
         ).all()
         self.assertEqual(len(deposit_transactions), 2)
+        deposit_transaction_ids = [tx.id for tx in deposit_transactions]
+        cash_entries = self.db.scalars(
+            select(LedgerEntry).where(
+                LedgerEntry.transaction_id.in_(deposit_transaction_ids),
+                LedgerEntry.account == "Cash",
+                LedgerEntry.direction == "debit",
+            )
+        ).all()
         self.assertEqual(
-            sum((Decimal(entry.amount) for tx in deposit_transactions for entry in tx.entries if entry.account == "Cash" and entry.direction == "debit"), Decimal("0.00")),
+            sum((Decimal(entry.amount) for entry in cash_entries), Decimal("0.00")),
             Decimal("20000.00"),
         )
 
