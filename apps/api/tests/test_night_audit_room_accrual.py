@@ -10,11 +10,14 @@ import app.financial_models  # noqa: F401
 import app.models  # noqa: F401
 import app.pms_core  # noqa: F401
 from app.financial_authority import folio_ledger_summary
-from app.models import BusinessDateState, FinancialTransaction, Folio, FolioItem, Guest, Reservation, Role, Room, RoomType, StayRateSegment, User
+from app.models import BusinessDateState, FinancialTransaction, Folio, FolioItem, Guest, LedgerEntry, Reservation, Role, Room, RoomType, StayRateSegment, User
 from app.pms_core import Stay
 from app.room_charge_accrual import accrue_room_charges_for_business_date
 from app.front_desk import post_accrued_room_charges
 from app.financial_ops import ledger_reconciliation
+from app.folio_integrity import expected_active_total
+from app.ledger import post_transaction
+from app.night_audit import build_summary
 
 
 class NightAuditRoomAccrualTests(unittest.TestCase):
@@ -114,6 +117,17 @@ class NightAuditRoomAccrualTests(unittest.TestCase):
         self.assertEqual(repeated, 0)
         self.db.commit()
 
+
+    def test_unposted_authoritative_folio_item_is_detected_as_missing_ledger(self):
+        item = FolioItem(
+            folio_id=1, stay_id=1, description="Room charge",
+            category="room", quantity=1, unit_price=Decimal("10000.00"),
+            discount=Decimal("0.00"),
+        )
+        self.db.add(item)
+        self.db.commit()
+
+        self.assertEqual(expected_active_total(self.db, 1), Decimal("10000.00"))
 
     def test_legacy_folio_charge_uses_staff_service_charge_liability(self):
         from app.ledger import post_folio_charge
