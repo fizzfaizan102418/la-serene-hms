@@ -164,12 +164,16 @@ def create_reservation_workflow(payload: ReservationWorkflowCreate, db: Session 
         if room and payload.check_in <= date.today() < payload.check_out:
             room.status = "reserved"
 
-    # Booking deposits are real cash receipts. Allocate the collected amount
-    # across rooms by each room's share of the total stay value, then post every
-    # allocation to Guest Deposits. This preserves the full receipt even when
-    # rooms have different rates.
+    # Booking deposits are real cash receipts. They may not exceed the
+    # authoritative deposit requirement for the reservation.
     remaining_deposit = money(payload.deposit_received)
-    remaining_value = money(total_estimated)
+    total_required_deposit = money(sum((stay.deposit_required for stay in stays), Decimal("0.00")))
+    if remaining_deposit > total_required_deposit:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Deposit received {remaining_deposit} exceeds required deposit {total_required_deposit}",
+        )
+    remaining_value = total_required_deposit
     for index, stay in enumerate(stays):
         required = money(stay.deposit_required)
         if remaining_deposit <= 0:
