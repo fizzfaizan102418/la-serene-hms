@@ -88,6 +88,30 @@ class NightAuditPreviewTests(unittest.TestCase):
         self.assertEqual(len(preview_room_charges_for_business_date(self.db, business_date=date(2026, 9, 13))), 1)
         self.assertEqual(self.db.scalar(select(FolioItem.id)), None)
 
+    def test_summary_includes_guest_deposit_in_cashier_collections(self):
+        tx = FinancialTransaction(
+            id=3,
+            transaction_no="TEST-3",
+            business_date=date(2026, 9, 13),
+            transaction_type="deposit_received",
+            status="posted",
+            description="guest deposit",
+            created_by=1,
+        )
+        self.db.add(tx)
+        self.db.flush()
+        self.db.add_all([
+            LedgerEntry(transaction_id=3, account="Cash", direction="debit", amount=Decimal("25000.00"), currency="PKR", payment_method="cash"),
+            LedgerEntry(transaction_id=3, account="Guest Deposits", direction="credit", amount=Decimal("25000.00"), currency="PKR", payment_method="cash"),
+        ])
+        self.db.commit()
+
+        summary = build_summary(self.db, date(2026, 9, 13))
+
+        self.assertEqual(summary["revenue"]["gross"], Decimal("0.00"))
+        self.assertEqual(summary["payments"]["cash"], Decimal("25000.00"))
+        self.assertEqual(summary["payments"]["total"], Decimal("25000.00"))
+
     def test_preview_does_not_include_checkout_date_as_room_night(self):
         stay = self.db.get(Stay, 1)
         stay.check_out = date(2026, 9, 13)

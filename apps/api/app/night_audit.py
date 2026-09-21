@@ -123,22 +123,26 @@ def build_summary(db: Session, business_date: date, finance: dict | None = None)
         Decimal("0.00"),
     ))
 
+    # Cashier collections include both folio payments and guest deposits.
+    # Deposits are liabilities, not revenue, but they are real cashier receipts
+    # and must appear in Daily Closing / historical payment totals.
     payment_rows = db.execute(
-        select(Payment.method, func.coalesce(func.sum(Payment.amount), 0))
-        .join(
-            FinancialTransaction,
-            (FinancialTransaction.reference_type == "payment")
-            & (FinancialTransaction.reference_id == Payment.id.cast(String)),
+        select(
+            LedgerEntry.payment_method,
+            func.coalesce(func.sum(LedgerEntry.amount), 0),
         )
+        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
         .where(
             FinancialTransaction.business_date == business_date,
             FinancialTransaction.status == "posted",
-            FinancialTransaction.transaction_type == "folio_payment",
+            FinancialTransaction.transaction_type.in_(("folio_payment", "deposit_received")),
+            LedgerEntry.direction == "debit",
+            LedgerEntry.account.in_(("Cash", "Card Clearing", "Bank", "Other Payment")),
         )
-        .group_by(Payment.method)
+        .group_by(LedgerEntry.payment_method)
     ).all()
     payment_totals: dict[str, Decimal] = {
-        method: money(amount) for method, amount in payment_rows
+        (method or "other"): money(amount) for method, amount in payment_rows
     }
 
     rooms = db.scalars(select(Room)).all()
