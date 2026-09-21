@@ -11,7 +11,7 @@ from .db import get_db
 from .financial_models import PaymentRefund
 from .financial_ops import router as financial_ops_router, create_deposit_with_ledger
 from .deposit_transfer import router as deposit_transfer_router
-from .front_desk import router as front_desk_router
+from .front_desk import post_accrued_room_charges, router as front_desk_router
 from .housekeeping import router as housekeeping_router
 from .financial_authority import folio_ledger_summary, has_posted_folio_item_transaction, post_folio_charge_authoritative
 from .folio_integrity import item_has_active_charge
@@ -115,43 +115,34 @@ def get_receipt(folio_id: int, db: Session = Depends(get_db), _: User = Depends(
 @router.post("/folios/{folio_id}/room-charges", response_model=FolioResponse)
 def add_room_charges(folio_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "reception"))):
     folio = db.get(Folio, folio_id)
-    if not folio: raise HTTPException(status_code=404, detail="Folio not found")
-    if folio.status != "open": raise HTTPException(status_code=409, detail="Folio is already closed")
+    if not folio:
+        raise HTTPException(status_code=404, detail="Folio not found")
+    if folio.status != "open":
+        raise HTTPException(status_code=409, detail="Folio is already closed")
     reservation = db.get(Reservation, folio.reservation_id)
-    if not reservation: raise HTTPException(status_code=404, detail="Reservation not found")
-    stays = db.scalars(select(Stay).where(Stay.reservation_id == reservation.id).order_by(Stay.id)).all()
-    if not stays: raise HTTPException(status_code=409, detail="Reservation has no room-level stays")
-    posted = 0
-    for stay in stays:
-        total_nights = max(0, (stay.check_out - stay.check_in).days)
-        if total_nights <= 0: continue
-        existing_items = db.scalars(select(FolioItem).where(FolioItem.folio_id == folio.id, FolioItem.stay_id == stay.id, FolioItem.category == "room")).all()
-        charged_nights = sum((Decimal(item.quantity) for item in existing_items if item_has_active_charge(db, item.id)), Decimal("0.00"))
-        if charged_nights >= Decimal(total_nights): continue
-        segments = db.scalars(select(StayRateSegment).where(StayRateSegment.stay_id == stay.id).order_by(StayRateSegment.from_date, StayRateSegment.id)).all()
-        if not segments:
-            segments = [type("LegacyRate", (), {"from_date": stay.check_in, "to_date": stay.check_out, "rate": money(stay.agreed_rate), "discount_amount": Decimal("0.00")})()]
-        remaining_to_skip = charged_nights
-        remaining_nights = Decimal(total_nights) - charged_nights
-        room = db.get(Room, stay.room_id)
-        if not room: raise HTTPException(status_code=409, detail=f"Stay {stay.id} references an invalid room")
-        for segment in segments:
-            segment_nights = Decimal(max(0, (segment.to_date - segment.from_date).days))
-            if segment_nights <= 0: continue
-            skip = min(remaining_to_skip, segment_nights)
-            remaining_to_skip -= skip
-            billable = min(segment_nights - skip, remaining_nights)
-            if billable <= 0: continue
-            gross_rate = money(Decimal(segment.rate))
-            discount_total = money(Decimal(segment.discount_amount) * billable)
-            item = FolioItem(folio_id=folio.id, stay_id=stay.id, description=f"Room {room.number} · stay #{stay.id} · {int(billable)} night(s) · {segment.from_date}→{segment.to_date}", category="room", quantity=billable, unit_price=gross_rate, discount=discount_total)
-            db.add(item); db.flush()
-            post_folio_charge_authoritative(db, folio_id=folio.id, reservation_id=reservation.id, item_id=item.id, amount=item_line_total(item), stay_id=stay.id, category=item.category, created_by=user.id, gross_amount=money(gross_rate * billable), discount_amount=discount_total)
-            posted += 1
-            remaining_nights -= billable
-            if remaining_nights <= 0: break
+    if not reservation:
+        raise HTTPException(status_code=404, detail="Reservation not found")
+    posted = post_accrued_room_charges(
+        db,
+        reservation,
+        folio,
+        get_current_business_date(db),
+        user.id,
+    )
     if posted:
-        audit(db, user.id, "add_room_charges", "folio", folio.id, {"reservation_id": reservation.id, "stay_ids": [stay.id for stay in stays], "room_charges_posted": posted}); db.commit(); db.refresh(folio)
+        audit(
+            db,
+            user.id,
+            "add_room_charges",
+            "folio",
+            folio.id,
+            {
+                "reservation_id": reservation.id,
+                "room_charges_posted": posted,
+            },
+        )
+        db.commit()
+        db.refresh(folio)
     return build_folio_response(db, folio)
 
 @router.post("/folios/{folio_id}/items", response_model=FolioItemResponse, status_code=201)
