@@ -65,6 +65,13 @@ def room_stay_ids(db: Session, reservation_id: int) -> list[int]:
 
 def post_accrued_room_charges(db: Session, reservation: Reservation, folio: Folio, business_date: date, user_id: int) -> int:
     """Post room nights elapsed through the end of the active business date."""
+    locked_folio = db.scalar(
+        select(Folio).where(Folio.id == folio.id).with_for_update()
+    )
+    if locked_folio is None:
+        raise HTTPException(status_code=404, detail="Folio not found")
+    folio = locked_folio
+
     posted = 0
     stays = db.scalars(select(Stay).where(Stay.reservation_id == reservation.id).order_by(Stay.id)).all()
     for stay in stays:

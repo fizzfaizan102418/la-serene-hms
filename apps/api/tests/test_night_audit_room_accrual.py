@@ -13,6 +13,7 @@ from app.financial_authority import folio_ledger_summary
 from app.models import BusinessDateState, FinancialTransaction, Folio, FolioItem, Guest, Reservation, Role, Room, RoomType, StayRateSegment, User
 from app.pms_core import Stay
 from app.room_charge_accrual import accrue_room_charges_for_business_date
+from app.front_desk import post_accrued_room_charges
 
 
 class NightAuditRoomAccrualTests(unittest.TestCase):
@@ -69,6 +70,48 @@ class NightAuditRoomAccrualTests(unittest.TestCase):
             )
         ).all()
         self.assertEqual(len(posted_transactions), 1)
+
+    def test_checkout_posting_completes_only_the_remaining_night_for_three_night_stay(self):
+        # 2026-09-13 -> 2026-09-16 is exactly three nights.
+        for business_date in (date(2026, 9, 13), date(2026, 9, 14)):
+            posted = accrue_room_charges_for_business_date(
+                self.db, business_date=business_date, created_by=1
+            )
+            self.assertEqual(posted, 1)
+            self.db.commit()
+
+        reservation = self.db.get(Reservation, 1)
+        folio = self.db.get(Folio, 1)
+        reservation.check_out = date(2026, 9, 16)
+        stay = self.db.get(Stay, 1)
+        stay.check_out = date(2026, 9, 16)
+        segment = self.db.get(StayRateSegment, 1)
+        segment.to_date = date(2026, 9, 16)
+        self.db.commit()
+
+        posted = post_accrued_room_charges(
+            self.db, reservation, folio, date(2026, 9, 15), 1
+        )
+        self.assertEqual(posted, 1)
+        self.db.commit()
+
+        items = self.db.scalars(
+            select(FolioItem).where(
+                FolioItem.folio_id == 1,
+                FolioItem.category == "room",
+            )
+        ).all()
+        self.assertEqual(len(items), 3)
+        self.assertEqual(
+            sum((Decimal(item.quantity) for item in items), Decimal("0.00")),
+            Decimal("3.00"),
+        )
+
+        repeated = post_accrued_room_charges(
+            self.db, reservation, folio, date(2026, 9, 15), 1
+        )
+        self.assertEqual(repeated, 0)
+        self.db.commit()
 
 
 if __name__ == "__main__":
