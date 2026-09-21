@@ -14,6 +14,7 @@ from app.models import BusinessDateState, FinancialTransaction, Folio, FolioItem
 from app.pms_core import Stay
 from app.room_charge_accrual import accrue_room_charges_for_business_date
 from app.front_desk import post_accrued_room_charges
+from app.financial_ops import ledger_reconciliation
 
 
 class NightAuditRoomAccrualTests(unittest.TestCase):
@@ -192,6 +193,10 @@ class NightAuditRoomAccrualTests(unittest.TestCase):
         self.assertEqual(summary["payments"]["net_total"], Decimal("120.00"))
         self.assertEqual(summary["payments"]["cash"], Decimal("120.00"))
         self.assertEqual(summary["payments"]["total"], Decimal("120.00"))
+
+        reconciliation = ledger_reconciliation(date(2026, 9, 13), self.db, self.db.get(User, 1))
+        self.assertEqual(reconciliation["reconciliation"]["status"], "balanced")
+        self.assertEqual(reconciliation["reconciliation"]["cash_difference"], Decimal("0.00"))
 
 
 
