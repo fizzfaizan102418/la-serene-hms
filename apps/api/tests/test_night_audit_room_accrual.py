@@ -85,6 +85,8 @@ class NightAuditRoomAccrualTests(unittest.TestCase):
         reservation.check_out = date(2026, 9, 16)
         stay = self.db.get(Stay, 1)
         stay.check_out = date(2026, 9, 16)
+        segment = self.db.get(StayRateSegment, 1)
+        segment.to_date = date(2026, 9, 16)
         self.db.commit()
 
         posted = post_accrued_room_charges(
