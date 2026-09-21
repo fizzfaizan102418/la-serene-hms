@@ -11,8 +11,10 @@ from sqlalchemy.orm import Session
 
 from .auth import require_roles
 from .db import get_db
-from .models import AuditLog, Folio, Guest, Reservation, ReservationRoom, Room, StayOccupant, StayRateSegment, User
+from .business_date import get_current_business_date
+from .models import AuditLog, Folio, FolioItem, Guest, Reservation, ReservationRoom, Room, StayOccupant, StayRateSegment, User
 from .pms_core import BookingGroup, GroupReservation, Stay
+from .folio_integrity import item_has_active_charge
 
 router = APIRouter(prefix="/api", tags=["reservation-workflows"])
 ACTIVE_STATUSES = ("reserved", "checked_in")
@@ -167,19 +169,51 @@ def update_reservation(reservation_id: int, payload: ReservationUpdate, db: Sess
     if reservation.status not in ACTIVE_STATUSES: raise HTTPException(status_code=409, detail="Only active reservations can be modified")
     check_in = payload.check_in or reservation.check_in; check_out = payload.check_out or reservation.check_out
     if check_out <= check_in: raise HTTPException(status_code=400, detail="Check-out must be after check-in")
-    if reservation.status == "checked_in" and check_in != reservation.check_in: raise HTTPException(status_code=409, detail="Check-in date cannot be changed after arrival")
-    if payload.guest_id is not None and not db.get(Guest, payload.guest_id): raise HTTPException(status_code=400, detail="Guest does not exist")
+    if reservation.status == "checked_in" and check_in != reservation.check_in:
+        raise HTTPException(status_code=409, detail="Check-in date cannot be changed after arrival")
+    if reservation.status == "checked_in":
+        business_date = get_current_business_date(db)
+        if check_out < business_date:
+            raise HTTPException(status_code=409, detail="An in-house reservation cannot be shortened to a past business date")
+        for stay in db.scalars(select(Stay).where(Stay.reservation_id == reservation_id)).all():
+            active_items = db.scalars(
+                select(FolioItem).join(Folio, Folio.id == FolioItem.folio_id).where(
+                    Folio.reservation_id == reservation_id,
+                    FolioItem.stay_id == stay.id,
+                    FolioItem.category == "room",
+                )
+            ).all()
+            charged_total = sum(
+                (Decimal(str(item.quantity)) for item in active_items if item_has_active_charge(db, item.id)),
+                Decimal("0.00"),
+            )
+            requested_nights = Decimal(max(0, (check_out - stay.check_in).days))
+            if charged_total > requested_nights:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Cannot shorten stay {stay.id} below {int(charged_total)} already-posted room night(s)",
+                )
+    if payload.guest_id is not None and not db.get(Guest, payload.guest_id):
+        raise HTTPException(status_code=400, detail="Guest does not exist")
     old = {"check_in": str(reservation.check_in), "check_out": str(reservation.check_out), "guest_id": reservation.guest_id, "notes": reservation.notes}
     current_rooms = reservation_rooms(db, reservation_id)
     locked_rooms = lock_rooms(db, current_rooms)
     conflicts = [locked_rooms[room_id].number for room_id in current_rooms if room_id in locked_rooms and overlaps(db, room_id, check_in, check_out, reservation_id)]
     if conflicts: raise HTTPException(status_code=409, detail=f"Updated dates conflict with room(s): {', '.join(conflicts)}")
+    old_check_out = reservation.check_out
     reservation.check_in = check_in; reservation.check_out = check_out; reservation.notes = payload.notes
     if payload.guest_id is not None: reservation.guest_id = payload.guest_id
     for stay in db.scalars(select(Stay).where(Stay.reservation_id == reservation_id)).all():
         stay.check_in = check_in; stay.check_out = check_out
+        stay.deposit_required = money(stay.agreed_rate * max(0, (check_out - check_in).days))
         if payload.guest_id is not None and stay.guest_id == old["guest_id"]:
             stay.guest_id = reservation.guest_id
+        segments = db.scalars(
+            select(StayRateSegment).where(StayRateSegment.stay_id == stay.id)
+            .order_by(StayRateSegment.from_date, StayRateSegment.id)
+        ).all()
+        if len(segments) == 1 and segments[0].to_date == old_check_out:
+            segments[0].to_date = check_out
         ensure_stay_children(db, stay)
     audit(db, user.id, "update", reservation_id, {"from": old, "to": {"check_in": str(check_in), "check_out": str(check_out), "guest_id": reservation.guest_id, "notes": reservation.notes}})
     db.commit()
@@ -224,6 +258,12 @@ def extend_stay(reservation_id: int, payload: ExtendStay, db: Session = Depends(
     for stay in db.scalars(select(Stay).where(Stay.reservation_id == reservation_id)).all():
         stay.check_out = payload.new_check_out
         stay.deposit_required = money(stay.agreed_rate * (payload.new_check_out - stay.check_in).days)
+        segments = db.scalars(
+            select(StayRateSegment).where(StayRateSegment.stay_id == stay.id)
+            .order_by(StayRateSegment.from_date, StayRateSegment.id)
+        ).all()
+        if len(segments) == 1 and segments[0].to_date == old_checkout:
+            segments[0].to_date = payload.new_check_out
         ensure_stay_children(db, stay)
     audit(db, user.id, "extend", reservation_id, {"from_check_out": str(old_checkout), "to_check_out": str(payload.new_check_out), "room_ids": room_ids})
     db.commit()
