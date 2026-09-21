@@ -12,9 +12,10 @@ from sqlalchemy.orm import Session
 from .auth import require_roles
 from .db import get_db
 from .business_date import get_current_business_date
-from .models import AuditLog, Folio, FolioItem, Guest, Reservation, ReservationRoom, Room, StayOccupant, StayRateSegment, User
+from .models import AuditLog, DepositTransaction, Folio, FolioItem, Guest, Reservation, ReservationRoom, Room, StayOccupant, StayRateSegment, User
 from .pms_core import BookingGroup, GroupReservation, Stay
 from .folio_integrity import item_has_active_charge
+from .ledger import post_deposit_received
 
 router = APIRouter(prefix="/api", tags=["reservation-workflows"])
 ACTIVE_STATUSES = ("reserved", "checked_in")
@@ -58,6 +59,7 @@ class ReservationWorkflowCreate(BaseModel):
     notes: str | None = None
     payment_policy: str = Field(default="at_checkout", pattern="^(at_booking|at_checkin|at_checkout|partial)$")
     deposit_received: Decimal = Field(default=Decimal("0"), ge=0)
+    deposit_method: str = Field(default="cash", pattern="^(cash|card|bank_transfer|other)$")
 
 
 def money(value: Decimal) -> Decimal:
@@ -143,10 +145,16 @@ def create_reservation_workflow(payload: ReservationWorkflowCreate, db: Session 
     folio = Folio(reservation_id=reservation.id, status="open")
     db.add(folio); db.flush()
     stays: list[Stay] = []
-    per_room_deposit = money(payload.deposit_received / Decimal(len(room_ids))) if room_ids else Decimal("0")
     discount_audit = []
     for item, discount, net, occupant_id in stay_values:
-        stay = Stay(reservation_id=reservation.id, room_id=item.room_id, guest_id=occupant_id, status="reserved", check_in=payload.check_in, check_out=payload.check_out, agreed_rate=net, discount_percent=money(item.discount_percent), discount_amount=discount, payment_due_policy=payload.payment_policy, deposit_required=money(net * stay_days), deposit_received=min(per_room_deposit, money(net * stay_days)), notes=payload.notes)
+        stay = Stay(
+            reservation_id=reservation.id, room_id=item.room_id, guest_id=occupant_id,
+            status="reserved", check_in=payload.check_in, check_out=payload.check_out,
+            agreed_rate=net, discount_percent=money(item.discount_percent),
+            discount_amount=discount, payment_due_policy=payload.payment_policy,
+            deposit_required=money(net * stay_days), deposit_received=Decimal("0.00"),
+            notes=payload.notes,
+        )
         db.add(stay); db.flush(); stays.append(stay)
         discount_audit.append({"room_id": item.room_id, "gross_rate": str(money(item.agreed_rate)), "discount_percent": str(item.discount_percent), "fixed_discount": str(money(item.fixed_discount)), "total_discount": str(discount), "net_rate": str(net)})
         db.add(StayOccupant(stay_id=stay.id, guest_id=occupant_id, role="primary", is_primary=True, check_in=payload.check_in, check_out=payload.check_out, notes=payload.notes))
@@ -155,6 +163,51 @@ def create_reservation_workflow(payload: ReservationWorkflowCreate, db: Session 
         room = locked_rooms[item.room_id]
         if room and payload.check_in <= date.today() < payload.check_out:
             room.status = "reserved"
+
+    # Booking deposits are real cash receipts. Allocate the collected amount
+    # across rooms by each room's share of the total stay value, then post every
+    # allocation to Guest Deposits. This preserves the full receipt even when
+    # rooms have different rates.
+    remaining_deposit = money(payload.deposit_received)
+    remaining_value = money(total_estimated)
+    for index, stay in enumerate(stays):
+        required = money(stay.deposit_required)
+        if remaining_deposit <= 0:
+            break
+        if index == len(stays) - 1:
+            allocation = min(required, remaining_deposit)
+        else:
+            allocation = money(
+                min(
+                    required,
+                    remaining_deposit * required / remaining_value,
+                )
+            )
+        if allocation <= 0:
+            continue
+        deposit = DepositTransaction(
+            stay_id=stay.id,
+            folio_id=folio.id,
+            transaction_type="received",
+            amount=allocation,
+            payment_method=payload.deposit_method,
+            reference=f"RESERVATION-{reservation.id}-{stay.id}",
+            notes="Reservation advance deposit",
+            created_by=user.id,
+        )
+        db.add(deposit); db.flush()
+        post_deposit_received(
+            db,
+            stay_id=stay.id,
+            folio_id=folio.id,
+            reservation_id=reservation.id,
+            deposit_id=deposit.id,
+            amount=allocation,
+            method=payload.deposit_method,
+            created_by=user.id,
+        )
+        remaining_deposit = money(remaining_deposit - allocation)
+        stay.deposit_received = money(stay.deposit_received + allocation)
     if payload.group_id:
         db.add(GroupReservation(group_id=payload.group_id, reservation_id=reservation.id, role="member"))
     audit(db, user.id, "create_workflow", reservation.id, {"room_ids": room_ids, "group_id": payload.group_id, "payment_policy": payload.payment_policy, "deposit_received": str(payload.deposit_received), "discounts": discount_audit})
