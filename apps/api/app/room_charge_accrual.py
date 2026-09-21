@@ -60,7 +60,7 @@ def preview_room_charges_for_business_date(db: Session, *, business_date: date) 
         select(Stay).where(
             Stay.status == "checked_in",
             Stay.check_in <= business_date,
-            Stay.check_out > business_date,
+            Stay.check_out >= business_date,
         ).order_by(Stay.id)
     ).all()
 
