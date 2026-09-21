@@ -59,7 +59,7 @@ def _financial_period_summary(db: Session, period_start: date, period_end_exclus
             FinancialTransaction.business_date >= period_start,
             FinancialTransaction.business_date < period_end_exclusive,
             FinancialTransaction.status == "posted",
-            FinancialTransaction.transaction_type.in_(("folio_payment", "payment_refund", "deposit_received", "deposit_refunded")),
+            FinancialTransaction.transaction_type.in_(("folio_payment", "payment_refund", "deposit_received", "deposit_refund")),
         )
     ).all()
     received: dict[str, Decimal] = {}

@@ -10,7 +10,8 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from .auth import require_roles
 from .db import Base, get_db
-from .models import AuditLog, Folio, Guest, Reservation, ReservationRoom, Room, User
+from .models import AuditLog, DepositTransaction, Folio, Guest, Reservation, ReservationRoom, Room, User
+from .ledger import post_deposit_received
 
 router = APIRouter(prefix="/api", tags=["pms-core"])
 MONEY = Decimal("0.01")
@@ -111,6 +112,7 @@ class StayCreate(BaseModel):
     payment_due_policy: str = Field(default="at_checkout", pattern="^(at_booking|at_checkin|at_checkout|partial)$")
     deposit_required: Decimal = Field(default=Decimal("0"), ge=0)
     deposit_received: Decimal = Field(default=Decimal("0"), ge=0)
+    deposit_method: str = Field(default="cash", pattern="^(cash|card|bank_transfer|other)$")
     notes: str | None = None
 
 
@@ -213,6 +215,9 @@ def create_reservation_stays(reservation_id: int, payload: list[StayCreate], db:
         raise HTTPException(status_code=400, detail="Duplicate room stays are not allowed")
 
     stays = []
+    folio = db.scalar(select(Folio).where(Folio.reservation_id == reservation.id).order_by(Folio.id).limit(1))
+    if any(item.deposit_received > 0 for item in payload) and folio is None:
+        raise HTTPException(status_code=409, detail="Reservation has no folio for the deposit")
     for item in payload:
         room = db.get(Room, item.room_id)
         if not room:
@@ -238,7 +243,29 @@ def create_reservation_stays(reservation_id: int, payload: list[StayCreate], db:
             deposit_received=money(item.deposit_received),
             notes=item.notes,
         )
-        db.add(stay); stays.append(stay)
+        db.add(stay); db.flush(); stays.append(stay)
+        if item.deposit_received > 0:
+            deposit = DepositTransaction(
+                stay_id=stay.id,
+                folio_id=folio.id if folio else None,
+                transaction_type="received",
+                amount=money(item.deposit_received),
+                payment_method=item.deposit_method,
+                reference=f"STAY-{stay.id}-DEPOSIT",
+                notes="Reservation stay advance deposit",
+                created_by=user.id,
+            )
+            db.add(deposit); db.flush()
+            post_deposit_received(
+                db,
+                stay_id=stay.id,
+                folio_id=folio.id if folio else None,
+                reservation_id=reservation.id,
+                deposit_id=deposit.id,
+                amount=money(item.deposit_received),
+                method=item.deposit_method,
+                created_by=user.id,
+            )
 
     audit(db, user.id, "create", "stay", reservation.id, {"reservation_id": reservation.id, "room_ids": room_ids})
     db.commit()

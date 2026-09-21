@@ -211,12 +211,24 @@ def post_transaction(
 
 
 def post_folio_charge(db: Session, *, folio_id: int, reservation_id: int, item_id: int, amount: Decimal, stay_id: int | None, category: str, created_by: int) -> FinancialTransaction:
-    transaction = post_transaction(db, transaction_type="folio_charge", description=f"Folio charge #{item_id}: {category}", reference_type="folio_item", reference_id=str(item_id), folio_id=folio_id, reservation_id=reservation_id, created_by=created_by, idempotency_key=f"folio-charge:{item_id}", lines=[{"account": "Guest Receivables", "direction": "debit", "amount": amount, "folio_id": folio_id, "stay_id": stay_id}, {"account": "Revenue - " + (category[:45] or "Other"), "direction": "credit", "amount": amount, "folio_id": folio_id, "stay_id": stay_id}])
-    if category.strip().lower() in FOOD_CATEGORIES:
-        service_charge = money(amount * Decimal("0.10"))
-        if service_charge > 0:
-            post_transaction(db, transaction_type="service_charge", description=f"Food service charge for folio item #{item_id}", reference_type="folio_item", reference_id=str(item_id), folio_id=folio_id, reservation_id=reservation_id, created_by=created_by, idempotency_key=f"folio-service-charge:{item_id}", lines=[{"account": "Guest Receivables", "direction": "debit", "amount": service_charge, "folio_id": folio_id, "stay_id": stay_id}, {"account": "Revenue - service_charge", "direction": "credit", "amount": service_charge, "folio_id": folio_id, "stay_id": stay_id}])
-    return transaction
+    """Compatibility wrapper that routes all folio charges through the authoritative accounting path.
+
+    This prevents legacy callers from creating service-charge revenue. The 10% food
+    service charge is a staff liability, not hotel revenue, and deposits must be
+    applied consistently regardless of which folio-charge endpoint was used.
+    """
+    from .financial_authority import post_folio_charge_authoritative
+
+    return post_folio_charge_authoritative(
+        db,
+        folio_id=folio_id,
+        reservation_id=reservation_id,
+        item_id=item_id,
+        amount=money(amount),
+        stay_id=stay_id,
+        category=category,
+        created_by=created_by,
+    )
 
 
 def post_folio_payment(db: Session, *, folio_id: int, reservation_id: int, payment_id: int, amount: Decimal, method: str, created_by: int, idempotency_key: str | None = None) -> FinancialTransaction:
