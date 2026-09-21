@@ -86,21 +86,51 @@ def finance_snapshot(db: Session, business_date: date) -> dict:
 
 
 def build_summary(db: Session, business_date: date, finance: dict | None = None):
-    day_start = datetime.combine(business_date, datetime.min.time())
-    day_end = day_start + timedelta(days=1)
-    daily_items = db.scalars(select(FolioItem).where(FolioItem.created_at >= day_start, FolioItem.created_at < day_end)).all()
-    room_revenue = Decimal("0.00"); other_revenue = Decimal("0.00"); food_revenue = Decimal("0.00")
-    for item in daily_items:
-        if not item_has_active_charge(db, item.id): continue
-        net = max(Decimal("0.00"), Decimal(item.quantity) * Decimal(item.unit_price) - Decimal(item.discount))
-        category = item.category.strip().lower()
-        if category == "room": room_revenue += net
-        elif category in FOOD_CATEGORIES: food_revenue += net
-        else: other_revenue += net
+    # Financial activity is scoped by the hotel's business date, not wall-clock
+    # created_at. This keeps a room charge posted on the previous night out of
+    # today's revenue even when the folio remains open for a same-day checkout.
+    revenue_rows = db.execute(
+        select(LedgerEntry.account, LedgerEntry.direction, func.coalesce(func.sum(LedgerEntry.amount), 0))
+        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
+        .where(
+            FinancialTransaction.business_date == business_date,
+            FinancialTransaction.status == "posted",
+            LedgerEntry.account.like("Revenue - %"),
+        )
+        .group_by(LedgerEntry.account, LedgerEntry.direction)
+    ).all()
+    revenue_by_account: dict[str, Decimal] = {}
+    for account, direction, amount in revenue_rows:
+        signed = Decimal(amount) if direction == "credit" else -Decimal(amount)
+        revenue_by_account[account] = revenue_by_account.get(account, Decimal("0.00")) + signed
+
+    room_revenue = money(revenue_by_account.get("Revenue - room", Decimal("0.00")))
+    food_revenue = money(sum(
+        (amount for account, amount in revenue_by_account.items() if account.removeprefix("Revenue - ").strip().lower() in FOOD_CATEGORIES),
+        Decimal("0.00"),
+    ))
+    other_revenue = money(sum(
+        (amount for account, amount in revenue_by_account.items()
+         if account != "Revenue - room"
+         and account.removeprefix("Revenue - ").strip().lower() not in FOOD_CATEGORIES),
+        Decimal("0.00"),
+    ))
     service_charge = money(food_revenue * FOOD_SERVICE_CHARGE_RATE)
-    daily_payments = db.scalars(select(Payment).where(Payment.created_at >= day_start, Payment.created_at < day_end)).all()
-    payment_totals: dict[str, Decimal] = {}
-    for payment in daily_payments: payment_totals[payment.method] = payment_totals.get(payment.method, Decimal("0.00")) + Decimal(payment.amount)
+
+    payment_rows = db.execute(
+        select(Payment.method, func.coalesce(func.sum(Payment.amount), 0))
+        .join(
+            FinancialTransaction,
+            FinancialTransaction.reference_type == "payment",
+        )
+        .where(
+            FinancialTransaction.reference_id == Payment.id.cast(String),
+            FinancialTransaction.business_date == business_date,
+            FinancialTransaction.status == "posted",
+        )
+        .group_by(Payment.method)
+    ).all()
+    payment_totals: dict[str, Decimal] = {method: Decimal(amount) for method, amount in payment_rows}
     rooms = db.scalars(select(Room)).all()
     status_counts = {s: 0 for s in ("available", "reserved", "occupied", "dirty", "out_of_order")}
     for room in rooms: status_counts[room.status] = status_counts.get(room.status, 0) + 1
