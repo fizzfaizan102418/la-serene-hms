@@ -15,7 +15,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
-from sqlalchemy import func, select
+from sqlalchemy import String, func, select
 from sqlalchemy.orm import Session
 
 from .auth import require_roles
@@ -86,35 +86,92 @@ def finance_snapshot(db: Session, business_date: date) -> dict:
 
 
 def build_summary(db: Session, business_date: date, finance: dict | None = None):
-    day_start = datetime.combine(business_date, datetime.min.time())
-    day_end = day_start + timedelta(days=1)
-    daily_items = db.scalars(select(FolioItem).where(FolioItem.created_at >= day_start, FolioItem.created_at < day_end)).all()
-    room_revenue = Decimal("0.00"); other_revenue = Decimal("0.00"); food_revenue = Decimal("0.00")
-    for item in daily_items:
-        if not item_has_active_charge(db, item.id): continue
-        net = max(Decimal("0.00"), Decimal(item.quantity) * Decimal(item.unit_price) - Decimal(item.discount))
-        category = item.category.strip().lower()
-        if category == "room": room_revenue += net
-        elif category in FOOD_CATEGORIES: food_revenue += net
-        else: other_revenue += net
-    service_charge = money(food_revenue * FOOD_SERVICE_CHARGE_RATE)
-    daily_payments = db.scalars(select(Payment).where(Payment.created_at >= day_start, Payment.created_at < day_end)).all()
-    payment_totals: dict[str, Decimal] = {}
-    for payment in daily_payments: payment_totals[payment.method] = payment_totals.get(payment.method, Decimal("0.00")) + Decimal(payment.amount)
+    # Financial reporting is keyed to the hotel business date, not wall-clock
+    # creation timestamps. Folio items/payments may be created later, while
+    # their authoritative ledger transaction carries the accounting date.
+    revenue_rows = db.execute(
+        select(
+            LedgerEntry.account,
+            LedgerEntry.direction,
+            func.coalesce(func.sum(LedgerEntry.amount), 0),
+        )
+        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
+        .where(
+            FinancialTransaction.business_date == business_date,
+            FinancialTransaction.status == "posted",
+            LedgerEntry.account.like("Revenue - %"),
+        )
+        .group_by(LedgerEntry.account, LedgerEntry.direction)
+    ).all()
+
+    revenue_by_account: dict[str, Decimal] = {}
+    for account, direction, amount in revenue_rows:
+        value = Decimal(amount)
+        revenue_by_account[account] = revenue_by_account.get(account, Decimal("0.00"))
+        revenue_by_account[account] += value if direction == "credit" else -value
+
+    room_revenue = money(revenue_by_account.get("Revenue - room", Decimal("0.00")))
+    food_revenue = money(sum(
+        (value for account, value in revenue_by_account.items()
+         if account.removeprefix("Revenue - ").strip().lower() in FOOD_CATEGORIES),
+        Decimal("0.00"),
+    ))
+    other_revenue = money(sum(
+        (value for account, value in revenue_by_account.items()
+         if account != "Revenue - room"
+         and account.removeprefix("Revenue - ").strip().lower() not in FOOD_CATEGORIES),
+        Decimal("0.00"),
+    ))
+
+    payment_rows = db.execute(
+        select(Payment.method, func.coalesce(func.sum(Payment.amount), 0))
+        .join(
+            FinancialTransaction,
+            (FinancialTransaction.reference_type == "payment")
+            & (FinancialTransaction.reference_id == Payment.id.cast(String)),
+        )
+        .where(
+            FinancialTransaction.business_date == business_date,
+            FinancialTransaction.status == "posted",
+            FinancialTransaction.transaction_type == "folio_payment",
+        )
+        .group_by(Payment.method)
+    ).all()
+    payment_totals: dict[str, Decimal] = {
+        method: money(amount) for method, amount in payment_rows
+    }
+
     rooms = db.scalars(select(Room)).all()
     status_counts = {s: 0 for s in ("available", "reserved", "occupied", "dirty", "out_of_order")}
-    for room in rooms: status_counts[room.status] = status_counts.get(room.status, 0) + 1
-    arrivals = db.scalar(select(func.count(Reservation.id)).where(Reservation.check_in == business_date, Reservation.status.in_(("reserved", "checked_in")))) or 0
-    departures = db.scalar(select(func.count(Reservation.id)).where(Reservation.check_out == business_date, Reservation.status == "checked_in")) or 0
+    for room in rooms:
+        status_counts[room.status] = status_counts.get(room.status, 0) + 1
+    arrivals = db.scalar(select(func.count(Reservation.id)).where(
+        Reservation.check_in == business_date,
+        Reservation.status.in_(("reserved", "checked_in")),
+    )) or 0
+    departures = db.scalar(select(func.count(Reservation.id)).where(
+        Reservation.check_out == business_date,
+        Reservation.status == "checked_in",
+    )) or 0
     in_house = db.scalar(select(func.count(Reservation.id)).where(Reservation.status == "checked_in")) or 0
-    no_shows = db.scalar(select(func.count(Reservation.id)).where(Reservation.check_in == business_date, Reservation.status == "no_show")) or 0
-    expenses = db.scalar(select(func.coalesce(func.sum(Expense.amount), 0)).where(Expense.expense_date == business_date, Expense.status == "posted")) or Decimal("0.00")
+    no_shows = db.scalar(select(func.count(Reservation.id)).where(
+        Reservation.check_in == business_date,
+        Reservation.status == "no_show",
+    )) or 0
+    expenses = db.scalar(select(func.coalesce(func.sum(Expense.amount), 0)).where(
+        Expense.expense_date == business_date,
+        Expense.status == "posted",
+    )) or Decimal("0.00")
+
+    service_charge = money(food_revenue * FOOD_SERVICE_CHARGE_RATE)
     gross_revenue = money(room_revenue + food_revenue + other_revenue)
     paid_total = money(sum(payment_totals.values(), Decimal("0.00")))
-    outstanding = money(sum((folio_ledger_summary(db, folio.id).balance for folio in db.scalars(select(Folio)).all()), Decimal("0.00")))
+    outstanding = money(sum(
+        (folio_ledger_summary(db, folio.id).balance for folio in db.scalars(select(Folio)).all()),
+        Decimal("0.00"),
+    ))
 
-    deposit_received = db.scalar(
-        select(func.coalesce(func.sum(LedgerEntry.amount), 0))
+    deposit_received = db.scalar(select(func.coalesce(func.sum(LedgerEntry.amount), 0))
         .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
         .where(
             FinancialTransaction.business_date == business_date,
@@ -122,10 +179,8 @@ def build_summary(db: Session, business_date: date, finance: dict | None = None)
             FinancialTransaction.transaction_type == "deposit_received",
             LedgerEntry.account == "Guest Deposits",
             LedgerEntry.direction == "credit",
-        )
-    ) or Decimal("0.00")
-    deposit_applied = db.scalar(
-        select(func.coalesce(func.sum(LedgerEntry.amount), 0))
+        )) or Decimal("0.00")
+    deposit_applied = db.scalar(select(func.coalesce(func.sum(LedgerEntry.amount), 0))
         .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
         .where(
             FinancialTransaction.business_date == business_date,
@@ -133,40 +188,58 @@ def build_summary(db: Session, business_date: date, finance: dict | None = None)
             FinancialTransaction.transaction_type == "deposit_applied",
             LedgerEntry.account == "Guest Deposits",
             LedgerEntry.direction == "debit",
-        )
-    ) or Decimal("0.00")
-    guest_deposit_balance = db.scalar(
-        select(func.coalesce(func.sum(LedgerEntry.amount), 0))
-        .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
-        .where(
-            FinancialTransaction.status == "posted",
-            LedgerEntry.account == "Guest Deposits",
-        )
-    ) or Decimal("0.00")
-    deposit_credit = db.scalar(
-        select(func.coalesce(func.sum(LedgerEntry.amount), 0))
+        )) or Decimal("0.00")
+    deposit_credit = db.scalar(select(func.coalesce(func.sum(LedgerEntry.amount), 0))
         .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
         .where(
             FinancialTransaction.status == "posted",
             LedgerEntry.account == "Guest Deposits",
             LedgerEntry.direction == "credit",
-        )
-    ) or Decimal("0.00")
-    deposit_debit = db.scalar(
-        select(func.coalesce(func.sum(LedgerEntry.amount), 0))
+        )) or Decimal("0.00")
+    deposit_debit = db.scalar(select(func.coalesce(func.sum(LedgerEntry.amount), 0))
         .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
         .where(
             FinancialTransaction.status == "posted",
             LedgerEntry.account == "Guest Deposits",
             LedgerEntry.direction == "debit",
-        )
-    ) or Decimal("0.00")
+        )) or Decimal("0.00")
     guest_deposit_balance = money(Decimal(deposit_credit) - Decimal(deposit_debit))
 
     finance = finance or finance_snapshot(db, business_date)
     state = db.get(BusinessDateState, 1)
     posting_open = not bool(state and state.last_closed_business_date and state.last_closed_business_date >= business_date)
-    return {"business_date": business_date, "generated_at": datetime.utcnow(), "posting_open": posting_open, "occupancy": {"total_rooms": len(rooms), "occupied_rooms": status_counts.get("occupied", 0), "reserved_rooms": status_counts.get("reserved", 0), "available_rooms": status_counts.get("available", 0), "dirty_rooms": status_counts.get("dirty", 0), "out_of_order_rooms": status_counts.get("out_of_order", 0), "in_house_reservations": in_house}, "movement": {"arrivals": arrivals, "departures": departures, "no_shows": no_shows}, "revenue": {"room": money(room_revenue), "food": money(food_revenue), "food_service_charge": service_charge, "other": money(other_revenue), "gross": gross_revenue}, "payments": {method: money(amount) for method, amount in payment_totals.items()} | {"total": paid_total}, "outstanding": money(outstanding), "guest_deposits": {"received_today": money(deposit_received), "applied_today": money(deposit_applied), "remaining_liability": guest_deposit_balance}, "expenses": money(expenses), "net_operating": money(gross_revenue - Decimal(expenses)), "finance": finance}
+    return {
+        "business_date": business_date,
+        "generated_at": datetime.utcnow(),
+        "posting_open": posting_open,
+        "occupancy": {
+            "total_rooms": len(rooms),
+            "occupied_rooms": status_counts.get("occupied", 0),
+            "reserved_rooms": status_counts.get("reserved", 0),
+            "available_rooms": status_counts.get("available", 0),
+            "dirty_rooms": status_counts.get("dirty", 0),
+            "out_of_order_rooms": status_counts.get("out_of_order", 0),
+            "in_house_reservations": in_house,
+        },
+        "movement": {"arrivals": arrivals, "departures": departures, "no_shows": no_shows},
+        "revenue": {
+            "room": room_revenue,
+            "food": food_revenue,
+            "food_service_charge": service_charge,
+            "other": other_revenue,
+            "gross": gross_revenue,
+        },
+        "payments": {method: amount for method, amount in payment_totals.items()} | {"total": paid_total},
+        "outstanding": outstanding,
+        "guest_deposits": {
+            "received_today": money(deposit_received),
+            "applied_today": money(deposit_applied),
+            "remaining_liability": guest_deposit_balance,
+        },
+        "expenses": money(expenses),
+        "net_operating": money(gross_revenue - Decimal(expenses)),
+        "finance": finance,
+    }
 
 
 def ledger_account_delta(db: Session, business_date: date, accounts: set[str], before: bool) -> Decimal:
