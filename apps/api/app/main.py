@@ -359,7 +359,7 @@ def list_reservations(status_filter: str | None = Query(default=None, alias="sta
 @app.get("/api/front-desk", response_model=FrontDeskResponse)
 def front_desk(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
     today = get_current_business_date(db, fallback_to_today=True)
-    arrivals = db.execute(select(Reservation, Guest.full_name).join(Guest, Guest.id == Reservation.guest_id).where(Reservation.check_in == today, Reservation.status.in_(("reserved", "checked_in"))).order_by(Reservation.id)).all()
+    arrivals = db.execute(select(Reservation, Guest.full_name).join(Guest, Guest.id == Reservation.guest_id).where(Reservation.check_in == today, Reservation.status == "reserved").order_by(Reservation.id)).all()
     departures = db.execute(select(Reservation, Guest.full_name).join(Guest, Guest.id == Reservation.guest_id).where(Reservation.check_out == today, Reservation.status == "checked_in").order_by(Reservation.id)).all()
     in_house = db.execute(select(Reservation, Guest.full_name).join(Guest, Guest.id == Reservation.guest_id).where(Reservation.status == "checked_in").order_by(Reservation.check_out, Reservation.id)).all()
     return FrontDeskResponse(arrivals=[reservation_list_item(db, r, g) for r, g in arrivals], departures=[reservation_list_item(db, r, g) for r, g in departures], in_house=[reservation_list_item(db, r, g) for r, g in in_house])
