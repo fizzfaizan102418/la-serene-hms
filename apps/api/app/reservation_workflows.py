@@ -11,8 +11,11 @@ from sqlalchemy.orm import Session
 
 from .auth import require_roles
 from .db import get_db
-from .models import AuditLog, Folio, Guest, Reservation, ReservationRoom, Room, StayOccupant, StayRateSegment, User
+from .business_date import get_current_business_date
+from .models import AuditLog, DepositTransaction, Folio, FolioItem, Guest, Reservation, ReservationRoom, Room, StayOccupant, StayRateSegment, User
 from .pms_core import BookingGroup, GroupReservation, Stay
+from .folio_integrity import item_has_active_charge
+from .ledger import post_deposit_received
 
 router = APIRouter(prefix="/api", tags=["reservation-workflows"])
 ACTIVE_STATUSES = ("reserved", "checked_in")
@@ -56,6 +59,7 @@ class ReservationWorkflowCreate(BaseModel):
     notes: str | None = None
     payment_policy: str = Field(default="at_checkout", pattern="^(at_booking|at_checkin|at_checkout|partial)$")
     deposit_received: Decimal = Field(default=Decimal("0"), ge=0)
+    deposit_method: str = Field(default="cash", pattern="^(cash|card|bank_transfer|other)$")
 
 
 def money(value: Decimal) -> Decimal:
@@ -141,10 +145,16 @@ def create_reservation_workflow(payload: ReservationWorkflowCreate, db: Session 
     folio = Folio(reservation_id=reservation.id, status="open")
     db.add(folio); db.flush()
     stays: list[Stay] = []
-    per_room_deposit = money(payload.deposit_received / Decimal(len(room_ids))) if room_ids else Decimal("0")
     discount_audit = []
     for item, discount, net, occupant_id in stay_values:
-        stay = Stay(reservation_id=reservation.id, room_id=item.room_id, guest_id=occupant_id, status="reserved", check_in=payload.check_in, check_out=payload.check_out, agreed_rate=net, discount_percent=money(item.discount_percent), discount_amount=discount, payment_due_policy=payload.payment_policy, deposit_required=money(net * stay_days), deposit_received=min(per_room_deposit, money(net * stay_days)), notes=payload.notes)
+        stay = Stay(
+            reservation_id=reservation.id, room_id=item.room_id, guest_id=occupant_id,
+            status="reserved", check_in=payload.check_in, check_out=payload.check_out,
+            agreed_rate=net, discount_percent=money(item.discount_percent),
+            discount_amount=discount, payment_due_policy=payload.payment_policy,
+            deposit_required=money(net * stay_days), deposit_received=Decimal("0.00"),
+            notes=payload.notes,
+        )
         db.add(stay); db.flush(); stays.append(stay)
         discount_audit.append({"room_id": item.room_id, "gross_rate": str(money(item.agreed_rate)), "discount_percent": str(item.discount_percent), "fixed_discount": str(money(item.fixed_discount)), "total_discount": str(discount), "net_rate": str(net)})
         db.add(StayOccupant(stay_id=stay.id, guest_id=occupant_id, role="primary", is_primary=True, check_in=payload.check_in, check_out=payload.check_out, notes=payload.notes))
@@ -153,6 +163,55 @@ def create_reservation_workflow(payload: ReservationWorkflowCreate, db: Session 
         room = locked_rooms[item.room_id]
         if room and payload.check_in <= date.today() < payload.check_out:
             room.status = "reserved"
+
+    # Booking deposits are real cash receipts. They may not exceed the
+    # authoritative deposit requirement for the reservation.
+    remaining_deposit = money(payload.deposit_received)
+    total_required_deposit = money(sum((stay.deposit_required for stay in stays), Decimal("0.00")))
+    if remaining_deposit > total_required_deposit:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Deposit received {remaining_deposit} exceeds required deposit {total_required_deposit}",
+        )
+    remaining_value = total_required_deposit
+    for index, stay in enumerate(stays):
+        required = money(stay.deposit_required)
+        if remaining_deposit <= 0:
+            break
+        if index == len(stays) - 1:
+            allocation = min(required, remaining_deposit)
+        else:
+            allocation = money(
+                min(
+                    required,
+                    remaining_deposit * required / remaining_value,
+                )
+            )
+        if allocation <= 0:
+            continue
+        deposit = DepositTransaction(
+            stay_id=stay.id,
+            folio_id=folio.id,
+            transaction_type="received",
+            amount=allocation,
+            payment_method=payload.deposit_method,
+            reference=f"RESERVATION-{reservation.id}-{stay.id}",
+            notes="Reservation advance deposit",
+            created_by=user.id,
+        )
+        db.add(deposit); db.flush()
+        post_deposit_received(
+            db,
+            stay_id=stay.id,
+            folio_id=folio.id,
+            reservation_id=reservation.id,
+            deposit_id=deposit.id,
+            amount=allocation,
+            method=payload.deposit_method,
+            created_by=user.id,
+        )
+        remaining_deposit = money(remaining_deposit - allocation)
+        stay.deposit_received = money(stay.deposit_received + allocation)
     if payload.group_id:
         db.add(GroupReservation(group_id=payload.group_id, reservation_id=reservation.id, role="member"))
     audit(db, user.id, "create_workflow", reservation.id, {"room_ids": room_ids, "group_id": payload.group_id, "payment_policy": payload.payment_policy, "deposit_received": str(payload.deposit_received), "discounts": discount_audit})
@@ -167,19 +226,51 @@ def update_reservation(reservation_id: int, payload: ReservationUpdate, db: Sess
     if reservation.status not in ACTIVE_STATUSES: raise HTTPException(status_code=409, detail="Only active reservations can be modified")
     check_in = payload.check_in or reservation.check_in; check_out = payload.check_out or reservation.check_out
     if check_out <= check_in: raise HTTPException(status_code=400, detail="Check-out must be after check-in")
-    if reservation.status == "checked_in" and check_in != reservation.check_in: raise HTTPException(status_code=409, detail="Check-in date cannot be changed after arrival")
-    if payload.guest_id is not None and not db.get(Guest, payload.guest_id): raise HTTPException(status_code=400, detail="Guest does not exist")
+    if reservation.status == "checked_in" and check_in != reservation.check_in:
+        raise HTTPException(status_code=409, detail="Check-in date cannot be changed after arrival")
+    if reservation.status == "checked_in":
+        business_date = get_current_business_date(db)
+        if check_out < business_date:
+            raise HTTPException(status_code=409, detail="An in-house reservation cannot be shortened to a past business date")
+        for stay in db.scalars(select(Stay).where(Stay.reservation_id == reservation_id)).all():
+            active_items = db.scalars(
+                select(FolioItem).join(Folio, Folio.id == FolioItem.folio_id).where(
+                    Folio.reservation_id == reservation_id,
+                    FolioItem.stay_id == stay.id,
+                    FolioItem.category == "room",
+                )
+            ).all()
+            charged_total = sum(
+                (Decimal(str(item.quantity)) for item in active_items if item_has_active_charge(db, item.id)),
+                Decimal("0.00"),
+            )
+            requested_nights = Decimal(max(0, (check_out - stay.check_in).days))
+            if charged_total > requested_nights:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Cannot shorten stay {stay.id} below {int(charged_total)} already-posted room night(s)",
+                )
+    if payload.guest_id is not None and not db.get(Guest, payload.guest_id):
+        raise HTTPException(status_code=400, detail="Guest does not exist")
     old = {"check_in": str(reservation.check_in), "check_out": str(reservation.check_out), "guest_id": reservation.guest_id, "notes": reservation.notes}
     current_rooms = reservation_rooms(db, reservation_id)
     locked_rooms = lock_rooms(db, current_rooms)
     conflicts = [locked_rooms[room_id].number for room_id in current_rooms if room_id in locked_rooms and overlaps(db, room_id, check_in, check_out, reservation_id)]
     if conflicts: raise HTTPException(status_code=409, detail=f"Updated dates conflict with room(s): {', '.join(conflicts)}")
+    old_check_out = reservation.check_out
     reservation.check_in = check_in; reservation.check_out = check_out; reservation.notes = payload.notes
     if payload.guest_id is not None: reservation.guest_id = payload.guest_id
     for stay in db.scalars(select(Stay).where(Stay.reservation_id == reservation_id)).all():
         stay.check_in = check_in; stay.check_out = check_out
+        stay.deposit_required = money(stay.agreed_rate * max(0, (check_out - check_in).days))
         if payload.guest_id is not None and stay.guest_id == old["guest_id"]:
             stay.guest_id = reservation.guest_id
+        segments = db.scalars(
+            select(StayRateSegment).where(StayRateSegment.stay_id == stay.id)
+            .order_by(StayRateSegment.from_date, StayRateSegment.id)
+        ).all()
+        if len(segments) == 1 and segments[0].to_date == old_check_out:
+            segments[0].to_date = check_out
         ensure_stay_children(db, stay)
     audit(db, user.id, "update", reservation_id, {"from": old, "to": {"check_in": str(check_in), "check_out": str(check_out), "guest_id": reservation.guest_id, "notes": reservation.notes}})
     db.commit()
@@ -224,6 +315,12 @@ def extend_stay(reservation_id: int, payload: ExtendStay, db: Session = Depends(
     for stay in db.scalars(select(Stay).where(Stay.reservation_id == reservation_id)).all():
         stay.check_out = payload.new_check_out
         stay.deposit_required = money(stay.agreed_rate * (payload.new_check_out - stay.check_in).days)
+        segments = db.scalars(
+            select(StayRateSegment).where(StayRateSegment.stay_id == stay.id)
+            .order_by(StayRateSegment.from_date, StayRateSegment.id)
+        ).all()
+        if len(segments) == 1 and segments[0].to_date == old_checkout:
+            segments[0].to_date = payload.new_check_out
         ensure_stay_children(db, stay)
     audit(db, user.id, "extend", reservation_id, {"from_check_out": str(old_checkout), "to_check_out": str(payload.new_check_out), "room_ids": room_ids})
     db.commit()

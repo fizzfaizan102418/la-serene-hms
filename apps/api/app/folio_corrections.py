@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from .auth import require_roles
 from .db import get_db
 from .financial_authority import post_folio_charge_authoritative
-from .folio_integrity import expected_active_total, integrity_snapshot, ledger_total
+from .folio_integrity import expected_active_total, integrity_snapshot, item_has_active_charge, ledger_total
 from .ledger import post_transaction, reverse_transaction
 from .models import AuditLog, FinancialTransaction, Folio, FolioItem, Reservation, User
 from .schemas import FolioItemResponse
@@ -104,21 +104,26 @@ def reconcile_and_reopen_folio(
         )
 
     if difference > 0:
-        post_transaction(
-            db,
-            transaction_type="folio_reconciliation",
-            description=f"Folio #{folio.id} financial reconciliation",
-            reference_type="folio_reconciliation",
-            reference_id=str(folio.id),
-            folio_id=folio.id,
-            reservation_id=folio.reservation_id,
-            created_by=user.id,
-            idempotency_key=f"folio-reconciliation:{folio.id}:{expected}:{actual}",
-            lines=[
-                {"account": "Guest Receivables", "direction": "debit", "amount": difference, "folio_id": folio.id},
-                {"account": "Revenue - reconciliation", "direction": "credit", "amount": difference, "folio_id": folio.id},
-            ],
-        )
+        # Rebuild only missing financial postings from the authoritative folio
+        # items. Never invent a generic "reconciliation revenue" account.
+        for candidate in db.scalars(
+            select(FolioItem).where(FolioItem.folio_id == folio.id).order_by(FolioItem.id)
+        ).all():
+            if not item_has_active_charge(db, candidate.id):
+                continue
+            post_folio_charge_authoritative(
+                db,
+                folio_id=folio.id,
+                reservation_id=folio.reservation_id,
+                item_id=candidate.id,
+                amount=item_line_total(candidate),
+                stay_id=candidate.stay_id,
+                category=candidate.category,
+                created_by=user.id,
+                gross_amount=money(Decimal(candidate.quantity) * Decimal(candidate.unit_price)),
+                discount_amount=money(candidate.discount),
+            )
+        db.flush()
 
     folio.status = "open"
     db.add(

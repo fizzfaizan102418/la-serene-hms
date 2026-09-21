@@ -106,24 +106,17 @@ def _refund_response(db: Session, folio: Folio, refund: PaymentRefund, replayed:
     return {"id": refund.id, "payment_id": refund.payment_id, "folio_id": refund.folio_id, "amount": refund.amount, "method": refund.method, "paid_net": paid_net, "balance": balance, "replayed": replayed}
 
 
-@router.post("/reservations/{reservation_id}/check-out", response_model=CheckoutResponse)
+@router.post("/reservations/{reservation_id}/check-out", response_model=dict)
 def atomic_checkout(reservation_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "reception"))):
-    reservation = db.get(Reservation, reservation_id)
-    if not reservation: raise HTTPException(status_code=404, detail="Reservation not found")
-    if reservation.status != "checked_in": raise HTTPException(status_code=409, detail="Reservation is not checked in")
-    folio = db.scalar(select(Folio).where(Folio.reservation_id == reservation_id))
-    if not folio: raise HTTPException(status_code=409, detail="Reservation has no folio")
-    total, paid, balance = folio_balance(db, folio)
-    if balance != Decimal("0.00"): raise HTTPException(status_code=409, detail=f"Cannot check out with outstanding balance of {balance}")
-    room_ids = db.scalars(select(ReservationRoom.room_id).where(ReservationRoom.reservation_id == reservation_id)).all()
-    rooms = [db.get(Room, rid) for rid in room_ids]
-    reservation.status = "checked_out"; now = datetime.utcnow()
-    for stay in db.scalars(select(Stay).where(Stay.reservation_id == reservation_id)).all(): stay.status = "completed"; stay.actual_check_out = stay.actual_check_out or now
-    if folio.status == "open": folio.status = "closed"
-    for room in rooms:
-        if room and room.status == "occupied": room.status = "dirty"
-    audit(db, user.id, "atomic_checkout", "reservation", reservation.id, {"folio_id": folio.id, "total": str(total), "paid": str(paid), "room_ids": room_ids}); db.commit()
-    return CheckoutResponse(id=reservation.id, status=reservation.status, folio_id=folio.id, room_ids=room_ids)
+    """Legacy URL compatibility wrapper.
+
+    The authoritative checkout implementation lives in front_desk.py. Keeping a
+    second checkout implementation here caused the legacy /check-out route to
+    bypass final room-night accrual and could leave accounting incomplete.
+    """
+    from .front_desk import atomic_checkout as authoritative_checkout
+
+    return authoritative_checkout(reservation_id, db, user)
 
 
 @router.post("/folios/{folio_id}/refunds", status_code=201)
@@ -222,8 +215,26 @@ def ledger_reconciliation(business_date: date | None = None, db: Session = Depen
     debits = money(sum((e.amount for e in entry_rows if e.direction == "debit"), Decimal("0.00"))); credits = money(sum((e.amount for e in entry_rows if e.direction == "credit"), Decimal("0.00")))
     ledger_revenue = money(sum((e.amount for e in entry_rows if e.direction == "credit" and e.account.startswith("Revenue -") and tx_types.get(e.transaction_id) in operational_revenue_types), Decimal("0.00")) - sum((e.amount for e in entry_rows if e.direction == "debit" and e.account.startswith("Revenue -") and tx_types.get(e.transaction_id) in operational_revenue_types), Decimal("0.00")))
     charge_receivable = money(sum((e.amount for e in entry_rows if e.account == "Guest Receivables" and e.direction == "debit" and tx_types.get(e.transaction_id) == "folio_charge"), Decimal("0.00")) - sum((e.amount for e in entry_rows if e.account == "Guest Receivables" and e.direction == "credit" and tx_types.get(e.transaction_id) == "folio_discount"), Decimal("0.00")))
-    payment_cash = money(sum((e.amount for e in entry_rows if e.account in CASH_ACCOUNTS and e.direction == "debit" and tx_types.get(e.transaction_id) == "folio_payment"), Decimal("0.00")))
-    refund_cash = money(sum((e.amount for e in entry_rows if e.account in CASH_ACCOUNTS and e.direction == "credit" and tx_types.get(e.transaction_id) == "payment_refund"), Decimal("0.00")))
+    payment_cash = money(sum(
+        (
+            e.amount
+            for e in entry_rows
+            if e.account in CASH_ACCOUNTS
+            and e.direction == "debit"
+            and tx_types.get(e.transaction_id) in {"folio_payment", "deposit_received"}
+        ),
+        Decimal("0.00"),
+    ))
+    refund_cash = money(sum(
+        (
+            e.amount
+            for e in entry_rows
+            if e.account in CASH_ACCOUNTS
+            and e.direction == "credit"
+            and tx_types.get(e.transaction_id) in {"payment_refund", "deposit_refund"}
+        ),
+        Decimal("0.00"),
+    ))
     service_charge_by_folio: dict[int, Decimal] = {}
     for entry in entry_rows:
         if entry.account == "Guest Receivables" and entry.direction == "debit" and tx_types.get(entry.transaction_id) == "service_charge" and entry.folio_id is not None:
@@ -236,8 +247,54 @@ def ledger_reconciliation(business_date: date | None = None, db: Session = Depen
         if entry.account == "Guest Receivables" and entry.direction == "debit" and tx_types.get(entry.transaction_id) == "payment_refund" and entry.folio_id is not None:
             refund_by_folio[entry.folio_id] = money(refund_by_folio.get(entry.folio_id, Decimal("0.00")) + entry.amount)
     service_charge_collected = money(sum((min(service_charge_by_folio.get(fid, Decimal("0.00")), max(Decimal("0.00"), payment_by_folio.get(fid, Decimal("0.00")) - refund_by_folio.get(fid, Decimal("0.00")))) for fid in service_charge_by_folio), Decimal("0.00")))
-    settlement_receivable = money(sum((e.amount for e in entry_rows if e.account == "Guest Receivables" and e.direction == "credit" and tx_types.get(e.transaction_id) == "folio_payment"), Decimal("0.00")) - sum((e.amount for e in entry_rows if e.account == "Guest Receivables" and e.direction == "debit" and tx_types.get(e.transaction_id) == "payment_refund"), Decimal("0.00")))
-    net_cash = money(payment_cash - refund_cash - service_charge_collected); hotel_settlement_receivable = money(settlement_receivable - service_charge_collected); charge_difference = money(ledger_revenue - charge_receivable); settlement_difference = money(net_cash - hotel_settlement_receivable)
+    folio_settlement = money(
+        sum(
+            (
+                e.amount
+                for e in entry_rows
+                if e.account == "Guest Receivables"
+                and e.direction == "credit"
+                and tx_types.get(e.transaction_id) == "folio_payment"
+            ),
+            Decimal("0.00"),
+        )
+        - sum(
+            (
+                e.amount
+                for e in entry_rows
+                if e.account == "Guest Receivables"
+                and e.direction == "debit"
+                and tx_types.get(e.transaction_id) == "payment_refund"
+            ),
+            Decimal("0.00"),
+        )
+    )
+    deposit_cash = money(
+        sum(
+            (
+                e.amount
+                for e in entry_rows
+                if e.account in CASH_ACCOUNTS
+                and e.direction == "debit"
+                and tx_types.get(e.transaction_id) == "deposit_received"
+            ),
+            Decimal("0.00"),
+        )
+        - sum(
+            (
+                e.amount
+                for e in entry_rows
+                if e.account in CASH_ACCOUNTS
+                and e.direction == "credit"
+                and tx_types.get(e.transaction_id) == "deposit_refund"
+            ),
+            Decimal("0.00"),
+        )
+    )
+    net_cash = money(payment_cash - refund_cash - service_charge_collected)
+    hotel_settlement_receivable = money(folio_settlement + deposit_cash - service_charge_collected)
+    charge_difference = money(ledger_revenue - charge_receivable)
+    settlement_difference = money(net_cash - hotel_settlement_receivable)
     status = "balanced" if debits == credits and charge_difference == Decimal("0.00") and settlement_difference == Decimal("0.00") else "review"
     return {"business_date": target_date, "ledger": {"transactions": len(transactions), "debits": debits, "credits": credits, "balanced": debits == credits, "revenue_credits": ledger_revenue, "cash_debits": payment_cash, "cash_credits": refund_cash, "net_cash": net_cash, "service_charge_collected": service_charge_collected}, "authority": {"folio_charges": charge_receivable, "payments": payment_cash, "refunds": refund_cash, "net_cash": net_cash, "service_charge_collected": service_charge_collected}, "reconciliation": {"charge_difference": charge_difference, "settlement_difference": settlement_difference, "cash_difference": settlement_difference, "service_charge_collected": service_charge_collected, "status": status}}
 

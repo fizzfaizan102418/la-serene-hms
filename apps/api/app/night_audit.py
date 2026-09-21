@@ -123,27 +123,52 @@ def build_summary(db: Session, business_date: date, finance: dict | None = None)
         Decimal("0.00"),
     ))
 
-    # Cashier collections include both folio payments and guest deposits.
-    # Deposits are liabilities, not revenue, but they are real cashier receipts
-    # and must appear in Daily Closing / historical payment totals.
+    # Cashier activity includes folio payments and guest deposits, while
+    # refunds (including deposit refunds) reduce the day's net cash activity.
+    # Deposits are liabilities, not revenue.
     payment_rows = db.execute(
         select(
             LedgerEntry.payment_method,
+            FinancialTransaction.transaction_type,
+            LedgerEntry.direction,
             func.coalesce(func.sum(LedgerEntry.amount), 0),
         )
         .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
         .where(
             FinancialTransaction.business_date == business_date,
             FinancialTransaction.status == "posted",
-            FinancialTransaction.transaction_type.in_(("folio_payment", "deposit_received")),
-            LedgerEntry.direction == "debit",
+            FinancialTransaction.transaction_type.in_(
+                ("folio_payment", "payment_refund", "deposit_received", "deposit_refund")
+            ),
             LedgerEntry.account.in_(("Cash", "Card Clearing", "Bank", "Other Payment")),
         )
-        .group_by(LedgerEntry.payment_method)
+        .group_by(
+            LedgerEntry.payment_method,
+            FinancialTransaction.transaction_type,
+            LedgerEntry.direction,
+        )
     ).all()
+    payment_received_totals: dict[str, Decimal] = {}
+    payment_refunded_totals: dict[str, Decimal] = {}
+    for method, transaction_type, direction, amount in payment_rows:
+        key = method or "other"
+        value = money(amount)
+        if transaction_type in {"payment_refund", "deposit_refund"}:
+            payment_refunded_totals[key] = money(payment_refunded_totals.get(key, Decimal("0.00")) + value)
+        elif transaction_type in {"folio_payment", "deposit_received"} and direction == "debit":
+            payment_received_totals[key] = money(payment_received_totals.get(key, Decimal("0.00")) + value)
+
+    payment_methods = sorted(set(payment_received_totals) | set(payment_refunded_totals))
     payment_totals: dict[str, Decimal] = {
-        (method or "other"): money(amount) for method, amount in payment_rows
+        method: money(
+            payment_received_totals.get(method, Decimal("0.00"))
+            - payment_refunded_totals.get(method, Decimal("0.00"))
+        )
+        for method in payment_methods
     }
+    payments_received_total = money(sum(payment_received_totals.values(), Decimal("0.00")))
+    payments_refunded_total = money(sum(payment_refunded_totals.values(), Decimal("0.00")))
+    payments_net_total = money(payments_received_total - payments_refunded_total)
 
     rooms = db.scalars(select(Room)).all()
     status_counts = {s: 0 for s in ("available", "reserved", "occupied", "dirty", "out_of_order")}
@@ -233,7 +258,12 @@ def build_summary(db: Session, business_date: date, finance: dict | None = None)
             "other": other_revenue,
             "gross": gross_revenue,
         },
-        "payments": {method: amount for method, amount in payment_totals.items()} | {"total": paid_total},
+        "payments": {method: amount for method, amount in payment_totals.items()} | {
+            "total": paid_total,
+            "received_total": payments_received_total,
+            "refunded_total": payments_refunded_total,
+            "net_total": payments_net_total,
+        },
         "outstanding": outstanding,
         "guest_deposits": {
             "received_today": money(deposit_received),
