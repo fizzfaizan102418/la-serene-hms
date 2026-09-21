@@ -86,6 +86,8 @@ def main() -> None:
         # Deposit receipt is not revenue. Preserve revenue, occupancy, and outstanding.
         guest_deposits = report.setdefault("guest_deposits", {})
         guest_deposits["received_today"] = money(guest_deposits.get("received_today", "0.00")) + deposit_total
+        # The existing closed snapshot remains authoritative for occupancy and receivables.
+        # Only cashier/deposit reporting is corrected from the posted ledger evidence.
 
         finance = report.get("finance") or {}
         payment_recon = finance.get("payment_reconciliation") or {}
@@ -126,6 +128,9 @@ def main() -> None:
         })
         report["historical_reconciliation"] = reconciliation
 
+        backup_path = pack_path.with_name("daily-closing.json.pre-correction")
+        if not backup_path.exists():
+            backup_path.write_text(pack_path.read_text(encoding="utf-8"), encoding="utf-8")
         pack_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
         print(json.dumps({
             "status": "corrected",
