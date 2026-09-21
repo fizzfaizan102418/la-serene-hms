@@ -10,7 +10,8 @@ import app.financial_models  # noqa: F401
 import app.models  # noqa: F401
 import app.pms_core  # noqa: F401
 from app.financial_authority import folio_ledger_summary
-from app.models import BusinessDateState, FinancialTransaction, Folio, FolioItem, Guest, Reservation, Role, Room, RoomType, StayRateSegment, User
+from app.ledger import post_deposit_received
+from app.models import BusinessDateState, DepositTransaction, FinancialTransaction, Folio, FolioItem, Guest, Reservation, ReservationRoom, Role, Room, RoomType, StayRateSegment, User
 from app.pms_core import Stay
 from app.room_charge_accrual import accrue_room_charges_for_business_date
 from app.front_desk import post_accrued_room_charges
@@ -109,6 +110,119 @@ class NightAuditRoomAccrualTests(unittest.TestCase):
 
         repeated = post_accrued_room_charges(
             self.db, reservation, folio, date(2026, 9, 15), 1
+        )
+        self.assertEqual(repeated, 0)
+        self.db.commit()
+
+    def test_two_room_walk_in_one_night_fully_prepaid_totals_twenty_thousand(self):
+        # Mirrors a walk-in: two rooms, one night, PKR 10,000 each, PKR 20,000
+        # received in advance. The deposit must settle the two room charges once
+        # the night is accrued; it must not create revenue or room-charge duplicates.
+        room_2 = Room(id=2, number="102", room_type_id=1, status="occupied")
+        self.db.add(room_2)
+        reservation_room_1 = ReservationRoom(reservation_id=1, room_id=1)
+        reservation_room_2 = ReservationRoom(reservation_id=1, room_id=2)
+        self.db.add_all([reservation_room_1, reservation_room_2])
+
+        stay_2 = Stay(
+            id=2,
+            reservation_id=1,
+            room_id=2,
+            guest_id=1,
+            status="checked_in",
+            check_in=date(2026, 9, 13),
+            check_out=date(2026, 9, 14),
+            agreed_rate=Decimal("10000.00"),
+            payment_due_policy="at_checkout",
+            deposit_required=Decimal("10000.00"),
+            deposit_received=Decimal("10000.00"),
+        )
+        stay_1 = self.db.get(Stay, 1)
+        stay_1.deposit_required = Decimal("10000.00")
+        stay_1.deposit_received = Decimal("10000.00")
+        segment_2 = StayRateSegment(
+            id=2,
+            stay_id=2,
+            from_date=date(2026, 9, 13),
+            to_date=date(2026, 9, 14),
+            rate=Decimal("10000.00"),
+            discount_amount=Decimal("0.00"),
+        )
+        self.db.add_all([stay_2, segment_2])
+        self.db.flush()
+
+        deposit_1 = DepositTransaction(
+            id=1,
+            stay_id=1,
+            folio_id=1,
+            transaction_type="received",
+            amount=Decimal("10000.00"),
+            payment_method="cash",
+            reference="WALKIN-1-1",
+            notes="Two-room walk-in advance",
+            created_by=1,
+        )
+        deposit_2 = DepositTransaction(
+            id=2,
+            stay_id=2,
+            folio_id=1,
+            transaction_type="received",
+            amount=Decimal("10000.00"),
+            payment_method="cash",
+            reference="WALKIN-1-2",
+            notes="Two-room walk-in advance",
+            created_by=1,
+        )
+        self.db.add_all([deposit_1, deposit_2])
+        self.db.flush()
+        post_deposit_received(
+            self.db, stay_id=1, folio_id=1, reservation_id=1,
+            deposit_id=1, amount=Decimal("10000.00"), method="cash", created_by=1,
+        )
+        post_deposit_received(
+            self.db, stay_id=2, folio_id=1, reservation_id=1,
+            deposit_id=2, amount=Decimal("10000.00"), method="cash", created_by=1,
+        )
+        self.db.commit()
+
+        posted = accrue_room_charges_for_business_date(
+            self.db, business_date=date(2026, 9, 13), created_by=1
+        )
+        self.assertEqual(posted, 2)
+        self.db.commit()
+
+        items = self.db.scalars(
+            select(FolioItem).where(
+                FolioItem.folio_id == 1,
+                FolioItem.category == "room",
+            )
+        ).all()
+        self.assertEqual(len(items), 2)
+        self.assertEqual(
+            sum((Decimal(item.quantity) * Decimal(item.unit_price) for item in items), Decimal("0.00")),
+            Decimal("20000.00"),
+        )
+
+        summary = folio_ledger_summary(self.db, 1)
+        self.assertEqual(summary.total, Decimal("20000.00"))
+        self.assertEqual(summary.paid, Decimal("20000.00"))
+        self.assertEqual(summary.balance, Decimal("0.00"))
+
+        deposit_transactions = self.db.scalars(
+            select(FinancialTransaction).where(
+                FinancialTransaction.folio_id == 1,
+                FinancialTransaction.transaction_type == "deposit_received",
+                FinancialTransaction.status == "posted",
+            )
+        ).all()
+        self.assertEqual(len(deposit_transactions), 2)
+        self.assertEqual(
+            sum((Decimal(entry.amount) for tx in deposit_transactions for entry in tx.entries if entry.account == "Cash" and entry.direction == "debit"), Decimal("0.00")),
+            Decimal("20000.00"),
+        )
+
+        repeated = accrue_room_charges_for_business_date(
+            self.db, business_date=date(2026, 9, 13), created_by=1
         )
         self.assertEqual(repeated, 0)
         self.db.commit()
