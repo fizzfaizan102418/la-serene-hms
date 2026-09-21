@@ -11,6 +11,7 @@ import app.financial_models  # noqa: F401
 import app.models  # noqa: F401
 import app.pms_core  # noqa: F401
 from app.front_desk import atomic_check_in, atomic_checkout
+from app.main import front_desk
 from app.ledger import post_transaction
 from app.models import BusinessDateState, FinancialTransaction, Folio, FolioItem, Guest, Reservation, ReservationRoom, Role, Room, RoomType, User
 from app.pms_core import Stay
@@ -68,6 +69,18 @@ class FrontDeskTransactionalIntegrityTests(unittest.TestCase):
         self.room.status = "occupied"
         self.db.commit()
         return reservation, folio, stay
+
+    def test_front_desk_arrivals_exclude_already_checked_in_reservations(self):
+        checked_in, _folio, _stay = self.make_checked_in_reservation(self.business_date, date(2026, 9, 9))
+        waiting, _ = self.make_reservation(self.business_date, date(2026, 9, 10), status="reserved")
+
+        result = front_desk(self.db, self.user)
+        arrival_ids = [item.id for item in result.arrivals]
+        in_house_ids = [item.id for item in result.in_house]
+
+        self.assertNotIn(checked_in.id, arrival_ids)
+        self.assertIn(waiting.id, arrival_ids)
+        self.assertIn(checked_in.id, in_house_ids)
 
     def test_check_in_uses_persisted_business_date_and_aligns_entities(self):
         reservation, folio = self.make_reservation(date(2026, 9, 8), date(2026, 9, 10))

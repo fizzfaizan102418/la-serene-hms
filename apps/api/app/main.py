@@ -50,7 +50,7 @@ def reservation_overlaps(room_id: int, check_in: date, check_out: date, db: Sess
         .join(Reservation, Reservation.id == ReservationRoom.reservation_id)
         .where(
             ReservationRoom.room_id == room_id,
-            Reservation.status.in_(("reserved", "checked_in")),
+            Reservation.status == "reserved",
             Reservation.check_in < check_out,
             Reservation.check_out > check_in,
         ).limit(1)
@@ -131,7 +131,7 @@ def dashboard(db: Session = Depends(get_db), _: User = Depends(get_current_user)
     counts = {name: 0 for name in statuses}
     for room_status, count in db.execute(select(Room.status, func.count(Room.id)).group_by(Room.status)):
         if room_status in counts: counts[room_status] = count
-    arrivals = db.scalar(select(func.count(Reservation.id)).where(Reservation.check_in == today, Reservation.status.in_(("reserved", "checked_in")))) or 0
+    arrivals = db.scalar(select(func.count(Reservation.id)).where(Reservation.check_in == today, Reservation.status == "reserved")) or 0
     departures = db.scalar(select(func.count(Reservation.id)).where(Reservation.check_out == today, Reservation.status == "checked_in")) or 0
     in_house = db.scalar(select(func.count(Reservation.id)).where(Reservation.status == "checked_in")) or 0
     return DashboardResponse(business_date=today, total_rooms=sum(counts.values()), available_rooms=counts["available"], reserved_rooms=counts["reserved"], occupied_rooms=counts["occupied"], dirty_rooms=counts["dirty"], out_of_order_rooms=counts["out_of_order"], arrivals_today=arrivals, departures_today=departures, in_house_guests=in_house)
@@ -359,7 +359,7 @@ def list_reservations(status_filter: str | None = Query(default=None, alias="sta
 @app.get("/api/front-desk", response_model=FrontDeskResponse)
 def front_desk(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
     today = get_current_business_date(db, fallback_to_today=True)
-    arrivals = db.execute(select(Reservation, Guest.full_name).join(Guest, Guest.id == Reservation.guest_id).where(Reservation.check_in == today, Reservation.status.in_(("reserved", "checked_in"))).order_by(Reservation.id)).all()
+    arrivals = db.execute(select(Reservation, Guest.full_name).join(Guest, Guest.id == Reservation.guest_id).where(Reservation.check_in == today, Reservation.status == "reserved").order_by(Reservation.id)).all()
     departures = db.execute(select(Reservation, Guest.full_name).join(Guest, Guest.id == Reservation.guest_id).where(Reservation.check_out == today, Reservation.status == "checked_in").order_by(Reservation.id)).all()
     in_house = db.execute(select(Reservation, Guest.full_name).join(Guest, Guest.id == Reservation.guest_id).where(Reservation.status == "checked_in").order_by(Reservation.check_out, Reservation.id)).all()
     return FrontDeskResponse(arrivals=[reservation_list_item(db, r, g) for r, g in arrivals], departures=[reservation_list_item(db, r, g) for r, g in departures], in_house=[reservation_list_item(db, r, g) for r, g in in_house])
