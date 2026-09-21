@@ -106,24 +106,17 @@ def _refund_response(db: Session, folio: Folio, refund: PaymentRefund, replayed:
     return {"id": refund.id, "payment_id": refund.payment_id, "folio_id": refund.folio_id, "amount": refund.amount, "method": refund.method, "paid_net": paid_net, "balance": balance, "replayed": replayed}
 
 
-@router.post("/reservations/{reservation_id}/check-out", response_model=CheckoutResponse)
+@router.post("/reservations/{reservation_id}/check-out", response_model=dict)
 def atomic_checkout(reservation_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "reception"))):
-    reservation = db.get(Reservation, reservation_id)
-    if not reservation: raise HTTPException(status_code=404, detail="Reservation not found")
-    if reservation.status != "checked_in": raise HTTPException(status_code=409, detail="Reservation is not checked in")
-    folio = db.scalar(select(Folio).where(Folio.reservation_id == reservation_id))
-    if not folio: raise HTTPException(status_code=409, detail="Reservation has no folio")
-    total, paid, balance = folio_balance(db, folio)
-    if balance != Decimal("0.00"): raise HTTPException(status_code=409, detail=f"Cannot check out with outstanding balance of {balance}")
-    room_ids = db.scalars(select(ReservationRoom.room_id).where(ReservationRoom.reservation_id == reservation_id)).all()
-    rooms = [db.get(Room, rid) for rid in room_ids]
-    reservation.status = "checked_out"; now = datetime.utcnow()
-    for stay in db.scalars(select(Stay).where(Stay.reservation_id == reservation_id)).all(): stay.status = "completed"; stay.actual_check_out = stay.actual_check_out or now
-    if folio.status == "open": folio.status = "closed"
-    for room in rooms:
-        if room and room.status == "occupied": room.status = "dirty"
-    audit(db, user.id, "atomic_checkout", "reservation", reservation.id, {"folio_id": folio.id, "total": str(total), "paid": str(paid), "room_ids": room_ids}); db.commit()
-    return CheckoutResponse(id=reservation.id, status=reservation.status, folio_id=folio.id, room_ids=room_ids)
+    """Legacy URL compatibility wrapper.
+
+    The authoritative checkout implementation lives in front_desk.py. Keeping a
+    second checkout implementation here caused the legacy /check-out route to
+    bypass final room-night accrual and could leave accounting incomplete.
+    """
+    from .front_desk import atomic_checkout as authoritative_checkout
+
+    return authoritative_checkout(reservation_id, db, user)
 
 
 @router.post("/folios/{folio_id}/refunds", status_code=201)
