@@ -215,8 +215,26 @@ def ledger_reconciliation(business_date: date | None = None, db: Session = Depen
     debits = money(sum((e.amount for e in entry_rows if e.direction == "debit"), Decimal("0.00"))); credits = money(sum((e.amount for e in entry_rows if e.direction == "credit"), Decimal("0.00")))
     ledger_revenue = money(sum((e.amount for e in entry_rows if e.direction == "credit" and e.account.startswith("Revenue -") and tx_types.get(e.transaction_id) in operational_revenue_types), Decimal("0.00")) - sum((e.amount for e in entry_rows if e.direction == "debit" and e.account.startswith("Revenue -") and tx_types.get(e.transaction_id) in operational_revenue_types), Decimal("0.00")))
     charge_receivable = money(sum((e.amount for e in entry_rows if e.account == "Guest Receivables" and e.direction == "debit" and tx_types.get(e.transaction_id) == "folio_charge"), Decimal("0.00")) - sum((e.amount for e in entry_rows if e.account == "Guest Receivables" and e.direction == "credit" and tx_types.get(e.transaction_id) == "folio_discount"), Decimal("0.00")))
-    payment_cash = money(sum((e.amount for e in entry_rows if e.account in CASH_ACCOUNTS and e.direction == "debit" and tx_types.get(e.transaction_id) == "folio_payment"), Decimal("0.00")))
-    refund_cash = money(sum((e.amount for e in entry_rows if e.account in CASH_ACCOUNTS and e.direction == "credit" and tx_types.get(e.transaction_id) == "payment_refund"), Decimal("0.00")))
+    payment_cash = money(sum(
+        (
+            e.amount
+            for e in entry_rows
+            if e.account in CASH_ACCOUNTS
+            and e.direction == "debit"
+            and tx_types.get(e.transaction_id) in {"folio_payment", "deposit_received"}
+        ),
+        Decimal("0.00"),
+    ))
+    refund_cash = money(sum(
+        (
+            e.amount
+            for e in entry_rows
+            if e.account in CASH_ACCOUNTS
+            and e.direction == "credit"
+            and tx_types.get(e.transaction_id) in {"payment_refund", "deposit_refund"}
+        ),
+        Decimal("0.00"),
+    ))
     service_charge_by_folio: dict[int, Decimal] = {}
     for entry in entry_rows:
         if entry.account == "Guest Receivables" and entry.direction == "debit" and tx_types.get(entry.transaction_id) == "service_charge" and entry.folio_id is not None:
