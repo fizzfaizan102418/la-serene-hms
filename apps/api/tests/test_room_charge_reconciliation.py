@@ -108,6 +108,8 @@ class RoomChargeReconciliationTests(unittest.TestCase):
         )
         db.add(item)
         db.flush()
+        db.get(BusinessDateState, 1).current_business_date = posting_date
+        db.flush()
         post_folio_charge_authoritative(
             db,
             folio_id=folio.id,
@@ -119,7 +121,6 @@ class RoomChargeReconciliationTests(unittest.TestCase):
             created_by=1,
             gross_amount=Decimal("10000.00"),
             discount_amount=Decimal("0.00"),
-            business_date=posting_date,
         )
         db.flush()
 
@@ -137,6 +138,8 @@ class RoomChargeReconciliationTests(unittest.TestCase):
                 )
             )
 
+            db.get(BusinessDateState, 1).current_business_date = date(2026, 9, 22)
+            db.flush()
             posted = post_accrued_room_charges(
                 db, reservation, folio, date(2026, 9, 22), 1
             )
