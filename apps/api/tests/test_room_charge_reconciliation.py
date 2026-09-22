@@ -2,7 +2,7 @@ import unittest
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, update
 from sqlalchemy.orm import Session
 
 from app.db import Base
@@ -10,7 +10,7 @@ import app.financial_models  # noqa: F401
 import app.models  # noqa: F401
 from app.business_date import get_current_business_date
 from app.financial_authority import post_folio_charge_authoritative
-from app.models import BusinessDateState, Folio, FolioItem, Guest, FinancialTransaction, LedgerEntry, Reservation, Room, RoomType, StayRateSegment
+from app.models import BusinessDateState, Folio, FolioItem, Guest, FinancialTransaction, Reservation, Room, RoomType, StayRateSegment
 from app.pms_core import Stay
 from app.room_charge_integrity import _room_charge_posted_for_date, post_accrued_room_charges
 
@@ -58,10 +58,13 @@ class RoomChargeReconciliationTests(unittest.TestCase):
         with Session(self.engine) as db:
             reservation, folio, stay = self._setup_two_night_stay(db)
 
+            # The first night was correctly posted on the prior business date.
+            db.execute(update(BusinessDateState).values(current_business_date=date(2026, 9, 21)))
+            db.flush()
             first_item = FolioItem(
                 folio_id=folio.id,
                 stay_id=stay.id,
-                description="Room T1 · stay #1 · night 2026-09-21",
+                description="Room T1 · stay #1 · 1 night(s) · through 2026-09-21",
                 category="room",
                 quantity=Decimal("1"),
                 unit_price=Decimal("10000.00"),
@@ -84,7 +87,9 @@ class RoomChargeReconciliationTests(unittest.TestCase):
             db.commit()
 
             self.assertTrue(_room_charge_posted_for_date(db, folio.id, stay.id, date(2026, 9, 21)))
-            self.assertFalse(_room_charge_posted_for_date(db, folio.id, stay.id, date(2026, 9, 22)))
+
+            db.execute(update(BusinessDateState).values(current_business_date=date(2026, 9, 22)))
+            db.commit()
 
             posted = post_accrued_room_charges(db, reservation, folio, date(2026, 9, 22), 1)
             db.commit()
@@ -115,10 +120,11 @@ class RoomChargeReconciliationTests(unittest.TestCase):
             second = post_accrued_room_charges(db, reservation, folio, get_current_business_date(db), 1)
             db.commit()
 
-            self.assertEqual(first, 2)
+            self.assertEqual(first, 1)
             self.assertEqual(second, 0)
             room_items = db.scalars(select(FolioItem).where(FolioItem.folio_id == folio.id, FolioItem.stay_id == stay.id, FolioItem.category == "room")).all()
-            self.assertEqual(len(room_items), 2)
+            self.assertEqual(len(room_items), 1)
+            self.assertEqual(Decimal(room_items[0].quantity), Decimal("2"))
 
 
 if __name__ == "__main__":
