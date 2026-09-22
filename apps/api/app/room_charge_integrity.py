@@ -15,7 +15,7 @@ MONEY = Decimal("0.01")
 
 
 def money(value: Decimal | int | float | str) -> Decimal:
-    return Decimal(str(value)).quantize(MONEY, rounding=ROUND_HALFdef _room_charge_posted_for_date(
+    return Decimal(str(value)).quantize(MONEY, rounding=ROUND_HALF_UP)\n\n\ndef _room_charge_posted_for_date(
     db: Session,
     folio_id: int,
     stay_id: int,
