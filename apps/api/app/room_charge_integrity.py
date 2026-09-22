@@ -55,3 +55,93 @@ def _room_charge_posted_for_date(
         )
         .limit(1)
     ) is not None
+
+
+def _rate_for_night(db: Session, stay: Stay, posting_date: date) -> tuple[Decimal, Decimal]:
+    segment = db.scalar(
+        select(StayRateSegment)
+        .where(
+            StayRateSegment.stay_id == stay.id,
+            StayRateSegment.from_date <= posting_date,
+            StayRateSegment.to_date > posting_date,
+        )
+        .order_by(StayRateSegment.from_date, StayRateSegment.id)
+        .limit(1)
+    )
+    if segment is not None:
+        return money(segment.rate), money(segment.discount_amount)
+    return money(stay.agreed_rate), money(stay.discount_amount)
+
+
+def post_accrued_room_charges(
+    db: Session,
+    reservation: Reservation,
+    folio: Folio,
+    business_date: date,
+    user_id: int,
+) -> int:
+    """Post missing room nights for every stay in a reservation.
+
+    Reconciliation is exact to stay + business date, so a posting for one room
+    can never satisfy a missing night for another room in the same folio.
+    The operation is idempotent for a given stay/date.
+    """
+    if folio.status != "open":
+        return 0
+
+    stays = db.scalars(
+        select(Stay)
+        .where(
+            Stay.reservation_id == reservation.id,
+            Stay.status == "checked_in",
+            Stay.check_in <= business_date,
+            Stay.check_out >= business_date,
+        )
+        .order_by(Stay.id)
+    ).all()
+
+    posted = 0
+    for stay in stays:
+        if _room_charge_posted_for_date(db, folio.id, stay.id, business_date):
+            continue
+
+        room = db.get(Room, stay.room_id)
+        if room is None:
+            continue
+
+        gross_rate, discount = _rate_for_night(db, stay, business_date)
+        net_rate = money(max(Decimal("0.00"), gross_rate - discount))
+        if net_rate <= 0:
+            continue
+
+        description = (
+            f"Night audit · {business_date.isoformat()} · "
+            f"stay #{stay.id} · room {room.number}"
+        )
+        item = FolioItem(
+            folio_id=folio.id,
+            stay_id=stay.id,
+            description=description,
+            category="room",
+            quantity=1,
+            unit_price=gross_rate,
+            discount=discount,
+        )
+        db.add(item)
+        db.flush()
+
+        post_folio_charge_authoritative(
+            db,
+            folio_id=folio.id,
+            reservation_id=reservation.id,
+            item_id=item.id,
+            amount=net_rate,
+            stay_id=stay.id,
+            category="room",
+            created_by=user_id,
+            gross_amount=gross_rate,
+            discount_amount=discount,
+        )
+        posted += 1
+
+    return posted
