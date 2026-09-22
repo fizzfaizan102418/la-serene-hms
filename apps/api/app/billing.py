@@ -68,10 +68,10 @@ def build_folio_response(db: Session, folio: Folio) -> FolioResponse:
     active_stay = active_stays[0] if len(active_stays) == 1 else None
     deposit_balance = Decimal("0.00")
     deposit_required = Decimal("0.00")
-    if active_stay is not None:
+    if active_stays:
         from .financial_ops import stay_deposit_ledger_balance
-        deposit_balance = stay_deposit_ledger_balance(db, active_stay.id)
-        deposit_required = money(active_stay.agreed_rate * max(0, (active_stay.check_out - active_stay.check_in).days))
+        deposit_balance = money(sum((stay_deposit_ledger_balance(db, stay.id) for stay in active_stays), Decimal("0.00")))
+        deposit_required = money(sum((Decimal(stay.agreed_rate) * max(0, (stay.check_out - stay.check_in).days) for stay in active_stays), Decimal("0.00")))
     return FolioResponse(id=folio.id, reservation_id=folio.reservation_id, status=folio.status, active_stay_id=active_stay.id if active_stay else None, deposit_balance=deposit_balance, deposit_required=deposit_required, items=[FolioItemResponse(id=i.id, description=i.description, category=i.category, quantity=i.quantity, unit_price=i.unit_price, discount=i.discount, line_total=item_line_total(i)) for i in items], payments=[PaymentResponse.model_validate(p) for p in payments], subtotal=subtotal, discounts=discounts, food_service_charge=food_service_charge, total=ledger.total, paid=ledger.paid, balance=ledger.balance)
 
 def audit(db: Session, user_id: int, action: str, entity_type: str, entity_id: int, details: dict):
