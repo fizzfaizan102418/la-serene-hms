@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from .financial_authority import post_folio_charge_authoritative
 from .folio_integrity import item_has_active_charge
-from .models import FinancialTransaction, Folio, FolioItem, LedgerEntry, Room, StayRateSegment
+from .models import FinancialTransaction, Folio, FolioItem, LedgerEntry, Reservation, Room, StayRateSegment
 from .pms_core import Stay
 
 MONEY = Decimal("0.01")
@@ -115,84 +115,39 @@ def preview_room_charges_for_business_date(db: Session, *, business_date: date) 
             "amount": net_rate,
             "description": description,
         })
-    return preview
+    return preview\n\n\ndef accrue_room_charges_for_business_date(db: Session, *, business_date: date, created_by: int) -> int:
+    """Reconcile every missing room night for the supplied business date.
 
-
-def accrue_room_charges_for_business_date(db: Session, *, business_date: date, created_by: int) -> int:
-    """Post exactly one authoritative room-night per active stay for a business date.
-
-    The operation is deliberately date-scoped and idempotent. Re-running it for the
-    same stay/date does not create another folio item. Reversed historical charges do
-    not suppress a new charge for a later business date.
+    The exact stay + business-date reconciler is the single source of truth for
+    Night Audit. This prevents one room's posting from satisfying another room
+    and makes repeated runs idempotent.
     """
-    stays = db.scalars(
-        select(Stay).where(
+    from .room_charge_integrity import post_accrued_room_charges
+
+    reservation_ids = db.scalars(
+        select(Folio.reservation_id)
+        .join(Stay, Stay.reservation_id == Folio.reservation_id)
+        .where(
+            Folio.status == "open",
             Stay.status == "checked_in",
             Stay.check_in <= business_date,
             Stay.check_out >= business_date,
-        ).order_by(Stay.id)
+        )
+        .distinct()
     ).all()
 
     posted = 0
-    for stay in stays:
-        folio = db.scalar(select(Folio).where(Folio.reservation_id == stay.reservation_id).order_by(Folio.id).limit(1))
-        if folio is None or folio.status != "open":
-            continue
-
-        room = db.get(Room, stay.room_id)
-        if room is None:
-            continue
-
-        remaining_nights = _remaining_room_nights(db, stay=stay, business_date=business_date)
-        if remaining_nights <= 0:
-            continue
-
-        description = f"Night audit · {business_date.isoformat()} · stay #{stay.id} · room {room.number}"
-        segment = db.scalar(
-            select(StayRateSegment)
-            .where(
-                StayRateSegment.stay_id == stay.id,
-                StayRateSegment.from_date <= business_date,
-                StayRateSegment.to_date > business_date,
-            )
-            .order_by(StayRateSegment.from_date, StayRateSegment.id)
+    for reservation_id in reservation_ids:
+        reservation = db.get(Reservation, reservation_id)
+        folio = db.scalar(
+            select(Folio)
+            .where(Folio.reservation_id == reservation_id, Folio.status == "open")
+            .order_by(Folio.id)
             .limit(1)
         )
-
-        if segment is not None:
-            gross_rate = money(segment.rate)
-            discount = money(segment.discount_amount)
-        else:
-            gross_rate = money(stay.agreed_rate)
-            discount = money(stay.discount_amount)
-
-        net_rate = money(max(Decimal("0.00"), gross_rate - discount))
-        if net_rate <= 0:
+        if reservation is None or folio is None:
             continue
-
-        item = FolioItem(
-            folio_id=folio.id,
-            stay_id=stay.id,
-            description=description,
-            category="room",
-            quantity=1,
-            unit_price=gross_rate,
-            discount=discount,
+        posted += post_accrued_room_charges(
+            db, reservation, folio, business_date, created_by
         )
-        db.add(item)
-        db.flush()
-        post_folio_charge_authoritative(
-            db,
-            folio_id=folio.id,
-            reservation_id=stay.reservation_id,
-            item_id=item.id,
-            amount=net_rate,
-            stay_id=stay.id,
-            category="room",
-            created_by=created_by,
-            gross_amount=gross_rate,
-            discount_amount=discount,
-        )
-        posted += 1
-
     return posted

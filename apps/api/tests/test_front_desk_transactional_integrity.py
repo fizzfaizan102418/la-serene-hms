@@ -138,14 +138,18 @@ class FrontDeskTransactionalIntegrityTests(unittest.TestCase):
 
         result = atomic_checkout(reservation.id, self.db, self.user)
         self.assertEqual(result["business_date"], self.business_date)
-        self.assertEqual(result["room_charges_posted"], 1)
+        self.assertEqual(result["room_charges_posted"], 2)
         self.assertEqual(self.db.get(Reservation, reservation.id).status, "checked_out")
         self.assertEqual(self.db.get(Folio, folio.id).status, "closed")
         self.assertEqual(self.db.get(Room, self.room.id).status, "dirty")
         charge = self.db.scalar(select(FolioItem).where(FolioItem.folio_id == folio.id, FolioItem.category == "room"))
         self.assertIsNotNone(charge)
-        self.assertEqual(Decimal(charge.quantity), Decimal("2"))
+        self.assertEqual(Decimal(charge.quantity), Decimal("1"))
         self.assertEqual(Decimal(charge.unit_price), Decimal("100.00"))
+        self.assertEqual(
+            self.db.scalar(select(FolioItem.id).where(FolioItem.folio_id == folio.id, FolioItem.category == "room", FolioItem.id != charge.id)) is not None,
+            True,
+        )
         txs = self.db.scalars(select(FinancialTransaction).where(FinancialTransaction.folio_id == folio.id).order_by(FinancialTransaction.id)).all()
         self.assertTrue(any(tx.transaction_type == "folio_charge" and tx.business_date == self.business_date for tx in txs))
         self.assertTrue(any(tx.transaction_type == "folio_payment" and tx.business_date == self.business_date for tx in txs))
