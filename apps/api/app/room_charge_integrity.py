@@ -106,6 +106,15 @@ def post_accrued_room_charges(
 
     posted = 0
     for stay in stays:
+        # Never post more active room nights than the stay has elapsed through
+        # this business date. Exact stay/date idempotency alone is insufficient:
+        # it can still create a third charge on a checkout date after the stay's
+        # contracted nights are already fully covered.
+        elapsed_nights = _elapsed_room_nights(stay=stay, business_date=business_date)
+        charged_nights = _charged_room_nights(db, stay_id=stay.id)
+        if charged_nights >= elapsed_nights:
+            continue
+
         if _room_charge_posted_for_date(db, folio.id, stay.id, business_date):
             continue
 
