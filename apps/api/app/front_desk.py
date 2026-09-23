@@ -63,6 +63,88 @@ def room_stay_ids(db: Session, reservation_id: int) -> list[int]:
     return db.scalars(select(Stay.id).where(Stay.reservation_id == reservation_id).order_by(Stay.id)).all()
 
 
+
+def atomic_checkout(
+    reservation_id: int,
+    db: Session,
+    user: User,
+) -> dict:
+    """Authoritative checkout state transition shared by the API checkout route."""
+    reservation = db.get(Reservation, reservation_id)
+    if not reservation:
+        raise HTTPException(status_code=404, detail="Reservation not found")
+    if reservation.status != "checked_in":
+        raise HTTPException(status_code=409, detail="Reservation is not checked in")
+
+    folio = db.scalar(
+        select(Folio)
+        .where(Folio.reservation_id == reservation.id)
+        .order_by(Folio.id)
+        .limit(1)
+    )
+    if not folio:
+        raise HTTPException(status_code=409, detail="Reservation has no folio")
+    if folio.status != "open":
+        raise HTTPException(status_code=409, detail="Folio is already closed")
+
+    # Final checkout must first reconcile any room night that belongs to the
+    # current hotel business date. The reconciler is idempotent and uses the
+    # existing authoritative financial ledger.
+    business_date = get_current_business_date(db)
+    post_accrued_room_charges(db, reservation, folio, business_date, user.id)
+
+    balance = folio_balance(db, folio)
+    if balance != Decimal("0.00"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Guest must settle the folio before checkout; outstanding balance is {balance}",
+        )
+
+    room_ids = db.scalars(
+        select(ReservationRoom.room_id)
+        .where(ReservationRoom.reservation_id == reservation.id)
+    ).all()
+    checkout_at = datetime.utcnow()
+
+    folio.status = "closed"
+    reservation.status = "checked_out"
+
+    for stay in db.scalars(
+        select(Stay).where(Stay.reservation_id == reservation.id).order_by(Stay.id)
+    ).all():
+        stay.status = "completed"
+        stay.actual_check_out = stay.actual_check_out or checkout_at
+
+    for room_id in room_ids:
+        room = db.get(Room, room_id)
+        if room and room.status == "occupied":
+            room.status = "dirty"
+
+    audit(
+        db,
+        user.id,
+        "atomic_checkout",
+        "reservation",
+        reservation.id,
+        {
+            "folio_id": folio.id,
+            "room_ids": room_ids,
+            "business_date": str(business_date),
+            "checked_out_at": checkout_at.isoformat(),
+        },
+    )
+    db.commit()
+
+    return {
+        "reservation_id": reservation.id,
+        "folio_id": folio.id,
+        "status": reservation.status,
+        "folio_status": folio.status,
+        "room_ids": room_ids,
+        "room_status": "dirty",
+    }
+
+
 def post_accrued_room_charges(
     db: Session,
     reservation: Reservation,
