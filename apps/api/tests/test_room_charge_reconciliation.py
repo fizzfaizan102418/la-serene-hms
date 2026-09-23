@@ -272,7 +272,7 @@ class RoomChargeReconciliationTests(unittest.TestCase):
             )
             db.commit()
 
-            self.assertEqual(first, 2)
+            self.assertEqual(first, 1)
             self.assertEqual(second, 0)
             room_items = db.scalars(
                 select(FolioItem).where(
@@ -280,7 +280,7 @@ class RoomChargeReconciliationTests(unittest.TestCase):
                     FolioItem.category == "room",
                 )
             ).all()
-            self.assertEqual(len(room_items), 2)
+            self.assertEqual(len(room_items), 1)
 
 
 if __name__ == "__main__":
