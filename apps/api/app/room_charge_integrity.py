@@ -100,7 +100,13 @@ def post_accrued_room_charges(
         .order_by(Stay.id)
     ).all()
 
-    # Serialize nightly posting for this folio so two concurrent Night Audit /\n    # Front Desk requests cannot both observe the same night as missing.\n    db.scalar(select(Folio.id).where(Folio.id == folio.id).with_for_update())\n\n    posted = 0\n    for stay in stays:\n        if _room_charge_posted_for_date(db, folio.id, stay.id, business_date):
+    # Serialize nightly posting for this folio so two concurrent Night Audit /
+    # Front Desk requests cannot both observe the same night as missing.
+    db.scalar(select(Folio.id).where(Folio.id == folio.id).with_for_update())
+
+    posted = 0
+    for stay in stays:
+        if _room_charge_posted_for_date(db, folio.id, stay.id, business_date):
             continue
 
         room = db.get(Room, stay.room_id)
