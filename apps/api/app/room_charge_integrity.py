@@ -18,6 +18,49 @@ def money(value: Decimal | int | float | str) -> Decimal:
     return Decimal(str(value)).quantize(MONEY, rounding=ROUND_HALF_UP)
 
 
+def _elapsed_room_nights(*, stay: Stay, business_date: date) -> Decimal:
+    """Return contracted room nights elapsed through the end of the business date."""
+    cutoff = min(
+        stay.check_out,
+        date.fromordinal(business_date.toordinal() + 1),
+    )
+    return Decimal(max(0, (cutoff - stay.check_in).days))
+
+
+def _charged_room_nights(db: Session, *, stay_id: int) -> Decimal:
+    """Count active room-charge quantities already posted for this stay."""
+    items = db.scalars(
+        select(FolioItem)
+        .where(
+            FolioItem.stay_id == stay_id,
+            FolioItem.category == "room",
+        )
+        .order_by(FolioItem.id)
+    ).all()
+    total = Decimal("0")
+    for item in items:
+        transaction = db.scalar(
+            select(FinancialTransaction.id)
+            .join(
+                LedgerEntry,
+                LedgerEntry.transaction_id == FinancialTransaction.id,
+            )
+            .where(
+                FinancialTransaction.folio_id == item.folio_id,
+                FinancialTransaction.reference_type == "folio_item",
+                cast(FinancialTransaction.reference_id, Integer) == item.id,
+                FinancialTransaction.transaction_type == "folio_charge",
+                FinancialTransaction.status == "posted",
+                LedgerEntry.account == "Revenue - room",
+                LedgerEntry.direction == "credit",
+            )
+            .limit(1)
+        )
+        if transaction is not None:
+            total += Decimal(str(item.quantity))
+    return total
+
+
 def _room_charge_posted_for_date(
     db: Session,
     folio_id: int,
