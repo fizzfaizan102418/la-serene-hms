@@ -100,13 +100,21 @@ def post_accrued_room_charges(
         .order_by(Stay.id)
     ).all()
 
-    posted = 0
-    for stay in stays:
-        if _room_charge_posted_for_date(db, folio.id, stay.id, business_date):
+    # Serialize nightly posting for this folio so two concurrent Night Audit /\n    # Front Desk requests cannot both observe the same night as missing.\n    db.scalar(select(Folio.id).where(Folio.id == folio.id).with_for_update())\n\n    posted = 0\n    for stay in stays:\n        if _room_charge_posted_for_date(db, folio.id, stay.id, business_date):
             continue
 
         room = db.get(Room, stay.room_id)
         if room is None:
+            continue
+
+        room_charge_key = f"room-night:{folio.id}:{stay.id}:{business_date.isoformat()}"
+        existing = db.scalar(
+            select(FinancialTransaction.id).where(
+                FinancialTransaction.idempotency_key == room_charge_key,
+                FinancialTransaction.status == "posted",
+            )
+        )
+        if existing is not None:
             continue
 
         gross_rate, discount = _rate_for_night(db, stay, business_date)
@@ -141,6 +149,7 @@ def post_accrued_room_charges(
             created_by=user_id,
             gross_amount=gross_rate,
             discount_amount=discount,
+            idempotency_key=room_charge_key,
         )
         posted += 1
 
