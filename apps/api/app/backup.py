@@ -70,20 +70,53 @@ def postgres_command_url() -> tuple[list[str], dict[str, str]]:
     args += ["--username", url.username, "--dbname", url.database]
 
     env = os.environ.copy()
-    # Do not allow service-account PostgreSQL defaults to override the production
-    # connection. PGPASSWORD is intentionally retained as the only credential
-    # supplied to pg_dump/pg_restore.
     for key in ("PGUSER", "PGDATABASE", "PGHOST", "PGPORT", "PGSERVICE", "PGSERVICEFILE", "PGPASSFILE"):
         env.pop(key, None)
     env["PGPASSWORD"] = password
     return args, env
 
 
+def postgres_client_tool(name: str) -> str | None:
+    """Resolve PostgreSQL client tools even when the API runs as Windows LocalSystem.
+
+    LocalSystem does not reliably inherit the interactive administrator PATH. The
+    official PostgreSQL Windows installer normally places pg_dump/pg_restore under
+    Program Files\\PostgreSQL\\<major>\\bin, so discover that installation as a
+    fallback instead of requiring staff to edit the machine PATH.
+    """
+    found = shutil.which(name)
+    if found:
+        return found
+
+    candidates: list[Path] = []
+    for root_var in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"):
+        root = os.environ.get(root_var)
+        if root:
+            candidates.append(Path(root) / "PostgreSQL")
+
+    for root in candidates:
+        if not root.exists():
+            continue
+        for install in sorted(root.glob("*") , reverse=True):
+            candidate = install / "bin" / f"{name}.exe"
+            if candidate.is_file():
+                return str(candidate)
+
+    # Also support an explicit PostgreSQL installation directory when supplied.
+    pg_home = os.environ.get("POSTGRES_HOME") or os.environ.get("PGHOME")
+    if pg_home:
+        candidate = Path(pg_home) / "bin" / f"{name}.exe"
+        if candidate.is_file():
+            return str(candidate)
+
+    return None
+
+
 def run_postgres_tool(command: list[str], env: dict[str, str]) -> None:
     try:
         completed = subprocess.run(command, env=env, capture_output=True, text=True, timeout=300, check=False)
     except FileNotFoundError as exc:
-        raise RuntimeError("PostgreSQL client tools (pg_dump/pg_restore) are not installed or not on PATH") from exc
+        raise RuntimeError("PostgreSQL client tools (pg_dump/pg_restore) are not installed or cannot be located") from exc
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError("PostgreSQL backup operation timed out after 5 minutes") from exc
     if completed.returncode != 0:
@@ -94,9 +127,9 @@ def run_postgres_tool(command: list[str], env: dict[str, str]) -> None:
 def validate_postgres(path: Path) -> tuple[bool, str]:
     if not path.exists() or path.stat().st_size < 100:
         return False, "Backup file is empty or too small"
-    pg_restore = shutil.which("pg_restore")
+    pg_restore = postgres_client_tool("pg_restore")
     if not pg_restore:
-        return False, "PostgreSQL client tool pg_restore is not installed or not on PATH"
+        return False, "PostgreSQL client tool pg_restore is not installed or cannot be located"
     try:
         completed = subprocess.run([pg_restore, "--list", str(path)], capture_output=True, text=True, timeout=60, check=False)
     except subprocess.TimeoutExpired:
@@ -129,9 +162,9 @@ def create_postgres_backup(prefix: str = "backup") -> Path:
     target = BACKUP_DIR / f"{prefix}_{timestamp}{POSTGRES_BACKUP_SUFFIX}"
     partial = BACKUP_DIR / f".{target.name}.partial"
     connection_args, env = postgres_command_url()
-    pg_dump = shutil.which("pg_dump")
+    pg_dump = postgres_client_tool("pg_dump")
     if not pg_dump:
-        raise RuntimeError("PostgreSQL client tool pg_dump is not installed or not on PATH")
+        raise RuntimeError("PostgreSQL client tool pg_dump is not installed or cannot be located")
     partial.unlink(missing_ok=True)
     try:
         run_postgres_tool(
@@ -251,9 +284,9 @@ async def restore_database(file: UploadFile = File(...), user: User = Depends(re
             ensure_schema_compatibility()
         else:
             connection_args, env = postgres_command_url()
-            pg_restore = shutil.which("pg_restore")
+            pg_restore = postgres_client_tool("pg_restore")
             if not pg_restore:
-                raise RuntimeError("PostgreSQL client tool pg_restore is not installed or not on PATH")
+                raise RuntimeError("PostgreSQL client tool pg_restore is not installed or cannot be located")
             engine.dispose()
             run_postgres_tool(
                 [pg_restore, "--clean", "--if-exists", "--no-owner", "--no-acl", *connection_args, str(temp_path)],
