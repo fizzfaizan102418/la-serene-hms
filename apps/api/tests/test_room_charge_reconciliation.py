@@ -209,6 +209,56 @@ class RoomChargeReconciliationTests(unittest.TestCase):
                 ],
             )
 
+    def test_deterministic_room_night_key_blocks_legacy_duplicate_repost(self):
+        with Session(self.engine) as db:
+            reservation, folio, stays = self._setup_reservation(db)
+            stay = stays[0]
+            posting_date = date(2026, 9, 22)
+
+            # Simulate a legacy posting whose folio-item linkage cannot satisfy
+            # the exact stay/date lookup, but whose deterministic room-night key
+            # identifies the night as already posted.
+            item = FolioItem(
+                folio_id=folio.id,
+                stay_id=None,
+                description="Legacy room posting",
+                category="room",
+                quantity=Decimal("1"),
+                unit_price=Decimal("10000.00"),
+                discount=Decimal("0.00"),
+            )
+            db.add(item)
+            db.flush()
+            db.get(BusinessDateState, 1).current_business_date = posting_date
+            post_folio_charge_authoritative(
+                db,
+                folio_id=folio.id,
+                reservation_id=reservation.id,
+                item_id=item.id,
+                amount=Decimal("10000.00"),
+                stay_id=None,
+                category="room",
+                created_by=1,
+                gross_amount=Decimal("10000.00"),
+                discount_amount=Decimal("0.00"),
+                idempotency_key=f"room-night:{folio.id}:{stay.id}:{posting_date.isoformat()}",
+            )
+            db.commit()
+
+            posted = post_accrued_room_charges(
+                db, reservation, folio, posting_date, 1
+            )
+            db.commit()
+
+            self.assertEqual(posted, 0)
+            room_items = db.scalars(
+                select(FolioItem).where(
+                    FolioItem.folio_id == folio.id,
+                    FolioItem.category == "room",
+                )
+            ).all()
+            self.assertEqual(len(room_items), 1)
+
     def test_reconciliation_is_idempotent_for_same_business_date(self):
         with Session(self.engine) as db:
             reservation, folio, stays = self._setup_reservation(db)
