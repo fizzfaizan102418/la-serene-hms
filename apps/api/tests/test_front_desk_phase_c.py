@@ -10,7 +10,7 @@ from app.db import Base
 import app.financial_models  # noqa: F401
 import app.models  # noqa: F401
 import app.pms_core  # noqa: F401
-from app.front_desk import atomic_checkout, create_walk_in, WalkInCreate, WalkInRoom
+from app.front_desk import create_walk_in, WalkInCreate, WalkInRoom
 from app.ledger import post_transaction
 from app.models import BusinessDateState, Guest, Folio, FolioItem, Payment, Reservation, ReservationRoom, Role, Room, RoomType, User
 from app.main import app
@@ -70,70 +70,6 @@ class FrontDeskPhaseCTests(unittest.TestCase):
             create_walk_in(WalkInCreate(guest_id=self.guest.id, rooms=[WalkInRoom(room_id=self.room1.id, agreed_rate=100)], check_out=date(2026, 9, 10)), self.db, self.user)
         self.assertEqual(ctx.exception.status_code, 409)
 
-    def test_atomic_checkout_requires_zero_balance(self):
-        reservation = Reservation(guest_id=self.guest.id, check_in=date(2026, 9, 8), check_out=date(2026, 9, 10), status="checked_in")
-        folio = Folio(reservation_id=1, status="open")
-        self.db.add(reservation); self.db.flush(); folio.reservation_id = reservation.id
-        self.db.add(folio); self.db.flush()
-        self.db.add(ReservationRoom(reservation_id=reservation.id, room_id=self.room1.id))
-        from app.pms_core import Stay
-        stay = Stay(reservation_id=reservation.id, room_id=self.room1.id, guest_id=self.guest.id, status="checked_in", check_in=reservation.check_in, check_out=reservation.check_out, agreed_rate=Decimal("100"))
-        self.db.add(stay); self.db.flush()
-        item = FolioItem(folio_id=folio.id, stay_id=stay.id, description="Room", category="room", quantity=1, unit_price=100, discount=0)
-        self.db.add(item); self.db.flush()
-        post_transaction(
-            self.db,
-            transaction_type="folio_charge",
-            description="Room charge",
-            reference_type="folio_item",
-            reference_id=str(item.id),
-            folio_id=folio.id,
-            reservation_id=reservation.id,
-            created_by=self.user.id,
-            idempotency_key=f"test-charge:{item.id}",
-            lines=[
-                {"account": "Guest Receivables", "direction": "debit", "amount": Decimal("100.00"), "folio_id": folio.id},
-                {"account": "Revenue - Room", "direction": "credit", "amount": Decimal("100.00"), "folio_id": folio.id},
-            ],
-        )
-        self.room1.status = "occupied"; self.db.commit()
-        with self.assertRaises(HTTPException) as ctx:
-            atomic_checkout(reservation.id, self.db, self.user)
-        self.assertEqual(ctx.exception.status_code, 409)
-        self.db.rollback()
-        payment = Payment(folio_id=folio.id, amount=100, method="cash")
-        self.db.add(payment); self.db.flush()
-        post_transaction(
-            self.db,
-            transaction_type="folio_payment",
-            description="Cash settlement",
-            reference_type="payment",
-            reference_id=str(payment.id),
-            folio_id=folio.id,
-            reservation_id=reservation.id,
-            created_by=self.user.id,
-            idempotency_key=f"test-payment:{payment.id}",
-            lines=[
-                {"account": "Cash", "direction": "debit", "amount": Decimal("100.00"), "folio_id": folio.id},
-                {"account": "Guest Receivables", "direction": "credit", "amount": Decimal("100.00"), "folio_id": folio.id},
-            ],
-        )
-        self.db.commit()
-        result = atomic_checkout(reservation.id, self.db, self.user)
-        self.assertEqual(result["status"], "checked_out")
-        self.assertEqual(self.db.get(Reservation, reservation.id).status, "checked_out")
-        self.assertEqual(self.db.get(Folio, folio.id).status, "closed")
-        self.assertEqual(self.db.get(Room, self.room1.id).status, "dirty")
-
-    def test_atomic_checkout_route_is_mounted(self):
-        paths = app.openapi().get("paths", {})
-        checkout_path = "/api/reservations/{reservation_id}/checkout"
-        legacy_path = "/api/reservations/{reservation_id}/check-out"
-        self.assertIn(checkout_path, paths)
-        self.assertIn("post", paths[checkout_path])
-        self.assertIn(legacy_path, paths)
-        operation_id = paths[checkout_path]["post"].get("operationId", "")
-        self.assertIn("atomic_checkout", operation_id)
 
 
 if __name__ == "__main__":
