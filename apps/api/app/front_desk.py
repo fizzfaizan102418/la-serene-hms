@@ -64,7 +64,6 @@ def room_stay_ids(db: Session, reservation_id: int) -> list[int]:
 
 
 
-@router.post("/reservations/{reservation_id}/checkout", response_model=dict)
 def atomic_checkout(
     reservation_id: int,
     db: Session = Depends(get_db),
