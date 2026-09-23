@@ -11,7 +11,7 @@ from sqlalchemy import select
 from app.db import DATA_DIR, SessionLocal
 from app.financial_authority import folio_ledger_summary
 from app.ledger import reverse_transaction
-from app.models import BusinessDateState, FinancialTransaction, Folio, FolioItem, Guest, Payment, Reservation
+from app.models import BusinessDateState, FinancialTransaction, Folio, FolioItem, Guest, LedgerEntry, Payment, Reservation
 from app.pms_core import Stay
 
 TARGET_RESERVATION_ID = 38
@@ -39,11 +39,10 @@ def _room_charge_transactions(db):
 
     for tx in transactions:
         entries = db.scalars(
-            select(__import__("app.models", fromlist=["LedgerEntry"]).LedgerEntry)
-            .where(__import__("app.models", fromlist=["LedgerEntry"]).LedgerEntry.transaction_id == tx.id)
-            .order_by(__import__("app.models", fromlist=["LedgerEntry"]).LedgerEntry.id)
-        ).all()
-        room_credit = next(
+            select(LedgerEntry)
+            .where(LedgerEntry.transaction_id == tx.id)
+            .order_by(LedgerEntry.id)
+        ).all()      room_credit = next(
             (
                 entry
                 for entry in entries
