@@ -259,6 +259,33 @@ class RoomChargeReconciliationTests(unittest.TestCase):
             ).all()
             self.assertEqual(len(room_items), 1)
 
+
+    def test_checkout_date_does_not_post_third_room_night(self):
+        with Session(self.engine) as db:
+            reservation, folio, stays = self._setup_reservation(
+                db, room_numbers=("T1", "T2"), check_out=date(2026, 9, 23)
+            )
+
+            # Both rooms already have their two contracted nights covered.
+            for stay in stays:
+                self._post_night(db, reservation, folio, stay, date(2026, 9, 21))
+                self._post_night(db, reservation, folio, stay, date(2026, 9, 22))
+            db.commit()
+
+            posted = post_accrued_room_charges(
+                db, reservation, folio, date(2026, 9, 23), 1
+            )
+            db.commit()
+
+            self.assertEqual(posted, 0)
+            room_items = db.scalars(
+                select(FolioItem).where(
+                    FolioItem.folio_id == folio.id,
+                    FolioItem.category == "room",
+                )
+            ).all()
+            self.assertEqual(len(room_items), 4)
+
     def test_reconciliation_is_idempotent_for_same_business_date(self):
         with Session(self.engine) as db:
             reservation, folio, stays = self._setup_reservation(db)
