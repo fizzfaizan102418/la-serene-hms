@@ -115,7 +115,10 @@ def preview_room_charges_for_business_date(db: Session, *, business_date: date) 
             "amount": net_rate,
             "description": description,
         })
-    return preview\n\n\ndef accrue_room_charges_for_business_date(db: Session, *, business_date: date, created_by: int) -> int:
+    return preview
+
+
+def accrue_room_charges_for_business_date(db: Session, *, business_date: date, created_by: int) -> int:
     """Reconcile every missing room night for the supplied business date.
 
     The exact stay + business-date reconciler is the single source of truth for
