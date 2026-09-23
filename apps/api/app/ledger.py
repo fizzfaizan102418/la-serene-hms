@@ -95,6 +95,7 @@ def post_transaction(
     reservation_id: int | None = None,
     reversal_of_id: int | None = None,
     idempotency_key: str | None = None,
+    allow_historical_business_date: bool = False,
 ) -> FinancialTransaction:
     key = normalize_idempotency_key(idempotency_key)
     if len(lines) < 2:
@@ -159,8 +160,9 @@ def post_transaction(
     state = lock_current_business_date(db)
     tx_date = business_date or state.current_business_date
     if business_date is not None and tx_date != state.current_business_date:
-        raise ValueError(f"Financial posting date {tx_date.isoformat()} is not the current business date")
-    if state.last_closed_business_date is not None and state.last_closed_business_date >= tx_date:
+        if not allow_historical_business_date or tx_date > state.current_business_date:
+            raise ValueError(f"Financial posting date {tx_date.isoformat()} is not the current business date")
+    if not allow_historical_business_date and state.last_closed_business_date is not None and state.last_closed_business_date >= tx_date:
         raise ValueError(f"Business date {tx_date.isoformat()} is closed for financial posting")
 
     transaction = FinancialTransaction(
@@ -241,7 +243,7 @@ def post_deposit_received(db: Session, *, stay_id: int, folio_id: int | None, re
     return post_transaction(db, transaction_type="deposit_received", description=f"Deposit received #{deposit_id}", reference_type="deposit", reference_id=str(deposit_id), folio_id=folio_id, reservation_id=reservation_id, created_by=created_by, idempotency_key=f"deposit:{deposit_id}", lines=[{"account": cash_account, "direction": "debit", "amount": amount, "folio_id": folio_id, "stay_id": stay_id, "payment_method": method}, {"account": "Guest Deposits", "direction": "credit", "amount": amount, "folio_id": folio_id, "stay_id": stay_id, "payment_method": method}])
 
 
-def reverse_transaction(db: Session, *, transaction_id: int, created_by: int, reason: str) -> FinancialTransaction:
+def reverse_transaction(db: Session, *, transaction_id: int, created_by: int, reason: str, preserve_business_date: bool = False) -> FinancialTransaction:
     original = db.get(FinancialTransaction, transaction_id)
     if original is None:
         raise ValueError("Financial transaction not found")
@@ -253,7 +255,21 @@ def reverse_transaction(db: Session, *, transaction_id: int, created_by: int, re
     if not source_lines:
         raise ValueError("Cannot reverse a transaction without ledger entries")
     reversed_lines = [{"account": line.account, "direction": "credit" if line.direction == "debit" else "debit", "amount": line.amount, "currency": line.currency, "folio_id": line.folio_id, "stay_id": line.stay_id, "payment_method": line.payment_method, "reference": line.reference} for line in source_lines]
-    reversal = post_transaction(db, transaction_type="reversal", description=f"Reversal of {original.transaction_no}: {reason}", reference_type="financial_transaction", reference_id=str(original.id), folio_id=original.folio_id, reservation_id=original.reservation_id, created_by=created_by, reversal_of_id=original.id, idempotency_key=f"reversal:{original.id}", lines=reversed_lines)
+    reversal = post_transaction(
+        db,
+        transaction_type="reversal",
+        description=f"Reversal of {original.transaction_no}: {reason}",
+        reference_type="financial_transaction",
+        reference_id=str(original.id),
+        folio_id=original.folio_id,
+        reservation_id=original.reservation_id,
+        created_by=created_by,
+        business_date=original.business_date if preserve_business_date else None,
+        allow_historical_business_date=preserve_business_date,
+        reversal_of_id=original.id,
+        idempotency_key=f"reversal:{original.id}",
+        lines=reversed_lines,
+    )
     original.status = "reversed"
     db.flush()
     return reversal
