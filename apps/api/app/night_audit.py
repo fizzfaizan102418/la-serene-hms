@@ -98,7 +98,7 @@ def build_summary(db: Session, business_date: date, finance: dict | None = None)
         .join(FinancialTransaction, FinancialTransaction.id == LedgerEntry.transaction_id)
         .where(
             FinancialTransaction.business_date == business_date,
-            FinancialTransaction.status == "posted",
+            FinancialTransaction.status.in_(("posted", "reversed")),
             LedgerEntry.account.like("Revenue - %"),
         )
         .group_by(LedgerEntry.account, LedgerEntry.direction)
