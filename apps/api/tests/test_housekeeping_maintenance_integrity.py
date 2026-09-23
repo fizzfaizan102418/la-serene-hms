@@ -11,7 +11,6 @@ from app.db import Base
 import app.housekeeping_control  # noqa: F401
 import app.models  # noqa: F401
 import app.pms_core  # noqa: F401
-from app.front_desk import atomic_checkout
 from app.housekeeping import mark_room_clean, mark_room_out_of_order, release_room_from_out_of_order
 from app.housekeeping_control import (
     MaintenanceCreate,
