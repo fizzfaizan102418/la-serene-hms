@@ -50,7 +50,7 @@ export default function CheckoutView({ folioId, guestName, reservationId, onComp
     if (!window.confirm(`Complete checkout for ${guestName}?`)) return;
     setBusy(true); setMessage('');
     try {
-      await api(`/api/reservations/${reservationId}/checkout`, { method: 'POST' });
+      await api(`/api/reservations/${reservationId}/check-out`, { method: 'POST' });
       setMessage('Checkout completed.');
       await printFolio();
       await onComplete();
