@@ -114,13 +114,13 @@ def apply_available_deposits(db: Session, *, folio_id: int, reservation_id: int,
 
     return applied_total
 
-def post_folio_charge_authoritative(db: Session, *, folio_id: int, reservation_id: int, item_id: int, amount: Decimal, stay_id: int | None, category: str, created_by: int, gross_amount: Decimal | None = None, discount_amount: Decimal | None = None) -> FinancialTransaction:
+def post_folio_charge_authoritative(db: Session, *, folio_id: int, reservation_id: int, item_id: int, amount: Decimal, stay_id: int | None, category: str, created_by: int, gross_amount: Decimal | None = None, discount_amount: Decimal | None = None, idempotency_key: str | None = None) -> FinancialTransaction:
     from .ledger import post_transaction
     net_amount = money(amount)
     gross = money(gross_amount if gross_amount is not None else net_amount)
     discount = money(discount_amount if discount_amount is not None else max(Decimal("0.00"), gross - net_amount))
     if money(gross - discount) != net_amount: raise ValueError("Gross charge minus discount must equal the net charge")
-    transaction = post_transaction(db, transaction_type="folio_charge", description=f"Folio charge #{item_id}: {category}", reference_type="folio_item", reference_id=str(item_id), folio_id=folio_id, reservation_id=reservation_id, created_by=created_by, idempotency_key=f"folio-charge:{item_id}", lines=[{"account": "Guest Receivables", "direction": "debit", "amount": gross, "folio_id": folio_id, "stay_id": stay_id}, {"account": "Revenue - " + (category[:45] or "Other"), "direction": "credit", "amount": gross, "folio_id": folio_id, "stay_id": stay_id}])
+    transaction = post_transaction(db, transaction_type="folio_charge", description=f"Folio charge #{item_id}: {category}", reference_type="folio_item", reference_id=str(item_id), folio_id=folio_id, reservation_id=reservation_id, created_by=created_by, idempotency_key=idempotency_key or f"folio-charge:{item_id}", lines=[{"account": "Guest Receivables", "direction": "debit", "amount": gross, "folio_id": folio_id, "stay_id": stay_id}, {"account": "Revenue - " + (category[:45] or "Other"), "direction": "credit", "amount": gross, "folio_id": folio_id, "stay_id": stay_id}])
     if discount > 0: post_transaction(db, transaction_type="folio_discount", description=f"Discount for folio item #{item_id}", reference_type="folio_item_discount", reference_id=str(item_id), folio_id=folio_id, reservation_id=reservation_id, created_by=created_by, idempotency_key=f"folio-discount:{item_id}", lines=[{"account": "Revenue - " + (category[:45] or "Other"), "direction": "debit", "amount": discount, "folio_id": folio_id, "stay_id": stay_id}, {"account": "Guest Receivables", "direction": "credit", "amount": discount, "folio_id": folio_id, "stay_id": stay_id}])
     if category.strip().lower() in FOOD_CATEGORIES:
         service_charge = money(net_amount * Decimal("0.10"))
